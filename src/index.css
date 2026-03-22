@@ -1,0 +1,6 @@
+@import "tailwindcss";
+body { @apply select-none; }
+
+input, textarea {
+  @apply select-text;
+}
