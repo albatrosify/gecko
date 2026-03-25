@@ -851,6 +851,8 @@ export function SourceManager({ user }: { user: User }) {
   const [showChangelog, setShowChangelog] = useState(false);
   const [selectedLogSource, setSelectedLogSource] = useState<any>(null);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [changelogSearch, setChangelogSearch] = useState('');
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
   const [syncStatus, setSyncStatus] = useState<Record<string, string>>({});
   const [refreshingSources, setRefreshingSources] = useState<Record<string, boolean>>({});
@@ -1186,12 +1188,25 @@ export function SourceManager({ user }: { user: User }) {
                 </div>
               </div>
               <button 
-                onClick={() => { setShowChangelog(false); setSelectedLogSource(null); }}
+                onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
                 className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 transition-colors"
               >
                 <X size={20} />
               </button>
             </div>
+
+            {!loadingLogs && changelogs.length > 0 && (
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Filter by channel name..."
+                  value={changelogSearch}
+                  onChange={e => setChangelogSearch(e.target.value)}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-8 pr-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
               {loadingLogs ? (
@@ -1205,7 +1220,16 @@ export function SourceManager({ user }: { user: User }) {
                   <p className="text-sm text-zinc-500 font-bold tracking-tighter uppercase">No history found for this source</p>
                 </div>
               ) : (
-                changelogs.map((log: any, idx: number) => (
+                changelogs.map((log: any, idx: number) => {
+                  const q = changelogSearch.trim().toLowerCase();
+                  const filteredAdded = q ? (log.added || []).filter((item: any) => item.name?.toLowerCase().includes(q)) : (log.added || []);
+                  const filteredRemoved = q ? (log.removed || []).filter((item: any) => item.name?.toLowerCase().includes(q)) : (log.removed || []);
+                  if (q && filteredAdded.length === 0 && filteredRemoved.length === 0) return null;
+                  const addedKey = `${idx}-added`;
+                  const removedKey = `${idx}-removed`;
+                  const showAllAdded = expandedSections[addedKey] || !!q;
+                  const showAllRemoved = expandedSections[removedKey] || !!q;
+                  return (
                   <div key={idx} className="bg-zinc-950/50 rounded-2xl border border-zinc-800 p-5 space-y-4">
                     <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
                       <div className="flex items-center gap-2">
@@ -1224,31 +1248,45 @@ export function SourceManager({ user }: { user: User }) {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {log.added?.length > 0 && (
+                      {filteredAdded.length > 0 && (
                         <div className="space-y-1.5">
                           <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Added Items</p>
                           <div className="space-y-1">
-                            {log.added.slice(0, 5).map((item: any, i: number) => (
+                            {(showAllAdded ? filteredAdded : filteredAdded.slice(0, 5)).map((item: any, i: number) => (
                               <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate">
                                 <Plus size={8} className="text-emerald-500 shrink-0" />
                                 {item.name}
                               </div>
                             ))}
-                            {log.added.length > 5 && <p className="text-[9px] text-zinc-600 italic">...and {log.added.length - 5} more</p>}
+                            {!showAllAdded && filteredAdded.length > 5 && (
+                              <button
+                                onClick={() => setExpandedSections(prev => ({ ...prev, [addedKey]: true }))}
+                                className="text-[9px] text-zinc-500 italic hover:text-zinc-300 transition-colors cursor-pointer"
+                              >
+                                ...and {filteredAdded.length - 5} more
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
-                      {log.removed?.length > 0 && (
+                      {filteredRemoved.length > 0 && (
                         <div className="space-y-1.5">
                           <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Removed Items</p>
                           <div className="space-y-1">
-                            {log.removed.slice(0, 5).map((item: any, i: number) => (
+                            {(showAllRemoved ? filteredRemoved : filteredRemoved.slice(0, 5)).map((item: any, i: number) => (
                               <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate line-through opacity-50">
                                 <X size={8} className="text-red-500 shrink-0" />
                                 {item.name}
                               </div>
                             ))}
-                            {log.removed.length > 5 && <p className="text-[9px] text-zinc-600 italic">...and {log.removed.length - 5} more</p>}
+                            {!showAllRemoved && filteredRemoved.length > 5 && (
+                              <button
+                                onClick={() => setExpandedSections(prev => ({ ...prev, [removedKey]: true }))}
+                                className="text-[9px] text-zinc-500 italic hover:text-zinc-300 transition-colors cursor-pointer"
+                              >
+                                ...and {filteredRemoved.length - 5} more
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1262,12 +1300,13 @@ export function SourceManager({ user }: { user: User }) {
                       )}
                     </div>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
-            <button 
-              onClick={() => { setShowChangelog(false); setSelectedLogSource(null); }}
+            <button
+              onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
               className="w-full py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm"
             >
               Close History
