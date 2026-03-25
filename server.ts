@@ -82,6 +82,21 @@ function getChangelog(oldItems: any[], newItems: any[], idField: string, nameFie
   return { added, removed, renamed };
 }
 
+async function getSnapshot(sourceId: string, type: string): Promise<any> {
+  const db = getDb();
+  const doc = await db.collection('source_snapshots').findOne({ sourceId, type });
+  return doc?.snapshot ?? null;
+}
+
+async function setSnapshot(sourceId: string, type: string, snapshot: any): Promise<void> {
+  const db = getDb();
+  await db.collection('source_snapshots').updateOne(
+    { sourceId, type },
+    { $set: { snapshot, updatedAt: new Date().toISOString() } },
+    { upsert: true }
+  );
+}
+
 async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any) {
   try {
     const db = getDb();
@@ -217,30 +232,41 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
 
     console.log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
 
-    // Update disk cache for the UI and record changelog
+    // Update disk cache for the UI
     const cacheKey = `${sourceId}_streams_${type}`;
-    const oldCached = getCached(cacheKey);
-    if (oldCached) {
-      recordSourceChanges(sourceId, type, oldCached.data, upstreamStreams);
-    }
     setCache(cacheKey, upstreamStreams);
-    
+
+    // Record changelog using MongoDB snapshot (TTL-independent)
+    const idField = type === 'series' ? 'series_id' : 'stream_id';
+    const oldSnapshot = await getSnapshot(sourceId, type);
+    if (oldSnapshot) {
+      recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
+    }
+    const newSnapshot = upstreamStreams.map((s: any) => ({ [idField]: s[idField], name: s.name || s.title }));
+    await setSnapshot(sourceId, type, newSnapshot);
+
     // Periodically (or on force) update categories too
     if (force || type === 'live') {
       try {
         const catCacheKey = `${sourceId}_categories`;
-        const oldCatsCached = getCached(catCacheKey);
-        
+
         const [liveCats, vodCats, seriesCats] = await Promise.all([
           client.getLiveCategories(),
           client.getVodCategories(),
           client.getSeriesCategories()
         ]);
-        
+
         const newCats = { liveCats, vodCats, seriesCats };
-        if (oldCatsCached) {
-          recordSourceChanges(sourceId, 'categories', oldCatsCached.data, newCats);
+        const oldCatSnapshot = await getSnapshot(sourceId, 'categories');
+        if (oldCatSnapshot) {
+          recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
         }
+        const newCatSnapshot = {
+          liveCats: liveCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
+          vodCats: vodCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
+          seriesCats: seriesCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name }))
+        };
+        await setSnapshot(sourceId, 'categories', newCatSnapshot);
         setCache(catCacheKey, newCats);
       } catch (e) {}
     }
