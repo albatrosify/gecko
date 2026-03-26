@@ -25,6 +25,16 @@ export interface EPGSource {
   enabled: boolean;
 }
 
+export interface DetectedStreamMeta {
+  resolution?: string;        // e.g. "1920x1080"
+  videoCodec?: string;        // e.g. "hevc", "h264", "av1"
+  hdr?: string | null;        // "HDR10" | "HLG" | "DV" | "HDR10+" | null (SDR)
+  fps?: number;               // e.g. 25, 30, 50, 60
+  audioCodec?: string;        // e.g. "aac", "eac3", "truehd", "dts", "ac3"
+  audioChannels?: number;     // e.g. 2, 6, 8
+  scannedAt?: string;         // ISO timestamp
+}
+
 export interface Playlist {
   id: string;
   userId: string;
@@ -37,6 +47,7 @@ export interface Playlist {
   enabled: boolean;
   directStreams?: boolean;
   lastSync?: string; // ISO timestamp
+  qualityLabelFormat?: string;  // e.g. "[{label}]" — per-playlist template
 }
 
 export interface CategoryMapping {
@@ -66,5 +77,7 @@ export interface StreamMapping {
   hidden: boolean;
   categoryId: string; // Custom category ID
   regexRenames?: { pattern: string; replacement: string }[];
+  detectedMeta?: DetectedStreamMeta;
+  useDetectedQuality?: boolean;
 }
 
