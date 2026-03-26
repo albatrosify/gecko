@@ -11,6 +11,8 @@ import { XtreamClient } from "./server/xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "./src/types.ts";
 import axios from "axios";
 import cronstrue from "cronstrue";
+import { computeDisplayName } from './src/quality.ts';
+import { probeStream } from './server/quality.ts';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 
@@ -862,6 +864,28 @@ async function startServer() {
         db.collection('mappings').deleteMany({ playlistId }),
         db.collection('categoryMappings').deleteMany({ playlistId }),
       ]);
+      res.json({ success: true });
+    });
+
+    // =====================================
+    // Settings
+    // =====================================
+    app.get("/api/settings", requireAuth, async (_req, res) => {
+      const db = getDb();
+      const doc = await db.collection('settings').findOne({ _id: 'global' as any });
+      res.json({
+        qualityLabelFormat: doc?.qualityLabelFormat ?? '[{label}]',
+      });
+    });
+
+    app.patch("/api/settings", requireAuth, async (req: AuthRequest, res) => {
+      const db = getDb();
+      const { qualityLabelFormat } = req.body;
+      await db.collection('settings').updateOne(
+        { _id: 'global' as any },
+        { $set: { qualityLabelFormat } },
+        { upsert: true }
+      );
       res.json({ success: true });
     });
 
