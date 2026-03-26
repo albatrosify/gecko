@@ -282,6 +282,24 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
 
 const activeCrons = new Map<string, any>();
 
+// ── Quality Scan Jobs ──────────────────────────────────────────────────────────
+interface ScanJob {
+  id: string;
+  status: 'running' | 'done' | 'cancelled';
+  total: number;
+  done: number;
+  failed: number;
+  results: { streamId: string; meta?: any; error?: string }[];
+}
+const scanJobs = new Map<string, ScanJob>();
+
+function buildStreamUrl(sourceDoc: any, streamId: string, type: 'live' | 'vod' | 'series'): string {
+  const cl = new XtreamClient(sourceDoc as any);
+  if (type === 'live') return cl.getLiveStreamUrl(streamId);
+  if (type === 'vod') return cl.getVodStreamUrl(streamId);
+  return cl.getSeriesStreamUrl(streamId);
+}
+
 async function initCronManager() {
   log("Initializing Source Cron Manager...");
   const db = getDb();
@@ -886,6 +904,130 @@ async function startServer() {
         { $set: { qualityLabelFormat } },
         { upsert: true }
       );
+      res.json({ success: true });
+    });
+
+    // =====================================
+    // Quality Scan
+    // =====================================
+    app.post("/api/quality-scan", requireAuth, async (req: AuthRequest, res) => {
+      const { playlistId, streamIds, type, concurrency = 1 } = req.body as {
+        playlistId: string;
+        streamIds: string[];
+        type: 'live' | 'vod' | 'series';
+        concurrency?: number;
+      };
+
+      if (!playlistId || !streamIds?.length || !type) {
+        return res.status(400).json({ error: 'playlistId, streamIds, and type are required' });
+      }
+
+      const db = getDb();
+      const playlistDoc = await db.collection('playlists').findOne({
+        _id: toId(playlistId),
+        userId: req.user!.id,
+      });
+      if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+      const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceDocs = await Promise.all(
+        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+      );
+      const validSources = sourceDocs.filter(Boolean);
+      if (!validSources.length) return res.status(400).json({ error: 'No sources found for playlist' });
+
+      const jobId = Math.random().toString(36).slice(2);
+      const job: ScanJob = {
+        id: jobId,
+        status: 'running',
+        total: streamIds.length,
+        done: 0,
+        failed: 0,
+        results: [],
+      };
+      scanJobs.set(jobId, job);
+      res.json({ jobId });
+
+      // Run in background — do not await
+      (async () => {
+        const cap = Math.max(1, Math.min(5, concurrency));
+
+        for (let i = 0; i < streamIds.length; i += cap) {
+          if (job.status === 'cancelled') break;
+          const batch = streamIds.slice(i, i + cap);
+
+          await Promise.all(batch.map(async (streamId) => {
+            if (job.status === 'cancelled') return;
+
+            let meta: any = null;
+            let lastError = '';
+
+            // Try each source until one works
+            for (const sourceDoc of validSources) {
+              try {
+                const url = buildStreamUrl(sourceDoc, streamId, type);
+                meta = await probeStream(url);
+                break;
+              } catch (e: any) {
+                lastError = e.message;
+              }
+            }
+
+            if (meta) {
+              meta.scannedAt = new Date().toISOString();
+              // Upsert detectedMeta into the mapping for this stream
+              const existing = await db.collection('mappings').findOne({
+                playlistId,
+                originalId: streamId,
+                type,
+              });
+              if (existing) {
+                await db.collection('mappings').updateOne(
+                  { _id: existing._id },
+                  { $set: { detectedMeta: meta } }
+                );
+              } else {
+                // No mapping yet — create one to store the metadata
+                await db.collection('mappings').insertOne({
+                  playlistId,
+                  originalId: streamId,
+                  type,
+                  originalName: streamId,
+                  customName: '',
+                  order: 0,
+                  hidden: false,
+                  categoryId: '',
+                  detectedMeta: meta,
+                });
+              }
+              job.results.push({ streamId, meta });
+            } else {
+              job.results.push({ streamId, error: lastError || 'All sources failed' });
+              job.failed++;
+            }
+            job.done++;
+          }));
+        }
+
+        if (job.status !== 'cancelled') job.status = 'done';
+        // Auto-clean job after 10 minutes
+        setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
+      })().catch((e) => {
+        log(`[QualityScan] Job ${jobId} crashed: ${e.message}`);
+        job.status = 'done';
+      });
+    });
+
+    app.get("/api/quality-scan/:jobId", requireAuth, (req, res) => {
+      const job = scanJobs.get(req.params.jobId);
+      if (!job) return res.status(404).json({ error: 'Job not found' });
+      res.json(job);
+    });
+
+    app.delete("/api/quality-scan/:jobId", requireAuth, (req, res) => {
+      const job = scanJobs.get(req.params.jobId);
+      if (!job) return res.status(404).json({ error: 'Job not found' });
+      job.status = 'cancelled';
       res.json({ success: true });
     });
 
