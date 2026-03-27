@@ -226,7 +226,7 @@ export function computeDisplayName(
 ): string {
   const base = mapping.customName || mapping.originalName;
   if (!mapping.useDetectedQuality || !mapping.detectedMeta?.resolution) return base;
-  const format = playlistFormat ?? globalFormat ?? '[{label}]';
+  const format = playlistFormat ?? globalFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
   const ctx = buildTemplateContext(mapping.detectedMeta);
   const suffix = renderTemplate(format, ctx);
   return suffix ? stripQualityLabel(base) + ' ' + suffix : base;

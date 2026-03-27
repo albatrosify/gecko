@@ -303,7 +303,7 @@ async function getGlobalQualityFormat(): Promise<string> {
   }
   const db = getDb();
   const doc = await db.collection('settings').findOne({ _id: 'global' as any });
-  const value = (doc as any)?.qualityLabelFormat ?? '[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]}';
+  const value = (doc as any)?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
   _qualityFormatCache = { value, expiresAt: Date.now() + 60_000 };
   return value;
 }
@@ -907,7 +907,7 @@ async function startServer() {
       const db = getDb();
       const doc = await db.collection('settings').findOne({ _id: 'global' as any });
       res.json({
-        qualityLabelFormat: doc?.qualityLabelFormat ?? '[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]}',
+        qualityLabelFormat: doc?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
       });
     });
 

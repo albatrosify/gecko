@@ -714,9 +714,10 @@ export function PlaylistManager({ user }: { user: User }) {
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
+                <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
                 <textarea
                   rows={2}
-                  placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]} — leave empty to use global default'}
+                  placeholder={`${QUALITY_PRESETS[0].template} — leave empty to use global default`}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all resize-none font-mono text-sm"
                   value={editData.qualityLabelFormat ?? ''}
                   onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
@@ -1455,6 +1456,47 @@ export function EPGManager
   );
 }
 
+const QUALITY_PRESETS: { label: string; description: string; template: string }[] = [
+  {
+    label: 'Standard',
+    description: '[5.1] [HDR10] [FHD]',
+    template: '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
+  },
+  {
+    label: 'Minimal',
+    description: '[FHD]',
+    template: '[{label}]',
+  },
+  {
+    label: 'Verbose',
+    description: '[5.1] [DD+] [HDR10] [FHD] [H.265]',
+    template: '{surround::exists["[{surround}] "||""]}{premium::exists["[{premium}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}] [{codec}]',
+  },
+  {
+    label: 'No brackets',
+    description: '5.1 HDR10 FHD',
+    template: '{surround::exists["{surround} "||""]}{hdr::exists["{hdr} "||""]}{label}',
+  },
+];
+
+function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {QUALITY_PRESETS.map(p => (
+        <button
+          key={p.label}
+          type="button"
+          onClick={() => onSelect(p.template)}
+          title={p.template}
+          className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-emerald-500/50 rounded-lg text-zinc-400 hover:text-zinc-100 transition-all"
+        >
+          {p.label} <span className="text-zinc-600">{p.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Settings({ user }: { user: User }) {
   const [logs, setLogs] = useState<string>('Loading logs...');
   const logRef = useRef<HTMLPreElement>(null);
@@ -1538,11 +1580,12 @@ export function Settings({ user }: { user: User }) {
             <div className="space-y-3">
               <label className="block text-sm font-medium text-zinc-400">Label Format</label>
               <div className="space-y-2">
+                <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
                 <textarea
                   rows={2}
                   value={qualityFormat}
                   onChange={e => setQualityFormat(e.target.value)}
-                  placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]}'}
+                  placeholder={QUALITY_PRESETS[0].template}
                   className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-sm"
                 />
                 <button
