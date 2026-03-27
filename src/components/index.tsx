@@ -2710,11 +2710,18 @@ function BatchEditorPane({
   useEffect(() => {
     if (!scanPolling || !scanJobId) return;
     const interval = setInterval(async () => {
-      const job = await api.qualityScan.status(scanJobId);
-      setScanJob(job);
-      if (job.status !== 'running') {
+      try {
+        const job = await api.qualityScan.status(scanJobId);
+        setScanJob(job);
+        if (job.status !== 'running') {
+          setScanPolling(false);
+          clearInterval(interval);
+          onRefresh();
+        }
+      } catch (e) {
+        console.error('[QualityScan] polling error:', e);
         setScanPolling(false);
-        onRefresh();
+        clearInterval(interval);
       }
     }, 2000);
     return () => clearInterval(interval);
@@ -3544,6 +3551,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   const [loading, setLoading] = useState(false);
   const [showTechInfo, setShowTechInfo] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   // EPG channel search
   const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
@@ -3723,6 +3731,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     onClick={async () => {
                       if (!mapping) return;
                       setScanLoading(true);
+                      setScanError(null);
                       try {
                         const { jobId } = await api.qualityScan.start({
                           playlistId,
@@ -3730,7 +3739,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                           type: type as 'live' | 'vod' | 'series',
                           concurrency: 1,
                         });
-                        let job;
+                        let job: any;
                         do {
                           await new Promise(r => setTimeout(r, 2000));
                           job = await api.qualityScan.status(jobId);
@@ -3739,7 +3748,11 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         if (result?.meta && mapping.id) {
                           await api.mappings.update(mapping.id, { detectedMeta: result.meta } as any);
                           onUpdate();
+                        } else if (result?.error) {
+                          setScanError(result.error);
                         }
+                      } catch (e: any) {
+                        setScanError(e.message || 'Scan failed');
                       } finally {
                         setScanLoading(false);
                       }
@@ -3750,6 +3763,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     {scanLoading ? 'Scanning...' : 'Scan this channel'}
                   </button>
                 </div>
+                {scanError && <p className="text-xs text-red-400 mt-1">{scanError}</p>}
 
                 {mapping?.detectedMeta ? (
                   <div className="flex flex-wrap gap-1">
