@@ -1452,6 +1452,8 @@ export function EPGManager
 export function Settings({ user }: { user: User }) {
   const [logs, setLogs] = useState<string>('Loading logs...');
   const logRef = useRef<HTMLPreElement>(null);
+  const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
+  const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -1470,10 +1472,27 @@ export function Settings({ user }: { user: User }) {
   }, [fetchLogs]);
 
   useEffect(() => {
+    api.settings.get()
+      .then(s => setQualityFormat(s.qualityLabelFormat ?? '[{label}]'))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [logs]);
+
+  async function saveQualityFormat() {
+    setQualityFormatSaving(true);
+    try {
+      await api.settings.update({ qualityLabelFormat: qualityFormat });
+    } catch (err: any) {
+      console.error('Failed to save quality format:', err);
+    } finally {
+      setQualityFormatSaving(false);
+    }
+  }
 
   return (
     <div className="p-8 space-y-8 max-w-6xl mx-auto">
@@ -1501,6 +1520,41 @@ export function Settings({ user }: { user: User }) {
                   <div className="absolute left-1 top-1 w-3 h-3 bg-zinc-600 rounded-full"></div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold">Quality Labels</h3>
+              <p className="text-sm text-zinc-500">Default format for quality labels in channel names</p>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-zinc-400">Label Format</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={qualityFormat}
+                  onChange={e => setQualityFormat(e.target.value)}
+                  placeholder="[{label}]"
+                  className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                />
+                <button
+                  onClick={saveQualityFormat}
+                  disabled={qualityFormatSaving}
+                  className="px-6 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {qualityFormatSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                Variables: <span className="font-mono text-zinc-400">{'{label}'}</span> (FHD/UHD/etc),
+                <span className="font-mono text-zinc-400"> {'{res}'}</span> (1920x1080),
+                <span className="font-mono text-zinc-400"> {'{codec}'}</span> (H.265),
+                <span className="font-mono text-zinc-400"> {'{hdr}'}</span> (HDR10),
+                <span className="font-mono text-zinc-400"> {'{audio}'}</span> (DD+ 5.1),
+                <span className="font-mono text-zinc-400"> {'{fps}'}</span> (50)
+              </p>
             </div>
           </div>
 
