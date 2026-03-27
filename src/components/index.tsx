@@ -2324,6 +2324,7 @@ export function PlaylistEditor({ user }: { user: User }) {
 
   const handleCategoryClick = (catId: string, e: React.MouseEvent) => {
     e.preventDefault();
+    setSelectedStreamIds(new Set()); // clear stream selection when switching to category
     const visibleCategories = (sortedCategories || []).map(c => String(c.category_id || c.id));
     
     setSelectedCategoryIds(prev => {
