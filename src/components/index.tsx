@@ -46,6 +46,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import axios from 'axios';
+import { computeDisplayName } from '../quality';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -1590,6 +1591,11 @@ export function PlaylistEditor({ user }: { user: User }) {
   
   const [selectedStreamIds, setSelectedStreamIds] = useState<Set<string>>(new Set());
   const [lastSelectedStreamId, setLastSelectedStreamId] = useState<string | null>(null);
+  const [globalFormat, setGlobalFormat] = useState<string>('[{label}]');
+
+  useEffect(() => {
+    api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {});
+  }, []);
 
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
@@ -2503,6 +2509,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onSelectStream={handleStreamClick}
                   selectedStreamIds={selectedStreamIds}
                   epgChannels={epgChannels}
+                  playlist={playlist}
+                  globalFormat={globalFormat}
                 />
               </div>
 
@@ -2964,7 +2972,7 @@ function TabButton({ active, onClick, label }: { active: boolean; onClick: () =>
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, playlist, globalFormat }: {
   streams: any[];
   selectedCategoryIds: Set<string>;
   activeTab: string;
@@ -2977,6 +2985,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onSelectStream: (stream: any, e: React.MouseEvent) => void;
   selectedStreamIds: Set<string>;
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
+  playlist?: Playlist | null;
+  globalFormat?: string;
 }) {
   const filteredStreams = streams;
 
@@ -3040,6 +3050,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   onSelectStream,
                   selectedStreamIds,
                   epgChannels,
+                  playlist,
+                  globalFormat,
                 }}
               >
                 {VirtualStreamRow}
@@ -3097,6 +3109,8 @@ const VirtualStreamRow = React.memo(({
     onSelectStream,
     selectedStreamIds,
     epgChannels,
+    playlist,
+    globalFormat,
   } = data;
   
   const stream = filteredStreams[index];
@@ -3109,7 +3123,10 @@ const VirtualStreamRow = React.memo(({
 
   const mapping = mappings.find(m => m.originalId === originalId && m.type === activeTab);
   const originalName = stream.name || stream.title || "";
-  const displayName = applyRegex(mapping?.customName || originalName, mapping?.regexRenames || []);
+  const baseName = mapping
+    ? computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat)
+    : originalName;
+  const displayName = applyRegex(baseName, mapping?.regexRenames || []);
   
   const combinedStyle = {
     ...style,
