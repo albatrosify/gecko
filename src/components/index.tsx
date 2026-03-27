@@ -2626,7 +2626,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                 const firstMapping = mappings.find(m => m.originalId === firstId && m.type === activeTab);
                 return (
                   <EditorPane
-                    key={firstId}
+                    key="editor-pane"
                     stream={firstStream}
                     mapping={firstMapping}
                     playlistId={id!}
