@@ -404,7 +404,7 @@ export function PlaylistManager({ user }: { user: User }) {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[] });
+  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '' });
   const [availableEpgs, setAvailableEpgs] = useState<any[]>([]);
 
   const loadPlaylists = useCallback(async () => {
@@ -712,6 +712,16 @@ export function PlaylistManager({ user }: { user: User }) {
                   </div>
                 )}
               </div>
+              <div className="pt-4 border-t border-zinc-800 space-y-3">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
+                <input
+                  placeholder="[{label}] — leave empty to use global default"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  value={editData.qualityLabelFormat ?? ''}
+                  onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
+                />
+                <p className="text-[10px] text-zinc-600">Variables: {'{label}'} (FHD/UHD/etc), {'{res}'} (1920x1080), {'{codec}'} (H.265), {'{hdr}'} (HDR10), {'{audio}'} (DD+ 5.1), {'{fps}'} (50)</p>
+              </div>
             </div>
             <div className="flex gap-4">
               <button 
@@ -767,7 +777,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 <button 
                   onClick={() => {
                     setEditingPlaylist(playlist);
-                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [] });
+                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '' });
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 
