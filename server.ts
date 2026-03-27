@@ -901,6 +901,91 @@ async function startServer() {
     });
 
     // =====================================
+    // Global playlist search
+    // =====================================
+    app.get("/api/playlists/:id/search", requireAuth, async (req: AuthRequest, res) => {
+      const { q } = req.query;
+      if (!q || typeof q !== 'string' || q.trim().length < 2) {
+        return res.status(400).json({ error: 'q must be at least 2 characters' });
+      }
+
+      const db = getDb();
+      const playlistDoc = await db.collection('playlists').findOne({
+        _id: toId(req.params.id),
+        userId: req.user!.id,
+      });
+      if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+      const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceDocs = await Promise.all(
+        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+      );
+      const validSources = sourceDocs.filter(Boolean);
+
+      const qLower = q.trim().toLowerCase();
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      outer:
+      for (const sourceDoc of validSources) {
+        const sourceId = sourceDoc.id ?? sourceDoc._id.toString();
+
+        // Category name lookup from cache
+        const catCache = getCached(`${sourceId}_categories`);
+        const catMap = new Map<string, string>();
+        if (catCache?.data) {
+          for (const cat of catCache.data as any[]) {
+            catMap.set(String(cat.category_id), cat.category_name || '');
+          }
+        }
+
+        for (const type of ['live', 'vod', 'series'] as const) {
+          let cached = getCached(`${sourceId}_streams_${type}`);
+
+          // Fetch from upstream if cache is cold
+          if (!cached) {
+            try {
+              const client = new XtreamClient(sourceDoc as any);
+              let streams;
+              if (type === 'live') streams = await client.getLiveStreams();
+              else if (type === 'vod') streams = await client.getVodStreams();
+              else streams = await client.getSeries();
+              setCache(`${sourceId}_streams_${type}`, streams);
+              cached = getCached(`${sourceId}_streams_${type}`);
+            } catch {
+              continue;
+            }
+          }
+
+          if (!cached?.data) continue;
+
+          for (const stream of cached.data as any[]) {
+            const name: string = stream.name || stream.title || '';
+            if (!name.toLowerCase().includes(qLower)) continue;
+
+            const streamId = String(stream.stream_id ?? stream.series_id);
+            const key = `${type}:${streamId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const categoryId = String(stream.category_id || '');
+            results.push({
+              streamId,
+              name,
+              type,
+              categoryId,
+              categoryName: catMap.get(categoryId) || '',
+            });
+
+            if (results.length >= 50) break outer;
+          }
+        }
+      }
+
+      res.json({ results });
+    });
+
+    // =====================================
     // Settings
     // =====================================
     app.get("/api/settings", requireAuth, async (_req, res) => {

@@ -153,6 +153,11 @@ export const playlists = {
       body: JSON.stringify(data),
     });
   },
+  async search(id: string, q: string) {
+    return request<{ results: { streamId: string; name: string; type: 'live'|'vod'|'series'; categoryId: string; categoryName: string }[] }>(
+      `/api/playlists/${id}/search?q=${encodeURIComponent(q)}`
+    );
+  },
 };
 
 // Mappings

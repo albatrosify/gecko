@@ -1698,6 +1698,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [categorySearch, setCategorySearch] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
@@ -1779,6 +1780,17 @@ export function PlaylistEditor({ user }: { user: User }) {
     loadData();
   }, [sources, activeTab]);
 
+  // Cmd+K / Ctrl+K to open global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowGlobalSearch(v => !v);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -2443,6 +2455,19 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
       )}
 
+      {showGlobalSearch && (
+        <GlobalSearch
+          playlistId={id!}
+          onClose={() => setShowGlobalSearch(false)}
+          onNavigate={(type, categoryId, streamId) => {
+            setActiveTab(type);
+            setSelectedCategoryIds(new Set([categoryId]));
+            setSelectedStreamIds(new Set([streamId]));
+            setShowGlobalSearch(false);
+          }}
+        />
+      )}
+
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10 px-4">
         <div className="flex items-center">
           <Link to="/" className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 mr-2 -ml-2">
@@ -2458,6 +2483,14 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
         
         <div className="flex gap-2 items-center">
+          <button
+            onClick={() => setShowGlobalSearch(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
+            title="Search (⌘K)"
+          >
+            <Search size={14} />
+            Search
+          </button>
           <button
             onClick={() => setShowSourceSelector(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
@@ -3673,6 +3706,129 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 });
 
 const StreamRowMemo = React.memo(StreamRow);
+
+// ── Global Spotlight Search ────────────────────────────────────────────────────
+
+function GlobalSearch({ playlistId, onNavigate, onClose }: {
+  playlistId: string;
+  onNavigate: (type: 'live' | 'vod' | 'series', categoryId: string, streamId: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<{ streamId: string; name: string; type: 'live'|'vod'|'series'; categoryId: string; categoryName: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const search = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setResults([]); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.playlists.search(playlistId, q.trim());
+      setResults(data.results);
+      setFocusedIndex(0);
+    } catch {
+      setError('Search unavailable');
+    } finally {
+      setLoading(false);
+    }
+  }, [playlistId]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const q = e.target.value;
+    setQuery(q);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => search(q), 300);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setFocusedIndex(i => Math.min(i + 1, results.length - 1)); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setFocusedIndex(i => Math.max(i - 1, 0)); }
+    if (e.key === 'Enter' && results[focusedIndex]) {
+      const r = results[focusedIndex];
+      onNavigate(r.type, r.categoryId, r.streamId);
+    }
+  };
+
+  const typeIcon = (type: string) => {
+    if (type === 'live') return <Tv size={13} className="text-emerald-400 shrink-0" />;
+    if (type === 'vod') return <Film size={13} className="text-blue-400 shrink-0" />;
+    return <Clapperboard size={13} className="text-purple-400 shrink-0" />;
+  };
+
+  const typeLabel = (type: string) =>
+    type === 'live' ? 'Channel' : type === 'vod' ? 'Movie' : 'Series';
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-[14vh]"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[580px] mx-4 bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Input row */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800">
+          <Search size={15} className="text-zinc-400 shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Search channels, movies, series…"
+            className="flex-1 bg-transparent text-white placeholder-zinc-500 outline-none text-sm"
+          />
+          {loading && (
+            <div className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-300 rounded-full animate-spin shrink-0" />
+          )}
+          <kbd className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5 shrink-0">Esc</kbd>
+        </div>
+
+        {/* Results */}
+        <div className="max-h-[420px] overflow-y-auto">
+          {query.trim().length < 2 && (
+            <p className="px-4 py-10 text-center text-zinc-500 text-sm">Type at least 2 characters…</p>
+          )}
+          {query.trim().length >= 2 && !loading && !error && results.length === 0 && (
+            <p className="px-4 py-10 text-center text-zinc-500 text-sm">No results for &ldquo;{query}&rdquo;</p>
+          )}
+          {error && (
+            <p className="px-4 py-10 text-center text-red-400 text-sm">{error}</p>
+          )}
+          {results.map((r, i) => (
+            <button
+              key={`${r.type}:${r.streamId}`}
+              onClick={() => onNavigate(r.type, r.categoryId, r.streamId)}
+              onMouseEnter={() => setFocusedIndex(i)}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors',
+                i === focusedIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+              )}
+            >
+              {typeIcon(r.type)}
+              <span className="flex-1 text-sm text-white truncate">{r.name}</span>
+              <span className="text-[11px] text-zinc-500 shrink-0">
+                {typeLabel(r.type)}{r.categoryName ? ` · ${r.categoryName}` : ''}
+              </span>
+            </button>
+          ))}
+          {results.length > 0 && (
+            <p className="px-4 py-2 text-center text-[10px] text-zinc-600 border-t border-zinc-800">
+              {results.length === 50 ? 'Showing top 50 results' : `${results.length} result${results.length === 1 ? '' : 's'}`}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
   stream: any;
