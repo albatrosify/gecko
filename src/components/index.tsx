@@ -3697,6 +3697,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   const [showTechInfo, setShowTechInfo] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [detectedMeta, setDetectedMeta] = useState(mapping?.detectedMeta ?? null);
 
   // EPG channel search
   const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
@@ -3752,6 +3753,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
     setEpgMapping(mapping?.epgMapping || "");
     setEpgSearch('');
     setEpgOpen(false);
+    setDetectedMeta(mapping?.detectedMeta ?? null);
   }, [mapping, stream._uniqueId]);
 
   const originalName = stream.name || stream.title || "";
@@ -3891,7 +3893,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         } while (job.status === 'running');
                         const result = job.results.find((r: any) => r.streamId === streamId);
                         if (result?.meta) {
-                          onUpdate(); // backend upserted the mapping — just refresh
+                          setDetectedMeta(result.meta); // show immediately, no parent round-trip needed
+                          onUpdate(); // also refresh parent so mapping is in sync
                         } else if (result?.error) {
                           setScanError(result.error);
                         }
@@ -3909,27 +3912,27 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 </div>
                 {scanError && <p className="text-xs text-red-400 mt-1">{scanError}</p>}
 
-                {mapping?.detectedMeta ? (
+                {detectedMeta ? (
                   <div className="flex flex-wrap gap-1">
-                    {mapping.detectedMeta.resolution && (
-                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.resolution}</span>
+                    {detectedMeta.resolution && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.resolution}</span>
                     )}
-                    {mapping.detectedMeta.videoCodec && (
-                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.videoCodec.toUpperCase()}</span>
+                    {detectedMeta.videoCodec && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.videoCodec.toUpperCase()}</span>
                     )}
-                    {mapping.detectedMeta.hdr && (
-                      <span className="px-1.5 py-0.5 bg-amber-500/15 border border-amber-500/30 rounded text-[10px] font-mono text-amber-400">{mapping.detectedMeta.hdr}</span>
+                    {detectedMeta.hdr && (
+                      <span className="px-1.5 py-0.5 bg-amber-500/15 border border-amber-500/30 rounded text-[10px] font-mono text-amber-400">{detectedMeta.hdr}</span>
                     )}
-                    {mapping.detectedMeta.audioCodec && (
+                    {detectedMeta.audioCodec && (
                       <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">
-                        {mapping.detectedMeta.audioCodec.toUpperCase()}{mapping.detectedMeta.audioChannels ? ` ${mapping.detectedMeta.audioChannels}ch` : ''}
+                        {detectedMeta.audioCodec.toUpperCase()}{detectedMeta.audioChannels ? ` ${detectedMeta.audioChannels}ch` : ''}
                       </span>
                     )}
-                    {mapping.detectedMeta.fps && (
-                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.fps}fps</span>
+                    {detectedMeta.fps && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.fps}fps</span>
                     )}
-                    {mapping.detectedMeta.scannedAt && (
-                      <span className="px-1.5 py-0.5 text-[10px] text-zinc-600">Scanned {new Date(mapping.detectedMeta.scannedAt).toLocaleDateString()}</span>
+                    {detectedMeta.scannedAt && (
+                      <span className="px-1.5 py-0.5 text-[10px] text-zinc-600">Scanned {new Date(detectedMeta.scannedAt).toLocaleDateString()}</span>
                     )}
                   </div>
                 ) : (
@@ -3951,9 +3954,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   <span className="text-xs text-zinc-400">Show quality in name</span>
                 </label>
 
-                {mapping?.useDetectedQuality && mapping?.detectedMeta?.resolution && (
+                {mapping?.useDetectedQuality && detectedMeta?.resolution && (
                   <p className="text-[10px] text-zinc-500 truncate">
-                    Preview: &ldquo;{computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat)}&rdquo;
+                    Preview: &ldquo;{computeDisplayName({ ...mapping, detectedMeta }, playlist?.qualityLabelFormat, globalFormat)}&rdquo;
                   </p>
                 )}
               </div>
