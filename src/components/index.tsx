@@ -1650,6 +1650,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [categorySearch, setCategorySearch] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
   const [lastSelectedCategoryId, setLastSelectedCategoryId] = useState<string | null>(null);
   
@@ -1947,8 +1948,11 @@ export function PlaylistEditor({ user }: { user: User }) {
       return { ...c, order: mapping ? (mapping.order ?? 999999) : 999999 };
     });
     
-    return categoriesWithOrder.sort((a, b) => a.order - b.order);
-  }, [categories, categoryMappings, activeTab]);
+    const sorted = categoriesWithOrder.sort((a, b) => a.order - b.order);
+    if (!categorySearch.trim()) return sorted;
+    const q = categorySearch.toLowerCase();
+    return sorted.filter(c => (c.category_name || c.name || '').toLowerCase().includes(q));
+  }, [categories, categoryMappings, activeTab, categorySearch]);
 
   const filteredStreams = useMemo(() => {
     if (selectedCategoryIds.size === 0) return [];
@@ -2444,8 +2448,10 @@ export function PlaylistEditor({ user }: { user: User }) {
             <div className="flex gap-2 mb-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
-                <input 
-                  placeholder="Search categories..." 
+                <input
+                  value={categorySearch}
+                  onChange={e => setCategorySearch(e.target.value)}
+                  placeholder="Search categories..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
                 />
               </div>
@@ -2600,7 +2606,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                 const firstSelectedStream = sortedStreams.find(s => s._uniqueId === firstSelectedStreamId);
                 return firstSelectedStream ? (
                   <EditorPane
-                    key={selectedStreamIds.size === 1 ? firstSelectedStreamId : Array.from(selectedStreamIds).join(',')}
+                    key={selectedStreamIds.size === 1 ? 'editor-single' : Array.from(selectedStreamIds).join(',')}
                     stream={firstSelectedStream}
                     mapping={mappings.find(m => m.originalId === firstSelectedStreamId && m.type === activeTab)}
                     playlistId={id!}
