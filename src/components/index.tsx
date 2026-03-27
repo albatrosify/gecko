@@ -2928,6 +2928,54 @@ function BatchEditorPane({
 
         <div className="h-px w-full bg-zinc-800/50" />
 
+        {/* Quality Label Toggle Section */}
+        {(() => {
+          const withMeta = scopedIds.filter(id => mappingsById.get(id)?.detectedMeta?.resolution);
+          const allOn = withMeta.length > 0 && withMeta.every(id => mappingsById.get(id)?.useDetectedQuality);
+          const allOff = withMeta.length > 0 && withMeta.every(id => !mappingsById.get(id)?.useDetectedQuality);
+          const indeterminate = withMeta.length > 0 && !allOn && !allOff;
+          async function toggleAll(enable: boolean) {
+            if (!withMeta.length) return;
+            const updates = withMeta
+              .map(id => mappingsById.get(id))
+              .filter((m): m is StreamMapping => !!m?.id)
+              .map(m => ({ id: m.id, useDetectedQuality: enable }));
+            if (!updates.length) return;
+            await api.mappings.batchUpdate(updates);
+            onRefresh();
+          }
+          return (
+            <div className="space-y-3 border-b border-zinc-800 pb-4">
+              <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
+                Quality Label
+              </div>
+              {withMeta.length === 0 ? (
+                <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-zinc-500">{withMeta.length} scanned channel{withMeta.length !== 1 ? 's' : ''}</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => toggleAll(true)}
+                      disabled={allOn}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      {indeterminate ? 'Enable all' : 'Enable'}
+                    </button>
+                    <button
+                      onClick={() => toggleAll(false)}
+                      disabled={allOff}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      Disable all
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Quality Scan Section */}
         <div className="space-y-3 pb-8">
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
