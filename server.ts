@@ -940,24 +940,8 @@ async function startServer() {
         }
 
         for (const type of ['live', 'vod', 'series'] as const) {
-          let cached = getCached(`${sourceId}_streams_${type}`);
-
-          // Fetch from upstream if cache is cold
-          if (!cached) {
-            try {
-              const client = new XtreamClient(sourceDoc as any);
-              let streams;
-              if (type === 'live') streams = await client.getLiveStreams();
-              else if (type === 'vod') streams = await client.getVodStreams();
-              else streams = await client.getSeries();
-              setCache(`${sourceId}_streams_${type}`, streams);
-              cached = getCached(`${sourceId}_streams_${type}`);
-            } catch {
-              continue;
-            }
-          }
-
-          if (!cached?.data) continue;
+          const cached = getCached(`${sourceId}_streams_${type}`);
+          if (!cached?.data) continue; // skip types not yet loaded in this session
 
           for (const stream of cached.data as any[]) {
             const name: string = stream.name || stream.title || '';
