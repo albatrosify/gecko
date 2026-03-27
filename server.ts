@@ -285,6 +285,7 @@ const activeCrons = new Map<string, any>();
 // ── Quality Scan Jobs ──────────────────────────────────────────────────────────
 interface ScanJob {
   id: string;
+  userId: string;
   status: 'running' | 'done' | 'cancelled';
   total: number;
   done: number;
@@ -897,6 +898,9 @@ async function startServer() {
     });
 
     app.patch("/api/settings", requireAuth, async (req: AuthRequest, res) => {
+      if ((req as AuthRequest).user?.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin only' });
+      }
       const db = getDb();
       const { qualityLabelFormat } = req.body;
       await db.collection('settings').updateOne(
@@ -918,8 +922,12 @@ async function startServer() {
         concurrency?: number;
       };
 
-      if (!playlistId || !streamIds?.length || !type) {
+      if (!playlistId || !Array.isArray(streamIds) || !streamIds.length || !type) {
         return res.status(400).json({ error: 'playlistId, streamIds, and type are required' });
+      }
+
+      if (!['live', 'vod', 'series'].includes(type)) {
+        return res.status(400).json({ error: 'type must be live, vod, or series' });
       }
 
       const db = getDb();
@@ -939,6 +947,7 @@ async function startServer() {
       const jobId = Math.random().toString(36).slice(2);
       const job: ScanJob = {
         id: jobId,
+        userId: req.user!.id,
         status: 'running',
         total: streamIds.length,
         done: 0,
@@ -975,31 +984,11 @@ async function startServer() {
 
             if (meta) {
               meta.scannedAt = new Date().toISOString();
-              // Upsert detectedMeta into the mapping for this stream
-              const existing = await db.collection('mappings').findOne({
-                playlistId,
-                originalId: streamId,
-                type,
-              });
-              if (existing) {
-                await db.collection('mappings').updateOne(
-                  { _id: existing._id },
-                  { $set: { detectedMeta: meta } }
-                );
-              } else {
-                // No mapping yet — create one to store the metadata
-                await db.collection('mappings').insertOne({
-                  playlistId,
-                  originalId: streamId,
-                  type,
-                  originalName: streamId,
-                  customName: '',
-                  order: 0,
-                  hidden: false,
-                  categoryId: '',
-                  detectedMeta: meta,
-                });
-              }
+              // Update detectedMeta on existing mapping only — do not create stub records
+              await db.collection('mappings').updateOne(
+                { playlistId, originalId: streamId, type },
+                { $set: { detectedMeta: meta } }
+              );
               job.results.push({ streamId, meta });
             } else {
               job.results.push({ streamId, error: lastError || 'All sources failed' });
@@ -1020,13 +1009,15 @@ async function startServer() {
 
     app.get("/api/quality-scan/:jobId", requireAuth, (req, res) => {
       const job = scanJobs.get(req.params.jobId);
-      if (!job) return res.status(404).json({ error: 'Job not found' });
+      if (!job || job.userId !== (req as AuthRequest).user!.id)
+        return res.status(404).json({ error: 'Job not found' });
       res.json(job);
     });
 
     app.delete("/api/quality-scan/:jobId", requireAuth, (req, res) => {
       const job = scanJobs.get(req.params.jobId);
-      if (!job) return res.status(404).json({ error: 'Job not found' });
+      if (!job || job.userId !== (req as AuthRequest).user!.id)
+        return res.status(404).json({ error: 'Job not found' });
       job.status = 'cancelled';
       res.json({ success: true });
     });
