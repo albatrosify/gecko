@@ -86,12 +86,40 @@ function parseProbeResult(data: { streams?: any[] }): DetectedStreamMeta {
         meta.fps = Math.round(parts[0] / parts[1]);
       }
     }
+
+    // Scan type — progressive or interlaced
+    const fieldOrder = videoStream?.field_order;
+    const scanType: 'p' | 'i' | undefined =
+      fieldOrder && fieldOrder !== 'progressive' && fieldOrder !== 'unknown'
+        ? 'i'
+        : (fieldOrder === 'progressive' ? 'p' : undefined);
+    if (scanType) meta.scanType = scanType;
+
+    // Color depth — prefer bits_per_raw_sample, fallback to pix_fmt parsing
+    let colorDepth: number | undefined;
+    if (videoStream?.bits_per_raw_sample && Number(videoStream.bits_per_raw_sample) > 0) {
+      colorDepth = Number(videoStream.bits_per_raw_sample);
+    } else if (videoStream?.pix_fmt) {
+      // yuv420p10le, yuv420p12le etc.
+      const depthMatch = videoStream.pix_fmt.match(/(\d+)(?:le|be)?$/);
+      if (depthMatch) colorDepth = Number(depthMatch[1]);
+      else if (videoStream.pix_fmt.includes('p') && !videoStream.pix_fmt.match(/\d/)) colorDepth = 8;
+    }
+    if (colorDepth) meta.colorDepth = colorDepth;
+
+    // Video profile
+    const videoProfile = videoStream?.profile || undefined;
+    if (videoProfile) meta.videoProfile = videoProfile;
   }
 
   if (audioStream) {
     const ac: string = (audioStream.codec_name ?? '').toLowerCase();
     if (ac) meta.audioCodec = ac;
     if (audioStream.channels != null) meta.audioChannels = audioStream.channels;
+
+    // Audio layout
+    const audioLayout = audioStream?.channel_layout?.replace(/\(side\)|\(back\)/g, '').trim() || undefined;
+    if (audioLayout) meta.audioLayout = audioLayout;
   }
 
   return meta;

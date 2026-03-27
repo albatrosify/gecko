@@ -33,6 +33,10 @@ export interface DetectedStreamMeta {
   audioCodec?: string;        // e.g. "aac", "eac3", "truehd", "dts", "ac3"
   audioChannels?: number;     // e.g. 2, 6, 8
   scannedAt?: string;         // ISO timestamp
+  scanType?: 'p' | 'i';       // progressive or interlaced
+  colorDepth?: number;        // e.g. 8, 10, 12
+  audioLayout?: string;       // ffprobe channel_layout, e.g. "stereo", "5.1(side)", "7.1"
+  videoProfile?: string;      // e.g. "High", "Main", "Main 10", "High 10"
 }
 
 export interface Playlist {
