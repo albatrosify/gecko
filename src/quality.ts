@@ -164,7 +164,8 @@ function parseExpr(
       const value = ctx[varName] ?? null;
       const condResult = evalCondition(value, op, operand);
       const branch = condResult ? trueBranch : falseBranch;
-      return [renderTemplate(branch, ctx), end];
+      // Use internal renderer (no trim) so intentional trailing spaces are preserved
+      return [_renderRaw(branch, ctx), end];
     }
   }
 
@@ -173,15 +174,8 @@ function parseExpr(
   return [resolveValue(ctx[varName] ?? null), end];
 }
 
-/**
- * Render a quality label template string using a context object built from
- * detected stream metadata. Supports simple variable substitution and
- * conditional expressions.
- *
- * @param template - Template string with {varName} and {varName::op["a"||"b"]} tokens
- * @param ctx - Context object mapping variable names to values
- */
-export function renderTemplate(
+/** Internal renderer — no cleanup, no trim. Used for recursive branch evaluation. */
+function _renderRaw(
   template: string,
   ctx: Record<string, string | number | null>
 ): string {
@@ -197,10 +191,24 @@ export function renderTemplate(
       i++;
     }
   }
-  // Clean up empty brackets/parens and collapse whitespace
-  result = result.replace(/\[\s*\]/g, '').replace(/\(\s*\)/g, '');
-  result = result.replace(/\s{2,}/g, ' ').trim();
   return result;
+}
+
+/**
+ * Render a quality label template string using a context object built from
+ * detected stream metadata. Supports simple variable substitution and
+ * conditional expressions.
+ *
+ * @param template - Template string with {varName} and {varName::op["a"||"b"]} tokens
+ * @param ctx - Context object mapping variable names to values
+ */
+export function renderTemplate(
+  template: string,
+  ctx: Record<string, string | number | null>
+): string {
+  const result = _renderRaw(template, ctx);
+  // Top-level only: clean up empty brackets/parens and collapse whitespace
+  return result.replace(/\[\s*\]/g, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ── Strip existing quality tokens from a name ─────────────────────────────────
