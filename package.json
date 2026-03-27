@@ -2,6 +2,7 @@
   "name": "gecko",
   "private": true,
   "version": "0.2.0",
+  "license": "AGPL-3.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
