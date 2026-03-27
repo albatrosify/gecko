@@ -714,13 +714,14 @@ export function PlaylistManager({ user }: { user: User }) {
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
-                <input
+                <textarea
+                  rows={2}
                   placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]} — leave empty to use global default'}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all resize-none font-mono text-sm"
                   value={editData.qualityLabelFormat ?? ''}
                   onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
                 />
-                <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+                <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
                   Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
                   Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
                   More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
@@ -1536,13 +1537,13 @@ export function Settings({ user }: { user: User }) {
 
             <div className="space-y-3">
               <label className="block text-sm font-medium text-zinc-400">Label Format</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
+              <div className="space-y-2">
+                <textarea
+                  rows={2}
                   value={qualityFormat}
                   onChange={e => setQualityFormat(e.target.value)}
                   placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]}'}
-                  className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-sm"
                 />
                 <button
                   onClick={saveQualityFormat}
@@ -1552,7 +1553,7 @@ export function Settings({ user }: { user: User }) {
                   {qualityFormatSaving ? 'Saving...' : 'Save'}
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+              <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
                 Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
                 Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
                 More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
