@@ -34,7 +34,8 @@ import {
   LayoutList,
   Copy,
   History,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -3869,6 +3870,18 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all"
                 />
               </div>
+
+              {/* VOD / Series download */}
+              {(type === 'vod' || type === 'series') && (
+                <a
+                  href={`/api/download/${type}/${playlistId}/${mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id)}?token=${localStorage.getItem('auth_token') ?? ''}`}
+                  download
+                  className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
+                >
+                  <Download size={13} />
+                  Download
+                </a>
+              )}
 
               {/* Detected Quality */}
               <div className="space-y-2 border border-zinc-800 rounded-xl p-3">

@@ -5,7 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import cron from "node-cron";
 import { connectDb, getDb, toId, docWithId, docsWithId } from "./server/db.ts";
-import { createAuthRouter, requireAuth, AuthRequest } from "./server/auth.ts";
+import { createAuthRouter, requireAuth, requireAuthOrQuery, AuthRequest } from "./server/auth.ts";
 import { getCached, setCache, duplicateCache } from "./server/cache.ts";
 import { XtreamClient } from "./server/xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "./src/types.ts";
@@ -1062,6 +1062,60 @@ async function startServer() {
         return res.status(404).json({ error: 'Job not found' });
       job.status = 'cancelled';
       res.json({ success: true });
+    });
+
+    // =====================================
+    // VOD / Series download proxy
+    // =====================================
+    app.get("/api/download/:type/:playlistId/:streamId", requireAuthOrQuery, async (req: AuthRequest, res) => {
+      const { type, playlistId, streamId } = req.params;
+      if (!['vod', 'series'].includes(type)) {
+        return res.status(400).json({ error: 'type must be vod or series' });
+      }
+
+      try {
+        const db = getDb();
+        const playlistDoc = await db.collection('playlists').findOne({
+          _id: toId(playlistId),
+          userId: req.user!.id,
+        });
+        if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+        const sourceIds: string[] = playlistDoc.sourceIds || [];
+        const sourceDocs = await Promise.all(
+          sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+        );
+        const validSources = sourceDocs.filter(Boolean);
+        if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
+
+        // Use first available source; get container_extension from stream cache
+        const sourceDoc = validSources[0]!;
+        const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+        const streamData = (cached?.data as any[] | undefined)?.find(
+          (s: any) => String(s.stream_id ?? s.series_id) === streamId
+        );
+        const extension = streamData?.container_extension || 'mp4';
+        const title = streamData?.name || streamData?.title || streamId;
+
+        const url = buildStreamUrl(sourceDoc, streamId, type as 'vod' | 'series', extension);
+
+        // Proxy the upstream response as a file download
+        const upstreamRes = await axios.get(url, {
+          responseType: 'stream',
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0' },
+          timeout: 10_000,
+        });
+
+        const filename = `${title.replace(/[^\w\s.-]/g, '_')}.${extension}`;
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', upstreamRes.headers['content-type'] || 'application/octet-stream');
+        if (upstreamRes.headers['content-length']) {
+          res.setHeader('Content-Length', upstreamRes.headers['content-length']);
+        }
+        (upstreamRes.data as NodeJS.ReadableStream).pipe(res);
+      } catch (e: any) {
+        if (!res.headersSent) res.status(502).json({ error: `Upstream error: ${e.message}` });
+      }
     });
 
     // =====================================
