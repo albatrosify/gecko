@@ -1294,6 +1294,9 @@ async function startServer() {
       const sourceIds: string[] = playlist.sourceIds || [];
       if (!sourceIds.length) return res.status(400).send("No source configured");
 
+      const settingsDoc = await db.collection('settings').findOne({ _id: 'global' as any });
+      const globalFormat = settingsDoc?.qualityLabelFormat ?? '[{label}]';
+
       // Look up stream name from mappings (customName takes priority over originalName)
       const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
       const streamMapping = await db.collection('mappings').findOne({
@@ -1301,7 +1304,9 @@ async function startServer() {
         originalId: streamId,
         type: mappingTypeMap[type],
       });
-      const streamName = streamMapping?.customName || streamMapping?.originalName || `Stream ${streamId}`;
+      const streamName = streamMapping
+        ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
+        : `Stream ${streamId}`;
 
       const upstreamHeaders: Record<string, string> = {
         'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -1460,12 +1465,14 @@ async function startServer() {
       }
 
       const db = getDb();
-      const [mappingDocs, catMappingDocs] = await Promise.all([
+      const [mappingDocs, catMappingDocs, settingsDoc] = await Promise.all([
         db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
         db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
+        db.collection('settings').findOne({ _id: 'global' as any }),
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+      const globalFormat = (settingsDoc as any)?.qualityLabelFormat ?? '[{label}]';
 
       const sourceId = playlist.sourceIds?.[0];
       if (!sourceId) {
@@ -1605,7 +1612,7 @@ async function startServer() {
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
               
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
               const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
               if (resolvedIcon) s.stream_icon = resolvedIcon;
@@ -1687,7 +1694,7 @@ async function startServer() {
               if (categoryId && String(s.category_id) !== categoryId) return false;
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
               s._streamOrder = mapping?.order ?? (999999 + idx);
               return true;
@@ -1760,7 +1767,7 @@ async function startServer() {
               if (categoryId && String(s.category_id) !== categoryId) return false;
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
               s._streamOrder = mapping?.order ?? (999999 + idx);
               return true;
@@ -1879,12 +1886,14 @@ async function startServer() {
       if (!playlist) return res.status(401).send("Invalid credentials");
 
       const db = getDb();
-      const [mappingDocs, catMappingDocs] = await Promise.all([
+      const [mappingDocs, catMappingDocs, m3uSettingsDoc] = await Promise.all([
         db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
         db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
+        db.collection('settings').findOne({ _id: 'global' as any }),
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+      const m3uGlobalFormat = (m3uSettingsDoc as any)?.qualityLabelFormat ?? '[{label}]';
 
       try {
         let m3u = "#EXTM3U\n";
@@ -1962,7 +1971,10 @@ async function startServer() {
         for (const stream of streams) {
           const mapping = stream._mapping;
 
-          const name = mapping?.customName ? applyRegex(mapping.customName, mapping.regexRenames || []) : stream.name || stream.title;
+          const baseName = mapping
+            ? computeDisplayName(mapping, playlist.qualityLabelFormat, m3uGlobalFormat)
+            : (stream.name || stream.title);
+          const name = mapping ? applyRegex(baseName, mapping.regexRenames || []) : baseName;
           const logo = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
           const epgId = mapping?.epgMapping || stream.epg_channel_id;
           const categoryName = stream._displayCategoryName;
