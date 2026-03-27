@@ -2537,6 +2537,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                     type={activeTab}
                     source={sources[0]}
                     playlist={playlist}
+                    globalFormat={globalFormat}
                     onClose={() => setSelectedStreamIds(new Set())}
                     onUpdate={refreshMappings}
                     selectedStreamIds={selectedStreamIds.size > 1 ? selectedStreamIds : undefined}
@@ -3310,13 +3311,14 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 
 const StreamRowMemo = React.memo(StreamRow);
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClose, onUpdate, selectedStreamIds, allStreams, allMappings }: {
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
   type: string;
   source?: UpstreamSource;
   playlist?: Playlist;
+  globalFormat?: string;
   onClose: () => void;
   onUpdate: () => void;
   selectedStreamIds?: Set<string>;
@@ -3328,6 +3330,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClo
   const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || "");
   const [loading, setLoading] = useState(false);
   const [showTechInfo, setShowTechInfo] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
 
   // EPG channel search
   const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
@@ -3497,6 +3500,91 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClo
                   placeholder={originalName}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all"
                 />
+              </div>
+
+              {/* Detected Quality */}
+              <div className="space-y-2 border border-zinc-800 rounded-xl p-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
+                  <button
+                    onClick={async () => {
+                      if (!mapping) return;
+                      setScanLoading(true);
+                      try {
+                        const { jobId } = await api.qualityScan.start({
+                          playlistId,
+                          streamIds: [mapping.originalId],
+                          type: type as 'live' | 'vod' | 'series',
+                          concurrency: 1,
+                        });
+                        let job;
+                        do {
+                          await new Promise(r => setTimeout(r, 2000));
+                          job = await api.qualityScan.status(jobId);
+                        } while (job.status === 'running');
+                        const result = job.results.find((r: any) => r.streamId === mapping.originalId);
+                        if (result?.meta && mapping.id) {
+                          await api.mappings.update(mapping.id, { detectedMeta: result.meta } as any);
+                          onUpdate();
+                        }
+                      } finally {
+                        setScanLoading(false);
+                      }
+                    }}
+                    disabled={scanLoading || !mapping}
+                    className="text-[10px] text-emerald-500 hover:underline font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {scanLoading ? 'Scanning...' : 'Scan this channel'}
+                  </button>
+                </div>
+
+                {mapping?.detectedMeta ? (
+                  <div className="flex flex-wrap gap-1">
+                    {mapping.detectedMeta.resolution && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.resolution}</span>
+                    )}
+                    {mapping.detectedMeta.videoCodec && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.videoCodec.toUpperCase()}</span>
+                    )}
+                    {mapping.detectedMeta.hdr && (
+                      <span className="px-1.5 py-0.5 bg-amber-500/15 border border-amber-500/30 rounded text-[10px] font-mono text-amber-400">{mapping.detectedMeta.hdr}</span>
+                    )}
+                    {mapping.detectedMeta.audioCodec && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">
+                        {mapping.detectedMeta.audioCodec.toUpperCase()}{mapping.detectedMeta.audioChannels ? ` ${mapping.detectedMeta.audioChannels}ch` : ''}
+                      </span>
+                    )}
+                    {mapping.detectedMeta.fps && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{mapping.detectedMeta.fps}fps</span>
+                    )}
+                    {mapping.detectedMeta.scannedAt && (
+                      <span className="px-1.5 py-0.5 text-[10px] text-zinc-600">Scanned {new Date(mapping.detectedMeta.scannedAt).toLocaleDateString()}</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-zinc-600 italic">Not scanned yet</p>
+                )}
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!mapping?.useDetectedQuality}
+                    onChange={async e => {
+                      if (!mapping?.id) return;
+                      await api.mappings.update(mapping.id, { useDetectedQuality: e.target.checked } as any);
+                      onUpdate();
+                    }}
+                    disabled={!mapping?.detectedMeta?.resolution}
+                    className="rounded accent-emerald-500"
+                  />
+                  <span className="text-xs text-zinc-400">Show quality in name</span>
+                </label>
+
+                {mapping?.useDetectedQuality && mapping?.detectedMeta?.resolution && (
+                  <p className="text-[10px] text-zinc-500 truncate">
+                    Preview: &ldquo;{computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat)}&rdquo;
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
