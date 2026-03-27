@@ -2515,15 +2515,21 @@ export function PlaylistEditor({ user }: { user: User }) {
               </div>
 
               {showToolPane ? (
-                <BatchEditorPane 
-                  onClose={() => setShowToolPane(false)} 
-                  onApply={handleBatchApplyRegex} 
+                <BatchEditorPane
+                  onClose={() => setShowToolPane(false)}
+                  onApply={handleBatchApplyRegex}
                   onVisibilityToggle={handleBatchVisibility}
                   onMove={handleBatchMove}
                   onMoveToTop={handleBatchMoveToTop}
                   categories={categories}
                   selectedCategoryIds={selectedCategoryIds}
                   selectedStreamIds={selectedStreamIds}
+                  filteredStreams={filteredStreams}
+                  sortedStreams={sortedStreams}
+                  mappings={mappings}
+                  playlist={playlist}
+                  activeTab={activeTab}
+                  onRefresh={refreshMappings}
                 />
               ) : selectedStreamIds.size >= 1 && (() => {
                 const firstSelectedStreamId = Array.from(selectedStreamIds)[0];
@@ -2558,16 +2564,22 @@ export function PlaylistEditor({ user }: { user: User }) {
   );
 }
 
-function BatchEditorPane({ 
-  onApply, 
+function BatchEditorPane({
+  onApply,
   onVisibilityToggle,
   onMove,
   onMoveToTop,
   onClose,
   categories,
   selectedCategoryIds,
-  selectedStreamIds
-}: { 
+  selectedStreamIds,
+  filteredStreams,
+  sortedStreams,
+  mappings,
+  playlist,
+  activeTab,
+  onRefresh,
+}: {
   onApply: (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => void;
   onVisibilityToggle: (hidden: boolean, scope: 'all' | 'categories' | 'streams') => void;
   onMove: (categoryId: string, scope: 'all' | 'categories' | 'streams') => void;
@@ -2576,6 +2588,12 @@ function BatchEditorPane({
   categories: any[];
   selectedCategoryIds: Set<string>;
   selectedStreamIds: Set<string>;
+  filteredStreams: any[];
+  sortedStreams: any[];
+  mappings: StreamMapping[];
+  playlist: Playlist | null;
+  activeTab: 'live' | 'vod' | 'series';
+  onRefresh: () => void;
 }) {
   const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
   const [scope, setScope] = useState<'all' | 'categories' | 'streams'>(() => {
@@ -2584,6 +2602,69 @@ function BatchEditorPane({
     return 'all';
   });
   const [targetCategoryId, setTargetCategoryId] = useState('');
+
+  // Quality scan state
+  const [scanConcurrency, setScanConcurrency] = useState(1);
+  const [skipScanned, setSkipScanned] = useState(true);
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanJob, setScanJob] = useState<{ status: string; total: number; done: number; failed: number } | null>(null);
+  const [scanPolling, setScanPolling] = useState(false);
+
+  const mappingsById = useMemo(() => {
+    const map = new Map<string, StreamMapping>();
+    mappings.forEach(m => { if (m.type === activeTab) map.set(m.originalId, m); });
+    return map;
+  }, [mappings, activeTab]);
+
+  const scopedIds = useMemo(() => {
+    if (scope === 'streams') {
+      return Array.from(selectedStreamIds);
+    } else if (scope === 'categories') {
+      return filteredStreams.map(s => s._uniqueId as string);
+    } else {
+      return sortedStreams.map(s => s._uniqueId as string);
+    }
+  }, [scope, selectedStreamIds, filteredStreams, sortedStreams]);
+
+  async function startScan() {
+    if (!playlist) return;
+    const ids = skipScanned
+      ? scopedIds.filter(id => !mappingsById.get(id)?.detectedMeta)
+      : scopedIds;
+    if (!ids.length) return;
+    const { jobId } = await api.qualityScan.start({
+      playlistId: playlist.id,
+      streamIds: ids,
+      type: activeTab,
+      concurrency: scanConcurrency,
+    });
+    setScanJobId(jobId);
+    setScanJob({ status: 'running', total: ids.length, done: 0, failed: 0 });
+    setScanPolling(true);
+  }
+
+  useEffect(() => {
+    if (!scanPolling || !scanJobId) return;
+    const interval = setInterval(async () => {
+      const job = await api.qualityScan.status(scanJobId);
+      setScanJob(job);
+      if (job.status !== 'running') {
+        setScanPolling(false);
+        onRefresh();
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [scanPolling, scanJobId]);
+
+  async function cancelScan() {
+    if (scanJobId) await api.qualityScan.cancel(scanJobId);
+    setScanPolling(false);
+  }
+
+  const scanableCount = useMemo(() => {
+    if (!skipScanned) return scopedIds.length;
+    return scopedIds.filter(id => !mappingsById.get(id)?.detectedMeta).length;
+  }, [scopedIds, skipScanned, mappingsById]);
 
   // Auto-switch scope when new items are selected
   useEffect(() => {
@@ -2744,14 +2825,14 @@ function BatchEditorPane({
         <div className="h-px w-full bg-zinc-800/50" />
 
         {/* Move to Category Section */}
-        <div className="space-y-3 pb-8">
+        <div className="space-y-3">
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
             <ChevronRight size={12} /> Move to Category
           </div>
           <div className="space-y-2">
-            <select 
-              value={targetCategoryId} 
-              onChange={(e) => setTargetCategoryId(e.target.value)} 
+            <select
+              value={targetCategoryId}
+              onChange={(e) => setTargetCategoryId(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors"
             >
               <option value="">Select Category...</option>
@@ -2761,7 +2842,7 @@ function BatchEditorPane({
                 </option>
               ))}
             </select>
-            <button 
+            <button
               onClick={() => {
                 if (scope === 'all' && !window.confirm("Are you sure you want to move ALL channels into this category? This will clear all existing categories.")) return;
                 if (targetCategoryId) onMove(targetCategoryId, scope);
@@ -2771,6 +2852,74 @@ function BatchEditorPane({
             >
               Move Selected
             </button>
+          </div>
+        </div>
+
+        <div className="h-px w-full bg-zinc-800/50" />
+
+        {/* Quality Scan Section */}
+        <div className="space-y-3 pb-8">
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+            <Search size={12} /> Quality Scan
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-zinc-400">Concurrency</span>
+              <select
+                value={scanConcurrency}
+                onChange={e => setScanConcurrency(Number(e.target.value))}
+                disabled={scanPolling}
+                className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
+              >
+                {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={skipScanned}
+                onChange={e => setSkipScanned(e.target.checked)}
+                disabled={scanPolling}
+                className="accent-emerald-500"
+              />
+              Skip already scanned
+            </label>
+
+            {scanJob && (
+              <div className="space-y-1.5">
+                <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${scanJob.total ? (scanJob.done / scanJob.total) * 100 : 0}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                  <span>{scanJob.done} / {scanJob.total} done</span>
+                  {scanJob.failed > 0 && <span className="text-red-400">{scanJob.failed} failed</span>}
+                  <span className="capitalize">{scanJob.status}</span>
+                </div>
+              </div>
+            )}
+
+            {!scanPolling ? (
+              <button
+                onClick={startScan}
+                disabled={scanableCount === 0 || !playlist}
+                className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+              >
+                <Search size={14} />
+                Scan {scanableCount} channel{scanableCount !== 1 ? 's' : ''}
+              </button>
+            ) : (
+              <button
+                onClick={cancelScan}
+                className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       </div>
