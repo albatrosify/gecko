@@ -308,11 +308,11 @@ async function getGlobalQualityFormat(): Promise<string> {
   return value;
 }
 
-function buildStreamUrl(sourceDoc: any, streamId: string, type: 'live' | 'vod' | 'series'): string {
+function buildStreamUrl(sourceDoc: any, streamId: string, type: 'live' | 'vod' | 'series', extension?: string): string {
   const cl = new XtreamClient(sourceDoc as any);
   if (type === 'live') return cl.getLiveStreamUrl(streamId);
-  if (type === 'vod') return cl.getVodStreamUrl(streamId);
-  return cl.getSeriesStreamUrl(streamId);
+  if (type === 'vod') return cl.getVodStreamUrl(streamId, extension || 'mp4');
+  return cl.getSeriesStreamUrl(streamId, extension || 'mp4');
 }
 
 async function initCronManager() {
@@ -1000,7 +1000,19 @@ async function startServer() {
             // Try each source until one works
             for (const sourceDoc of validSources) {
               try {
-                const url = buildStreamUrl(sourceDoc, streamId, type);
+                // For VOD/series, use the real container_extension from the stream cache
+                // (defaults to 'mp4' only when cache is cold — most providers ignore the extension anyway)
+                let extension: string | undefined;
+                if (type === 'vod' || type === 'series') {
+                  const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+                  if (cached?.data) {
+                    const streamData = (cached.data as any[]).find(
+                      (s: any) => String(s.stream_id ?? s.series_id) === streamId
+                    );
+                    extension = streamData?.container_extension || undefined;
+                  }
+                }
+                const url = buildStreamUrl(sourceDoc, streamId, type, extension);
                 meta = await probeStream(url);
                 break;
               } catch (e: any) {
