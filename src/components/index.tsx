@@ -2681,6 +2681,299 @@ export function PlaylistEditor({ user }: { user: User }) {
   );
 }
 
+interface BatchActionsSectionProps {
+  streamIds: string[];
+  playlistId: string;
+  activeTab: 'live' | 'vod' | 'series';
+  mappings: StreamMapping[];
+  sortedStreams: any[];
+  playlist: any | null;
+  onRefresh: () => void;
+  onBatchApply: (rules: { pattern: string; replacement: string }[], scope: 'streams') => void;
+  onBatchVisibility: (hidden: boolean, scope: 'streams') => void;
+  onBatchMoveToTop: () => void;
+}
+
+function BatchActionsSection({
+  streamIds,
+  playlistId,
+  activeTab,
+  mappings,
+  sortedStreams,
+  playlist,
+  onRefresh,
+  onBatchApply,
+  onBatchVisibility,
+  onBatchMoveToTop,
+}: BatchActionsSectionProps) {
+  const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
+
+  // Quality scan state
+  const [scanConcurrency, setScanConcurrency] = useState(1);
+  const [skipScanned, setSkipScanned] = useState(true);
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanJob, setScanJob] = useState<{ status: string; total: number; done: number; failed: number } | null>(null);
+  const [scanPolling, setScanPolling] = useState(false);
+
+  const mappingsById = useMemo(() => {
+    const map = new Map<string, StreamMapping>();
+    mappings.forEach(m => { if (m.type === activeTab) map.set(m.originalId, m); });
+    return map;
+  }, [mappings, activeTab]);
+
+  async function startScan() {
+    if (!playlist) return;
+    const ids = skipScanned
+      ? streamIds.filter(id => !mappingsById.get(id)?.detectedMeta)
+      : streamIds;
+    if (!ids.length) return;
+    const { jobId } = await api.qualityScan.start({
+      playlistId,
+      streamIds: ids,
+      type: activeTab,
+      concurrency: scanConcurrency,
+    });
+    setScanJobId(jobId);
+    setScanJob({ status: 'running', total: ids.length, done: 0, failed: 0 });
+    setScanPolling(true);
+  }
+
+  useEffect(() => {
+    if (!scanPolling || !scanJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const job = await api.qualityScan.status(scanJobId);
+        setScanJob(job);
+        if (job.status !== 'running') {
+          setScanPolling(false);
+          clearInterval(interval);
+          onRefresh();
+        }
+      } catch (e) {
+        console.error('[QualityScan] polling error:', e);
+        setScanPolling(false);
+        clearInterval(interval);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [scanPolling, scanJobId]);
+
+  async function cancelScan() {
+    if (scanJobId) await api.qualityScan.cancel(scanJobId);
+    setScanPolling(false);
+  }
+
+  const scanableCount = useMemo(() => {
+    if (!skipScanned) return streamIds.length;
+    return streamIds.filter(id => !mappingsById.get(id)?.detectedMeta).length;
+  }, [streamIds, skipScanned, mappingsById]);
+
+  // Quality Label Toggle
+  const withMeta = streamIds.filter(id => mappingsById.get(id)?.detectedMeta?.resolution);
+  const allOn = withMeta.length > 0 && withMeta.every(id => mappingsById.get(id)?.useDetectedQuality);
+  const allOff = withMeta.length > 0 && withMeta.every(id => !mappingsById.get(id)?.useDetectedQuality);
+  const indeterminate = withMeta.length > 0 && !allOn && !allOff;
+
+  async function toggleAll(enable: boolean) {
+    if (!withMeta.length) return;
+    const updates = withMeta
+      .map(id => mappingsById.get(id))
+      .filter((m): m is StreamMapping => !!m?.id)
+      .map(m => ({ id: m.id, useDetectedQuality: enable }));
+    if (!updates.length) return;
+    await api.mappings.batchUpdate(updates);
+    onRefresh();
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Quality Label Toggle Section */}
+      <div className="space-y-3 border-b border-zinc-800 pb-4">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
+          Quality Label
+        </div>
+        {withMeta.length === 0 ? (
+          <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[10px] text-zinc-500">{withMeta.length} scanned channel{withMeta.length !== 1 ? 's' : ''}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleAll(true)}
+                disabled={allOn}
+                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                {indeterminate ? 'Enable all' : 'Enable'}
+              </button>
+              <button
+                onClick={() => toggleAll(false)}
+                disabled={allOff}
+                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Disable all
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Regex Rename Section */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Edit3 size={12} /> Regex Rename
+        </div>
+        <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
+          {rules.map((rule, idx) => (
+            <div key={idx} className="flex gap-2">
+              <input
+                value={rule.pattern}
+                onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
+                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Pattern"
+              />
+              <input
+                value={rule.replacement}
+                onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
+                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Replacement"
+              />
+              <button
+                onClick={() => setRules(rules.filter((_, i) => i !== idx))}
+                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                title="Remove Rule"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <div className="pt-2 flex justify-between items-center">
+            <button
+              onClick={() => setRules([...rules, { pattern: '', replacement: '' }])}
+              className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
+            >
+              + Add Rule
+            </button>
+            <button
+              onClick={() => onBatchApply(rules, 'streams')}
+              className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
+            >
+              Apply Regex rename
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Quality Scan Section */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Search size={12} /> Quality Scan
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-zinc-400">Concurrency</span>
+            <select
+              value={scanConcurrency}
+              onChange={e => setScanConcurrency(Number(e.target.value))}
+              disabled={scanPolling}
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
+            >
+              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={skipScanned}
+              onChange={e => setSkipScanned(e.target.checked)}
+              disabled={scanPolling}
+              className="accent-emerald-500"
+            />
+            Skip already scanned
+          </label>
+          {scanJob && (
+            <div className="space-y-1.5">
+              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                  style={{ width: `${scanJob.total ? (scanJob.done / scanJob.total) * 100 : 0}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                <span>{scanJob.done} / {scanJob.total} done</span>
+                {scanJob.failed > 0 && <span className="text-red-400">{scanJob.failed} failed</span>}
+                <span className="capitalize">{scanJob.status}</span>
+              </div>
+            </div>
+          )}
+          {!scanPolling ? (
+            <button
+              onClick={startScan}
+              disabled={scanableCount === 0 || !playlist}
+              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            >
+              <Search size={14} />
+              Scan {scanableCount} channel{scanableCount !== 1 ? 's' : ''}
+            </button>
+          ) : (
+            <button
+              onClick={cancelScan}
+              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Visibility Actions */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Eye size={12} /> Visibility
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onBatchVisibility(false, 'streams')}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
+          >
+            <Eye size={14} />
+            Show All
+          </button>
+          <button
+            onClick={() => onBatchVisibility(true, 'streams')}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+          >
+            <EyeOff size={14} />
+            Hide All
+          </button>
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Move to Top */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <ArrowLeft className="rotate-90" size={12} /> Order
+        </div>
+        <button
+          onClick={onBatchMoveToTop}
+          disabled={streamIds.length === 0}
+          className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+        >
+          <ArrowLeft size={14} className="rotate-90" />
+          Move to Top
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BatchEditorPane({
   onApply,
   onVisibilityToggle,
