@@ -1010,10 +1010,14 @@ async function startServer() {
 
             if (meta) {
               meta.scannedAt = new Date().toISOString();
-              // Update detectedMeta on existing mapping only — do not create stub records
+              // Upsert detectedMeta — create a minimal mapping if none exists yet
               await db.collection('mappings').updateOne(
                 { playlistId, originalId: streamId, type },
-                { $set: { detectedMeta: meta } }
+                {
+                  $set: { detectedMeta: meta },
+                  $setOnInsert: { originalName: '', customName: '', hidden: false, order: 0, categoryId: '' },
+                },
+                { upsert: true }
               );
               job.results.push({ streamId, meta });
             } else {

@@ -3873,13 +3873,13 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
                   <button
                     onClick={async () => {
-                      if (!mapping) return;
+                      const streamId = mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id);
                       setScanLoading(true);
                       setScanError(null);
                       try {
                         const { jobId } = await api.qualityScan.start({
                           playlistId,
-                          streamIds: [mapping.originalId],
+                          streamIds: [streamId],
                           type: type as 'live' | 'vod' | 'series',
                           concurrency: 1,
                         });
@@ -3888,10 +3888,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                           await new Promise(r => setTimeout(r, 2000));
                           job = await api.qualityScan.status(jobId);
                         } while (job.status === 'running');
-                        const result = job.results.find((r: any) => r.streamId === mapping.originalId);
-                        if (result?.meta && mapping.id) {
-                          await api.mappings.update(mapping.id, { detectedMeta: result.meta } as any);
-                          onUpdate();
+                        const result = job.results.find((r: any) => r.streamId === streamId);
+                        if (result?.meta) {
+                          onUpdate(); // backend upserted the mapping — just refresh
                         } else if (result?.error) {
                           setScanError(result.error);
                         }
@@ -3901,7 +3900,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         setScanLoading(false);
                       }
                     }}
-                    disabled={scanLoading || !mapping}
+                    disabled={scanLoading}
                     className="text-[10px] text-emerald-500 hover:underline font-bold disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     {scanLoading ? 'Scanning...' : 'Scan this channel'}
