@@ -715,12 +715,17 @@ export function PlaylistManager({ user }: { user: User }) {
               <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
                 <input
-                  placeholder="[{label}] — leave empty to use global default"
+                  placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]} — leave empty to use global default'}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                   value={editData.qualityLabelFormat ?? ''}
                   onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
                 />
-                <p className="text-[10px] text-zinc-600">Variables: {'{label}'} (FHD/UHD/etc), {'{res}'} (1920x1080), {'{codec}'} (H.265), {'{hdr}'} (HDR10), {'{audio}'} (DD+ 5.1), {'{fps}'} (50)</p>
+                <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+                  Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                  Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
+                  More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                  Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
+                </p>
               </div>
             </div>
             <div className="flex gap-4">
@@ -1536,7 +1541,7 @@ export function Settings({ user }: { user: User }) {
                   type="text"
                   value={qualityFormat}
                   onChange={e => setQualityFormat(e.target.value)}
-                  placeholder="[{label}]"
+                  placeholder={'[{label}]{hdr::exists[" [{hdr}]"||""]}{surround::exists[" [{surround}]"||""]}'}
                   className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
                 />
                 <button
@@ -1547,13 +1552,11 @@ export function Settings({ user }: { user: User }) {
                   {qualityFormatSaving ? 'Saving...' : 'Save'}
                 </button>
               </div>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Variables: <span className="font-mono text-zinc-400">{'{label}'}</span> (FHD/UHD/etc),
-                <span className="font-mono text-zinc-400"> {'{res}'}</span> (1920x1080),
-                <span className="font-mono text-zinc-400"> {'{codec}'}</span> (H.265),
-                <span className="font-mono text-zinc-400"> {'{hdr}'}</span> (HDR10),
-                <span className="font-mono text-zinc-400"> {'{audio}'}</span> (DD+ 5.1),
-                <span className="font-mono text-zinc-400"> {'{fps}'}</span> (50)
+              <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed">
+                Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
+                More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
               </p>
             </div>
           </div>
