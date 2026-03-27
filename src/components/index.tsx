@@ -2049,8 +2049,6 @@ export function PlaylistEditor({ user }: { user: User }) {
     return newName;
   };
 
-  const [showToolPane, setShowToolPane] = useState(false);
-
   const handleBatchApplyRegex = async (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
@@ -2100,7 +2098,6 @@ export function PlaylistEditor({ user }: { user: User }) {
         setLoading(true);
         await api.mappings.batchUpdate(updates as any[]);
         await refreshMappings();
-        setShowToolPane(false);
       } catch (error) {
         console.error("Batch update failed:", error);
         alert("Failed to apply batch changes.");
@@ -2109,7 +2106,6 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     } else {
       alert("No changes to apply.");
-      setShowToolPane(false);
     }
   };
 
@@ -2460,17 +2456,7 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
         
         <div className="flex gap-2 items-center">
-          <button 
-            onClick={() => setShowToolPane(!showToolPane)}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg font-bold transition-all",
-              showToolPane ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
-            )}
-          >
-            <SettingsIcon size={14} />
-            Tools
-          </button>
-          <button 
+          <button
             onClick={() => setShowSourceSelector(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
           >
@@ -2632,31 +2618,16 @@ export function PlaylistEditor({ user }: { user: User }) {
                 />
               </div>
 
-              {showToolPane ? (
-                <BatchEditorPane
-                  onClose={() => setShowToolPane(false)}
-                  onApply={handleBatchApplyRegex}
-                  onVisibilityToggle={handleBatchVisibility}
-                  onMove={handleBatchMove}
-                  onMoveToTop={handleBatchMoveToTop}
-                  categories={categories}
-                  selectedCategoryIds={selectedCategoryIds}
-                  selectedStreamIds={selectedStreamIds}
-                  filteredStreams={filteredStreams}
-                  sortedStreams={sortedStreams}
-                  mappings={mappings}
-                  playlist={playlist}
-                  activeTab={activeTab}
-                  onRefresh={refreshMappings}
-                />
-              ) : selectedStreamIds.size >= 1 && (() => {
-                const firstSelectedStreamId = Array.from(selectedStreamIds)[0];
-                const firstSelectedStream = sortedStreams.find(s => s._uniqueId === firstSelectedStreamId);
-                return firstSelectedStream ? (
+              {selectedStreamIds.size >= 1 && (() => {
+                const firstId = Array.from(selectedStreamIds)[0];
+                const firstStream = sortedStreams.find((s: any) => s._uniqueId === firstId || String(s.stream_id) === firstId);
+                if (!firstStream) return null;
+                const firstMapping = mappings.find(m => m.originalId === firstId && m.type === activeTab);
+                return (
                   <EditorPane
-                    key={selectedStreamIds.size === 1 ? 'editor-single' : Array.from(selectedStreamIds).join(',')}
-                    stream={firstSelectedStream}
-                    mapping={mappings.find(m => m.originalId === firstSelectedStreamId && m.type === activeTab)}
+                    key={selectedStreamIds.size === 1 ? firstId : Array.from(selectedStreamIds).sort().join(',')}
+                    stream={firstStream}
+                    mapping={firstMapping}
                     playlistId={id!}
                     type={activeTab}
                     source={sources[0]}
@@ -2667,9 +2638,32 @@ export function PlaylistEditor({ user }: { user: User }) {
                     selectedStreamIds={selectedStreamIds.size > 1 ? selectedStreamIds : undefined}
                     allStreams={selectedStreamIds.size > 1 ? sortedStreams : undefined}
                     allMappings={selectedStreamIds.size > 1 ? mappings : undefined}
+                    onBatchApply={selectedStreamIds.size > 1 ? (rules) => handleBatchApplyRegex(rules, 'streams') : undefined}
+                    onBatchVisibility={selectedStreamIds.size > 1 ? (hidden) => handleBatchVisibility(hidden, 'streams') : undefined}
+                    onBatchMoveToTop={selectedStreamIds.size > 1 ? () => handleBatchMoveToTop('streams') : undefined}
                   />
-                ) : null;
+                );
               })()}
+
+              {selectedStreamIds.size === 0 && selectedCategoryIds.size > 0 && (
+                <CategoryPane
+                  selectedCategoryIds={selectedCategoryIds}
+                  categories={categories}
+                  categoryMappings={categoryMappings}
+                  playlistId={id!}
+                  activeTab={activeTab}
+                  sortedStreams={sortedStreams}
+                  mappings={mappings}
+                  playlist={playlist}
+                  onClose={() => setSelectedCategoryIds(new Set())}
+                  onMappingChange={refreshMappings}
+                  onBatchVisibility={(hidden) => handleCategoryBatchVisibility(hidden)}
+                  onMoveToTop={() => handleBatchMoveToTop('categories')}
+                  onBatchApplyRegex={(rules) => handleBatchApplyRegex(rules, 'categories')}
+                  onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
+                  onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
+                />
+              )}
             </div>
           </>
           )}
@@ -4094,7 +4088,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 
 const StreamRowMemo = React.memo(StreamRow);
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings }: {
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
@@ -4107,6 +4101,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   selectedStreamIds?: Set<string>;
   allStreams?: any[];
   allMappings?: StreamMapping[];
+  onBatchApply?: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchVisibility?: (hidden: boolean) => void;
+  onBatchMoveToTop?: () => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
@@ -4573,6 +4570,23 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               </div>
             )}
           </div>
+
+          {isMulti && onBatchApply && onBatchVisibility && onBatchMoveToTop && (
+            <>
+              <div className="h-px w-full bg-zinc-800/50" />
+              <BatchActionsSection
+                streamIds={Array.from(selectedStreamIds ?? new Set())}
+                playlistId={playlistId}
+                activeTab={type as 'live' | 'vod' | 'series'}
+                mappings={allMappings ?? []}
+                playlist={playlist ?? null}
+                onRefresh={onUpdate}
+                onBatchApply={onBatchApply}
+                onBatchVisibility={onBatchVisibility}
+                onBatchMoveToTop={onBatchMoveToTop}
+              />
+            </>
+          )}
 
         </div>
       </div>
