@@ -3898,6 +3898,39 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             )}
           </div>
 
+          {/* Quality label toggle — multi-select only */}
+          {isMulti && allMappings && selectedStreamIds && (
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label</label>
+              {(() => {
+                const scanned = Array.from(selectedStreamIds).filter(id => allMappings.find(m => m.originalId === id && m.type === type)?.detectedMeta?.resolution);
+                if (!scanned.length) return <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>;
+                return (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: true }));
+                        if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                    >
+                      Enable ({scanned.length})
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: false }));
+                        if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
+                    >
+                      Disable
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* EPG Channel */}
           <div className="space-y-1.5" ref={epgRef}>
             <div className="flex items-center justify-between">
