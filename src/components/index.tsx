@@ -28,6 +28,7 @@ import {
   ChevronDown, 
   GripVertical,
   Activity,
+  Folder,
   Wifi,
   Users,
   LayoutList,
@@ -3388,7 +3389,179 @@ function BatchEditorPane({
   );
 }
 
-function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle }: { 
+interface CategoryPaneProps {
+  selectedCategoryIds: Set<string>;
+  categories: any[];               // upstream category objects with category_id, name
+  categoryMappings: CategoryMapping[];
+  playlistId: string;
+  activeTab: 'live' | 'vod' | 'series';
+  sortedStreams: any[];             // all streams (to compute which belong to selected categories)
+  mappings: StreamMapping[];
+  playlist: Playlist | null;
+  onClose: () => void;
+  onMappingChange: () => void;     // refresh after changes
+  onBatchVisibility: (hidden: boolean) => void;   // for category-level hide/show
+  onMoveToTop: () => void;                         // move selected categories to top
+  onBatchApplyRegex: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
+  onMoveStreamsToTop: () => void;
+}
+
+function CategoryPane({
+  selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
+  sortedStreams, mappings, playlist, onClose, onMappingChange,
+  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
+}: CategoryPaneProps) {
+  const isSingle = selectedCategoryIds.size === 1;
+  const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
+
+  const category = catId ? categories.find(c => String(c.category_id) === catId) : null;
+  const mapping = catId ? categoryMappings.find(m => String(m.originalId) === catId) : null;
+
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync nameVal when selection changes
+  useEffect(() => {
+    setNameVal(mapping?.customName || category?.name || '');
+    setEditingName(false);
+  }, [catId, mapping?.customName, category?.name]);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.focus();
+  }, [editingName]);
+
+  const handleRename = async () => {
+    if (!catId) return;
+    const trimmed = nameVal.trim();
+    if (!trimmed) return;
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { customName: trimmed });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: trimmed, order: 0, hidden: false });
+    }
+    setEditingName(false);
+    onMappingChange();
+  };
+
+  const handleToggleVisible = async () => {
+    if (!catId) return;
+    const newHidden = !(mapping?.hidden ?? false);
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { hidden: newHidden });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: newHidden });
+    }
+    onMappingChange();
+  };
+
+  const handleToggleSync = async () => {
+    if (!catId) return;
+    const newSync = !(mapping?.syncOnDemand ?? false);
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
+    }
+    onMappingChange();
+  };
+
+  // Streams that belong to ANY selected category
+  const scopedStreamIds = useMemo(
+    () => sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id))).map(s => String(s.stream_id ?? s._uniqueId)),
+    [sortedStreams, selectedCategoryIds]
+  );
+
+  const isHidden = mapping?.hidden ?? false;
+  const isSynced = mapping?.syncOnDemand ?? false;
+  const displayName = mapping?.customName || category?.name || '(unknown)';
+
+  return (
+    <div className="w-96 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Folder size={14} className="text-zinc-400 shrink-0" />
+          {isSingle ? (
+            editingName ? (
+              <input
+                ref={nameInputRef}
+                value={nameVal}
+                onChange={e => setNameVal(e.target.value)}
+                onBlur={handleRename}
+                onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setEditingName(false); }}
+                className="bg-zinc-800 text-white text-sm px-2 py-0.5 rounded outline-none border border-zinc-600 min-w-0 flex-1"
+              />
+            ) : (
+              <span
+                className="text-sm text-white font-medium truncate cursor-pointer hover:text-zinc-300"
+                onClick={() => setEditingName(true)}
+                title="Click to rename"
+              >
+                {displayName}
+              </span>
+            )
+          ) : (
+            <span className="text-sm text-white font-medium">{selectedCategoryIds.size} categories</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {isSingle && (
+            <>
+              <button
+                onClick={handleToggleVisible}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isHidden ? 'text-zinc-600' : 'text-zinc-300'}`}
+                title={isHidden ? 'Show category' : 'Hide category'}
+              >
+                {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+              <button
+                onClick={handleToggleSync}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
+                title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
+              >
+                <Activity size={14} />
+              </button>
+            </>
+          )}
+          {!isSingle && (
+            <>
+              <button onClick={() => onBatchVisibility(false)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Show all</button>
+              <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
+              <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
+            </>
+          )}
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1">
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Batch actions for streams in selected categories */}
+      <div className="flex-1 overflow-y-auto">
+        {scopedStreamIds.length > 0 ? (
+          <BatchActionsSection
+            streamIds={scopedStreamIds}
+            playlistId={playlistId}
+            activeTab={activeTab}
+            mappings={mappings}
+            playlist={playlist}
+            onRefresh={onMappingChange}
+            onBatchApply={onBatchApplyRegex}
+            onBatchVisibility={onBatchStreamVisibility}
+            onBatchMoveToTop={onMoveStreamsToTop}
+          />
+        ) : (
+          <div className="px-4 py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle }: {
   cat: any; 
   mapping?: CategoryMapping;
   playlistId: string;
