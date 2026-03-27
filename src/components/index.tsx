@@ -3868,31 +3868,35 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Logo URL</label>
-                <div className="flex gap-2 items-start">
-                  <input
-                    value={customIcon}
-                    onChange={e => setCustomIcon(e.target.value)}
-                    placeholder="https://..."
-                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
-                  />
-                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-                    {(customIcon || originalIcon) ? (
-                      <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
-                    ) : (
-                      <Tv size={14} className="text-zinc-700" />
-                    )}
-                  </div>
-                </div>
-                {originalIcon && customIcon && (
-                  <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
-                    Reset to default
-                  </button>
-                )}
-              </div>
             </>
           )}
+
+          {/* Logo URL — visible in single and multi-select */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">
+              Logo URL{isMulti ? ' (applies to all selected)' : ''}
+            </label>
+            <div className="flex gap-2 items-start">
+              <input
+                value={customIcon}
+                onChange={e => setCustomIcon(e.target.value)}
+                placeholder="https://..."
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
+              />
+              <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
+                {(customIcon || originalIcon) ? (
+                  <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
+                ) : (
+                  <Tv size={14} className="text-zinc-700" />
+                )}
+              </div>
+            </div>
+            {!isMulti && originalIcon && customIcon && (
+              <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
+                Reset to default
+              </button>
+            )}
+          </div>
 
           {/* EPG Channel */}
           <div className="space-y-1.5" ref={epgRef}>
