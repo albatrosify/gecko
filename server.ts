@@ -294,6 +294,20 @@ interface ScanJob {
 }
 const scanJobs = new Map<string, ScanJob>();
 
+// Module-level cache for global quality format (invalidated on PATCH /api/settings)
+let _qualityFormatCache: { value: string; expiresAt: number } | null = null;
+
+async function getGlobalQualityFormat(): Promise<string> {
+  if (_qualityFormatCache && Date.now() < _qualityFormatCache.expiresAt) {
+    return _qualityFormatCache.value;
+  }
+  const db = getDb();
+  const doc = await db.collection('settings').findOne({ _id: 'global' as any });
+  const value = (doc as any)?.qualityLabelFormat ?? '[{label}]';
+  _qualityFormatCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
+}
+
 function buildStreamUrl(sourceDoc: any, streamId: string, type: 'live' | 'vod' | 'series'): string {
   const cl = new XtreamClient(sourceDoc as any);
   if (type === 'live') return cl.getLiveStreamUrl(streamId);
@@ -903,11 +917,15 @@ async function startServer() {
       }
       const db = getDb();
       const { qualityLabelFormat } = req.body;
+      if (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200) {
+        return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
+      }
       await db.collection('settings').updateOne(
         { _id: 'global' as any },
         { $set: { qualityLabelFormat } },
         { upsert: true }
       );
+      _qualityFormatCache = null;
       res.json({ success: true });
     });
 
@@ -1294,8 +1312,7 @@ async function startServer() {
       const sourceIds: string[] = playlist.sourceIds || [];
       if (!sourceIds.length) return res.status(400).send("No source configured");
 
-      const settingsDoc = await db.collection('settings').findOne({ _id: 'global' as any });
-      const globalFormat = settingsDoc?.qualityLabelFormat ?? '[{label}]';
+      const globalFormat = await getGlobalQualityFormat();
 
       // Look up stream name from mappings (customName takes priority over originalName)
       const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
@@ -1465,14 +1482,13 @@ async function startServer() {
       }
 
       const db = getDb();
-      const [mappingDocs, catMappingDocs, settingsDoc] = await Promise.all([
+      const [mappingDocs, catMappingDocs] = await Promise.all([
         db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
         db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
-        db.collection('settings').findOne({ _id: 'global' as any }),
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
-      const globalFormat = (settingsDoc as any)?.qualityLabelFormat ?? '[{label}]';
+      const globalFormat = await getGlobalQualityFormat();
 
       const sourceId = playlist.sourceIds?.[0];
       if (!sourceId) {
@@ -1886,14 +1902,13 @@ async function startServer() {
       if (!playlist) return res.status(401).send("Invalid credentials");
 
       const db = getDb();
-      const [mappingDocs, catMappingDocs, m3uSettingsDoc] = await Promise.all([
+      const [mappingDocs, catMappingDocs] = await Promise.all([
         db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
         db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
-        db.collection('settings').findOne({ _id: 'global' as any }),
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
-      const m3uGlobalFormat = (m3uSettingsDoc as any)?.qualityLabelFormat ?? '[{label}]';
+      const m3uGlobalFormat = await getGlobalQualityFormat();
 
       try {
         let m3u = "#EXTM3U\n";
