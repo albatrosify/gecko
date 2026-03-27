@@ -2686,11 +2686,10 @@ interface BatchActionsSectionProps {
   playlistId: string;
   activeTab: 'live' | 'vod' | 'series';
   mappings: StreamMapping[];
-  sortedStreams: any[];
-  playlist: any | null;
+  playlist: Playlist | null;
   onRefresh: () => void;
-  onBatchApply: (rules: { pattern: string; replacement: string }[], scope: 'streams') => void;
-  onBatchVisibility: (hidden: boolean, scope: 'streams') => void;
+  onBatchApply: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchVisibility: (hidden: boolean) => void;
   onBatchMoveToTop: () => void;
 }
 
@@ -2699,7 +2698,6 @@ function BatchActionsSection({
   playlistId,
   activeTab,
   mappings,
-  sortedStreams,
   playlist,
   onRefresh,
   onBatchApply,
@@ -2756,7 +2754,7 @@ function BatchActionsSection({
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [scanPolling, scanJobId]);
+  }, [scanPolling, scanJobId, onRefresh]);
 
   async function cancelScan() {
     if (scanJobId) await api.qualityScan.cancel(scanJobId);
@@ -2817,8 +2815,6 @@ function BatchActionsSection({
         )}
       </div>
 
-      <div className="h-px w-full bg-zinc-800/50" />
-
       {/* Regex Rename Section */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
@@ -2856,7 +2852,7 @@ function BatchActionsSection({
               + Add Rule
             </button>
             <button
-              onClick={() => onBatchApply(rules, 'streams')}
+              onClick={() => onBatchApply(rules)}
               className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
             >
               Apply Regex rename
@@ -2938,14 +2934,14 @@ function BatchActionsSection({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={() => onBatchVisibility(false, 'streams')}
+            onClick={() => onBatchVisibility(false)}
             className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
           >
             <Eye size={14} />
             Show All
           </button>
           <button
-            onClick={() => onBatchVisibility(true, 'streams')}
+            onClick={() => onBatchVisibility(true)}
             className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
           >
             <EyeOff size={14} />
