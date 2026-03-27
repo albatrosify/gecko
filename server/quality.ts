@@ -14,6 +14,8 @@ export async function probeStream(
       '-v', 'quiet',
       '-print_format', 'json',
       '-show_streams',
+      '-probesize', '5000000',
+      '-analyzeduration', '5000000',
       '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
       url,
     ];
@@ -37,7 +39,11 @@ export async function probeStream(
       }
       try {
         const data = JSON.parse(stdout);
-        resolve(parseProbeResult(data));
+        const result = parseProbeResult(data);
+        if (!result.resolution && !result.videoCodec && !result.audioCodec) {
+          return reject(new Error('No stream data detected — stream may be inaccessible or taking too long to respond'));
+        }
+        resolve(result);
       } catch {
         reject(new Error('Failed to parse ffprobe JSON output'));
       }

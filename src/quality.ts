@@ -230,9 +230,10 @@ export function stripQualityLabel(name: string): string {
 export function computeDisplayName(
   mapping: Pick<StreamMapping, 'customName' | 'originalName' | 'detectedMeta' | 'useDetectedQuality'>,
   playlistFormat?: string | null,
-  globalFormat?: string | null
+  globalFormat?: string | null,
+  fallbackName?: string   // stream.name from upstream, used when mapping has empty originalName
 ): string {
-  const base = mapping.customName || mapping.originalName;
+  const base = mapping.customName || mapping.originalName || fallbackName || '';
   if (!mapping.useDetectedQuality || !mapping.detectedMeta?.resolution) return base;
   const format = playlistFormat ?? globalFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
   const ctx = buildTemplateContext(mapping.detectedMeta);

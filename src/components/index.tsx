@@ -3487,7 +3487,7 @@ const VirtualStreamRow = React.memo(({
   const mapping = mappings.find(m => m.originalId === originalId && m.type === activeTab);
   const originalName = stream.name || stream.title || "";
   const baseName = mapping
-    ? computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat)
+    ? computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat, originalName)
     : originalName;
   const displayName = applyRegex(baseName, mapping?.regexRenames || []);
   
