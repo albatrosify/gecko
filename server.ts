@@ -944,6 +944,14 @@ async function startServer() {
         return res.status(400).json({ error: 'playlistId, streamIds, and type are required' });
       }
 
+      if (streamIds.length > 500) {
+        return res.status(400).json({ error: 'Maximum 500 streams per scan job' });
+      }
+
+      if (!streamIds.every((id: any) => typeof id === 'string' && id.length > 0)) {
+        return res.status(400).json({ error: 'streamIds must be an array of non-empty strings' });
+      }
+
       if (!['live', 'vod', 'series'].includes(type)) {
         return res.status(400).json({ error: 'type must be live, vod, or series' });
       }
