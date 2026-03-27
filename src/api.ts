@@ -153,6 +153,11 @@ export const playlists = {
       body: JSON.stringify(data),
     });
   },
+  async search(id: string, q: string) {
+    return request<{ results: { streamId: string; name: string; type: 'live'|'vod'|'series'; categoryId: string; categoryName: string }[] }>(
+      `/api/playlists/${id}/search?q=${encodeURIComponent(q)}`
+    );
+  },
 };
 
 // Mappings
@@ -268,5 +273,46 @@ export const system = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, upstream, proxy, admin, system };
+// Settings
+export const settings = {
+  async get(): Promise<{ qualityLabelFormat: string }> {
+    return request('/api/settings');
+  },
+  async update(data: { qualityLabelFormat: string }) {
+    return request<{ success: boolean }>('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+// Quality Scan
+export const qualityScan = {
+  async start(body: {
+    playlistId: string;
+    streamIds: string[];
+    type: 'live' | 'vod' | 'series';
+    concurrency?: number;
+  }): Promise<{ jobId: string }> {
+    return request('/api/quality-scan', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+  async status(jobId: string): Promise<{
+    id: string;
+    status: 'running' | 'done' | 'cancelled';
+    total: number;
+    done: number;
+    failed: number;
+    results: { streamId: string; meta?: any; error?: string }[];
+  }> {
+    return request(`/api/quality-scan/${jobId}`);
+  },
+  async cancel(jobId: string): Promise<{ success: boolean }> {
+    return request(`/api/quality-scan/${jobId}`, { method: 'DELETE' });
+  },
+};
+
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, upstream, proxy, admin, system, settings, qualityScan };
 export default api;

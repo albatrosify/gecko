@@ -29,12 +29,14 @@ import {
   ChevronUp,
   GripVertical,
   Activity,
+  Folder,
   Wifi,
   Users,
   LayoutList,
   Copy,
   History,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -47,6 +49,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import axios from 'axios';
+import { computeDisplayName } from '../quality';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -404,7 +407,7 @@ export function PlaylistManager({ user }: { user: User }) {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[] });
+  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '' });
   const [availableEpgs, setAvailableEpgs] = useState<any[]>([]);
 
   const loadPlaylists = useCallback(async () => {
@@ -712,6 +715,23 @@ export function PlaylistManager({ user }: { user: User }) {
                   </div>
                 )}
               </div>
+              <div className="pt-4 border-t border-zinc-800 space-y-3">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
+                <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
+                <textarea
+                  rows={2}
+                  placeholder={`${QUALITY_PRESETS[0].template} — leave empty to use global default`}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all resize-none font-mono text-sm"
+                  value={editData.qualityLabelFormat ?? ''}
+                  onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
+                />
+                <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
+                  Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                  Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
+                  More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                  Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
+                </p>
+              </div>
             </div>
             <div className="flex gap-4">
               <button 
@@ -767,7 +787,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 <button 
                   onClick={() => {
                     setEditingPlaylist(playlist);
-                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [] });
+                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '' });
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 
@@ -1439,9 +1459,52 @@ export function EPGManager
   );
 }
 
+const QUALITY_PRESETS: { label: string; description: string; template: string }[] = [
+  {
+    label: 'Standard',
+    description: '[5.1] [HDR10] [FHD]',
+    template: '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
+  },
+  {
+    label: 'Minimal',
+    description: '[FHD]',
+    template: '[{label}]',
+  },
+  {
+    label: 'Verbose',
+    description: '[5.1] [DD+] [HDR10] [FHD] [H.265]',
+    template: '{surround::exists["[{surround}] "||""]}{premium::exists["[{premium}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}] [{codec}]',
+  },
+  {
+    label: 'No brackets',
+    description: '5.1 HDR10 FHD',
+    template: '{surround::exists["{surround} "||""]}{hdr::exists["{hdr} "||""]}{label}',
+  },
+];
+
+function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {QUALITY_PRESETS.map(p => (
+        <button
+          key={p.label}
+          type="button"
+          onClick={() => onSelect(p.template)}
+          title={p.template}
+          className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-emerald-500/50 rounded-lg text-zinc-400 hover:text-zinc-100 transition-all"
+        >
+          {p.label} <span className="text-zinc-600">{p.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Settings({ user }: { user: User }) {
   const [logs, setLogs] = useState<string>('Loading logs...');
   const logRef = useRef<HTMLPreElement>(null);
+  const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
+  const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -1460,10 +1523,27 @@ export function Settings({ user }: { user: User }) {
   }, [fetchLogs]);
 
   useEffect(() => {
+    api.settings.get()
+      .then(s => setQualityFormat(s.qualityLabelFormat ?? '[{label}]'))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [logs]);
+
+  async function saveQualityFormat() {
+    setQualityFormatSaving(true);
+    try {
+      await api.settings.update({ qualityLabelFormat: qualityFormat });
+    } catch (err: any) {
+      console.error('Failed to save quality format:', err);
+    } finally {
+      setQualityFormatSaving(false);
+    }
+  }
 
   return (
     <div className="p-8 space-y-8 max-w-6xl mx-auto">
@@ -1491,6 +1571,40 @@ export function Settings({ user }: { user: User }) {
                   <div className="absolute left-1 top-1 w-3 h-3 bg-zinc-600 rounded-full"></div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold">Quality Labels</h3>
+              <p className="text-sm text-zinc-500">Default format for quality labels in channel names</p>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-zinc-400">Label Format</label>
+              <div className="space-y-2">
+                <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
+                <textarea
+                  rows={2}
+                  value={qualityFormat}
+                  onChange={e => setQualityFormat(e.target.value)}
+                  placeholder={QUALITY_PRESETS[0].template}
+                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-sm"
+                />
+                <button
+                  onClick={saveQualityFormat}
+                  disabled={qualityFormatSaving}
+                  className="px-6 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {qualityFormatSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
+                Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
+                More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
+              </p>
             </div>
           </div>
 
@@ -1585,12 +1699,19 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [categorySearch, setCategorySearch] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
   const [lastSelectedCategoryId, setLastSelectedCategoryId] = useState<string | null>(null);
   
   const [selectedStreamIds, setSelectedStreamIds] = useState<Set<string>>(new Set());
   const [lastSelectedStreamId, setLastSelectedStreamId] = useState<string | null>(null);
+  const [globalFormat, setGlobalFormat] = useState<string>('[{label}]');
+
+  useEffect(() => {
+    api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {});
+  }, []);
 
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
@@ -1660,6 +1781,17 @@ export function PlaylistEditor({ user }: { user: User }) {
     loadData();
   }, [sources, activeTab]);
 
+  // Cmd+K / Ctrl+K to open global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowGlobalSearch(v => !v);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -1878,8 +2010,11 @@ export function PlaylistEditor({ user }: { user: User }) {
       return { ...c, order: mapping ? (mapping.order ?? 999999) : 999999 };
     });
     
-    return categoriesWithOrder.sort((a, b) => a.order - b.order);
-  }, [categories, categoryMappings, activeTab]);
+    const sorted = categoriesWithOrder.sort((a, b) => a.order - b.order);
+    if (!categorySearch.trim()) return sorted;
+    const q = categorySearch.toLowerCase();
+    return sorted.filter(c => (c.category_name || c.name || '').toLowerCase().includes(q));
+  }, [categories, categoryMappings, activeTab, categorySearch]);
 
   const filteredStreams = useMemo(() => {
     if (selectedCategoryIds.size === 0) return [];
@@ -1940,8 +2075,6 @@ export function PlaylistEditor({ user }: { user: User }) {
     return newName;
   };
 
-  const [showToolPane, setShowToolPane] = useState(false);
-
   const handleBatchApplyRegex = async (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
@@ -1991,7 +2124,6 @@ export function PlaylistEditor({ user }: { user: User }) {
         setLoading(true);
         await api.mappings.batchUpdate(updates as any[]);
         await refreshMappings();
-        setShowToolPane(false);
       } catch (error) {
         console.error("Batch update failed:", error);
         alert("Failed to apply batch changes.");
@@ -2000,7 +2132,6 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     } else {
       alert("No changes to apply.");
-      setShowToolPane(false);
     }
   };
 
@@ -2219,6 +2350,7 @@ export function PlaylistEditor({ user }: { user: User }) {
 
   const handleCategoryClick = (catId: string, e: React.MouseEvent) => {
     e.preventDefault();
+    setSelectedStreamIds(new Set()); // clear stream selection when switching to category
     const visibleCategories = (sortedCategories || []).map(c => String(c.category_id || c.id));
     
     setSelectedCategoryIds(prev => {
@@ -2372,6 +2504,19 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
       )}
 
+      {showGlobalSearch && (
+        <GlobalSearch
+          playlistId={id!}
+          onClose={() => setShowGlobalSearch(false)}
+          onNavigate={(type, categoryId, streamId) => {
+            setActiveTab(type);
+            setSelectedCategoryIds(new Set([categoryId]));
+            setSelectedStreamIds(new Set([streamId]));
+            setShowGlobalSearch(false);
+          }}
+        />
+      )}
+
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10 px-4">
         <div className="flex items-center">
           <Link to="/" className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 mr-2 -ml-2">
@@ -2387,17 +2532,15 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
         
         <div className="flex gap-2 items-center">
-          <button 
-            onClick={() => setShowToolPane(!showToolPane)}
-            className={cn(
-              "flex items-center gap-2 px-3 py-1.5 text-xs rounded-lg font-bold transition-all",
-              showToolPane ? "bg-emerald-500 text-zinc-950" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white"
-            )}
+          <button
+            onClick={() => setShowGlobalSearch(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
+            title="Search (⌘K)"
           >
-            <SettingsIcon size={14} />
-            Tools
+            <Search size={14} />
+            Search
           </button>
-          <button 
+          <button
             onClick={() => setShowSourceSelector(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
           >
@@ -2423,8 +2566,10 @@ export function PlaylistEditor({ user }: { user: User }) {
             <div className="flex gap-2 mb-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
-                <input 
-                  placeholder="Search categories..." 
+                <input
+                  value={categorySearch}
+                  onChange={e => setCategorySearch(e.target.value)}
+                  placeholder="Search categories..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
                 />
               </div>
@@ -2552,40 +2697,57 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onSelectStream={handleStreamClick}
                   selectedStreamIds={selectedStreamIds}
                   epgChannels={epgChannels}
+                  playlist={playlist}
+                  globalFormat={globalFormat}
                 />
               </div>
 
-              {showToolPane ? (
-                <BatchEditorPane 
-                  onClose={() => setShowToolPane(false)} 
-                  onApply={handleBatchApplyRegex} 
-                  onVisibilityToggle={handleBatchVisibility}
-                  onMove={handleBatchMove}
-                  onMoveToTop={handleBatchMoveToTop}
-                  categories={categories}
-                  selectedCategoryIds={selectedCategoryIds}
-                  selectedStreamIds={selectedStreamIds}
-                />
-              ) : selectedStreamIds.size >= 1 && (() => {
-                const firstSelectedStreamId = Array.from(selectedStreamIds)[0];
-                const firstSelectedStream = sortedStreams.find(s => s._uniqueId === firstSelectedStreamId);
-                return firstSelectedStream ? (
+              {selectedStreamIds.size >= 1 && (() => {
+                const firstId = Array.from(selectedStreamIds)[0];
+                const firstStream = sortedStreams.find((s: any) => s._uniqueId === firstId || String(s.stream_id) === firstId);
+                if (!firstStream) return null;
+                const firstMapping = mappings.find(m => m.originalId === firstId && m.type === activeTab);
+                return (
                   <EditorPane
-                    key={selectedStreamIds.size === 1 ? firstSelectedStreamId : Array.from(selectedStreamIds).join(',')}
-                    stream={firstSelectedStream}
-                    mapping={mappings.find(m => m.originalId === firstSelectedStreamId && m.type === activeTab)}
+                    key="editor-pane"
+                    stream={firstStream}
+                    mapping={firstMapping}
                     playlistId={id!}
                     type={activeTab}
                     source={sources[0]}
                     playlist={playlist}
+                    globalFormat={globalFormat}
                     onClose={() => setSelectedStreamIds(new Set())}
                     onUpdate={refreshMappings}
                     selectedStreamIds={selectedStreamIds.size > 1 ? selectedStreamIds : undefined}
                     allStreams={selectedStreamIds.size > 1 ? sortedStreams : undefined}
                     allMappings={selectedStreamIds.size > 1 ? mappings : undefined}
+                    onBatchApply={selectedStreamIds.size > 1 ? (rules) => handleBatchApplyRegex(rules, 'streams') : undefined}
+                    onBatchVisibility={selectedStreamIds.size > 1 ? (hidden) => handleBatchVisibility(hidden, 'streams') : undefined}
+                    onBatchMoveToTop={selectedStreamIds.size > 1 ? () => handleBatchMoveToTop('streams') : undefined}
                   />
-                ) : null;
+                );
               })()}
+
+              {selectedStreamIds.size === 0 && selectedCategoryIds.size > 0 && (
+                <CategoryPane
+                  selectedCategoryIds={selectedCategoryIds}
+                  categories={categories}
+                  categoryMappings={categoryMappings}
+                  playlistId={id!}
+                  activeTab={activeTab}
+                  sortedStreams={sortedStreams}
+                  mappings={mappings}
+                  playlist={playlist}
+                  onClose={() => setSelectedCategoryIds(new Set())}
+                  onMappingChange={refreshMappings}
+                  onBatchVisibility={(hidden) => handleCategoryBatchVisibility(hidden)}
+                  onMoveToTop={() => handleBatchMoveToTop('categories')}
+                  onBatchApplyRegex={(rules) => handleBatchApplyRegex(rules, 'categories')}
+                  onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
+                  onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
+                />
+              )}
             </div>
           </>
           )}
@@ -2598,227 +2760,470 @@ export function PlaylistEditor({ user }: { user: User }) {
   );
 }
 
-function BatchEditorPane({ 
-  onApply, 
-  onVisibilityToggle,
-  onMove,
-  onMoveToTop,
-  onClose,
-  categories,
-  selectedCategoryIds,
-  selectedStreamIds
-}: { 
-  onApply: (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => void;
-  onVisibilityToggle: (hidden: boolean, scope: 'all' | 'categories' | 'streams') => void;
-  onMove: (categoryId: string, scope: 'all' | 'categories' | 'streams') => void;
-  onMoveToTop: (scope: 'streams') => void;
-  onClose: () => void;
-  categories: any[];
-  selectedCategoryIds: Set<string>;
-  selectedStreamIds: Set<string>;
-}) {
-  const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
-  const [scope, setScope] = useState<'all' | 'categories' | 'streams'>(() => {
-    if (selectedStreamIds.size > 0) return 'streams';
-    if (selectedCategoryIds.size > 0) return 'categories';
-    return 'all';
-  });
-  const [targetCategoryId, setTargetCategoryId] = useState('');
+interface BatchActionsSectionProps {
+  streamIds: string[];
+  playlistId: string;
+  activeTab: 'live' | 'vod' | 'series';
+  mappings: StreamMapping[];
+  playlist: Playlist | null;
+  onRefresh: () => void;
+  onBatchApply: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchVisibility: (hidden: boolean) => void;
+  onBatchMoveToTop: () => void;
+}
 
-  // Auto-switch scope when new items are selected
+function BatchActionsSection({
+  streamIds,
+  playlistId,
+  activeTab,
+  mappings,
+  playlist,
+  onRefresh,
+  onBatchApply,
+  onBatchVisibility,
+  onBatchMoveToTop,
+}: BatchActionsSectionProps) {
+  const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
+
+  // Quality scan state
+  const [scanConcurrency, setScanConcurrency] = useState(1);
+  const [skipScanned, setSkipScanned] = useState(true);
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanJob, setScanJob] = useState<{ status: string; total: number; done: number; failed: number } | null>(null);
+  const [scanPolling, setScanPolling] = useState(false);
+
+  const mappingsById = useMemo(() => {
+    const map = new Map<string, StreamMapping>();
+    mappings.forEach(m => { if (m.type === activeTab) map.set(m.originalId, m); });
+    return map;
+  }, [mappings, activeTab]);
+
+  async function startScan() {
+    if (!playlist) return;
+    const ids = skipScanned
+      ? streamIds.filter(id => !mappingsById.get(id)?.detectedMeta)
+      : streamIds;
+    if (!ids.length) return;
+    const { jobId } = await api.qualityScan.start({
+      playlistId,
+      streamIds: ids,
+      type: activeTab,
+      concurrency: scanConcurrency,
+    });
+    setScanJobId(jobId);
+    setScanJob({ status: 'running', total: ids.length, done: 0, failed: 0 });
+    setScanPolling(true);
+  }
+
   useEffect(() => {
-    if (selectedStreamIds.size > 0) setScope('streams');
-    else if (selectedCategoryIds.size > 0) setScope('categories');
-    else setScope('all');
-  }, [selectedStreamIds.size, selectedCategoryIds.size]);
+    if (!scanPolling || !scanJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const job = await api.qualityScan.status(scanJobId);
+        setScanJob(job);
+        if (job.status !== 'running') {
+          setScanPolling(false);
+          clearInterval(interval);
+          onRefresh();
+        }
+      } catch (e) {
+        console.error('[QualityScan] polling error:', e);
+        setScanPolling(false);
+        clearInterval(interval);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [scanPolling, scanJobId, onRefresh]);
+
+  async function cancelScan() {
+    if (scanJobId) await api.qualityScan.cancel(scanJobId);
+    setScanPolling(false);
+  }
+
+  const scanableCount = useMemo(() => {
+    if (!skipScanned) return streamIds.length;
+    return streamIds.filter(id => !mappingsById.get(id)?.detectedMeta).length;
+  }, [streamIds, skipScanned, mappingsById]);
+
+  // Quality Label Toggle
+  const withMeta = streamIds.filter(id => mappingsById.get(id)?.detectedMeta?.resolution);
+  const allOn = withMeta.length > 0 && withMeta.every(id => mappingsById.get(id)?.useDetectedQuality);
+  const allOff = withMeta.length > 0 && withMeta.every(id => !mappingsById.get(id)?.useDetectedQuality);
+  const indeterminate = withMeta.length > 0 && !allOn && !allOff;
+
+  async function toggleAll(enable: boolean) {
+    if (!withMeta.length) return;
+    const updates = withMeta
+      .map(id => mappingsById.get(id))
+      .filter((m): m is StreamMapping => !!m?.id)
+      .map(m => ({ id: m.id, useDetectedQuality: enable }));
+    if (!updates.length) return;
+    await api.mappings.batchUpdate(updates);
+    onRefresh();
+  }
 
   return (
-    <aside className="w-96 border-l border-zinc-800 bg-zinc-900 flex flex-col shrink-0 z-20 shadow-2xl relative">
-      <div className="p-4 border-b border-zinc-800 flex justify-between items-center sticky top-0 bg-zinc-900 z-10">
-        <h3 className="text-sm font-bold tracking-wider text-zinc-400 uppercase">Batch Operations</h3>
-        <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 p-1.5 transition-colors hover:bg-zinc-800 rounded-lg">
-          <X size={16} />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Scope Selector */}
-        <div className="space-y-3">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-            <SettingsIcon size={12} /> Target Scope
-          </div>
-          <div className="space-y-1.5">
-            <button 
-              onClick={() => setScope('all')}
-              className={cn(
-                "w-full px-4 py-2.5 text-left text-sm font-bold rounded-xl border transition-all",
-                scope === 'all' ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "bg-zinc-950/50 border-zinc-800/50 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900"
-              )}
-            >
-              All Channels
-            </button>
-            <button 
-              onClick={() => setScope('categories')}
-              disabled={selectedCategoryIds.size === 0}
-              className={cn(
-                "w-full px-4 py-2.5 text-left text-sm font-bold rounded-xl border transition-all flex justify-between items-center",
-                scope === 'categories' ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "bg-zinc-950/50 border-zinc-800/50 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed"
-              )}
-            >
-              Selected Categories
-              <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-300">{selectedCategoryIds.size}</span>
-            </button>
-            <button 
-              onClick={() => setScope('streams')}
-              disabled={selectedStreamIds.size === 0}
-              className={cn(
-                "w-full px-4 py-2.5 text-left text-sm font-bold rounded-xl border transition-all flex justify-between items-center",
-                scope === 'streams' ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]" : "bg-zinc-950/50 border-zinc-800/50 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900 disabled:opacity-30 disabled:cursor-not-allowed"
-              )}
-            >
-              Selected Channels
-              <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded-full text-zinc-300">{selectedStreamIds.size}</span>
-            </button>
-          </div>
+    <div className="space-y-6">
+      {/* Quality Label Toggle Section */}
+      <div className="space-y-3 border-b border-zinc-800 pb-4">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
+          Quality Label
         </div>
-
-        <div className="h-px w-full bg-zinc-800/50" />
-
-        {/* Visibility Actions */}
-        <div className="space-y-3">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-            <Eye size={12} /> Visibility
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button 
-              onClick={() => {
-                if (scope === 'all' && !window.confirm("Are you sure you want to SHOW ALL channels across the entire playlist?")) return;
-                onVisibilityToggle(false, scope);
-              }}
-              className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
-            >
-              <Eye size={14} />
-              Show All
-            </button>
-            <button 
-              onClick={() => {
-                if (scope === 'all' && !window.confirm("Are you sure you want to HIDE ALL channels across the entire playlist?")) return;
-                onVisibilityToggle(true, scope);
-              }}
-              className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
-            >
-              <EyeOff size={14} />
-              Hide All
-            </button>
-          </div>
-        </div>
-
-        <div className="h-px w-full bg-zinc-800/50" />
-
-        {/* Move Actions */}
-        <div className="space-y-3">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-            <ArrowLeft className="rotate-90" size={12} /> Order
-          </div>
-          <button 
-            onClick={() => onMoveToTop('streams')}
-            disabled={selectedStreamIds.size === 0}
-            className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
-          >
-            <ArrowLeft size={14} className="rotate-90" />
-            Move to Top
-          </button>
-        </div>
-
-        <div className="h-px w-full bg-zinc-800/50" />
-
-        {/* Regex Rename Section */}
-        <div className="space-y-3">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-            <Edit3 size={12} /> Regex Rename
-          </div>
-          <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
-            {rules.map((rule, idx) => (
-              <div key={idx} className="flex gap-2">
-                <input 
-                  value={rule.pattern} 
-                  onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }} 
-                  className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors" 
-                  placeholder="Pattern" 
-                />
-                <input 
-                  value={rule.replacement} 
-                  onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }} 
-                  className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors" 
-                  placeholder="Replacement" 
-                />
-                <button 
-                  onClick={() => setRules(rules.filter((_, i) => i !== idx))} 
-                  className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
-                  title="Remove Rule"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-            <div className="pt-2 flex justify-between items-center">
-              <button 
-                onClick={() => setRules([...rules, { pattern: '', replacement: '' }])} 
-                className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
+        {withMeta.length === 0 ? (
+          <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[10px] text-zinc-500">{withMeta.length} scanned channel{withMeta.length !== 1 ? 's' : ''}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleAll(true)}
+                disabled={allOn}
+                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                + Add Rule
+                {indeterminate ? 'Enable all' : 'Enable'}
               </button>
-              <button 
-                onClick={() => {
-                  if (scope === 'all' && !window.confirm("Are you sure you want to apply this Regex Rename to ALL channels? This action cannot be easily undone.")) return;
-                  onApply(rules, scope);
-                }} 
-                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
+              <button
+                onClick={() => toggleAll(false)}
+                disabled={allOff}
+                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                Apply Regex rename
+                Disable all
               </button>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* Regex Rename Section */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Edit3 size={12} /> Regex Rename
         </div>
-
-        <div className="h-px w-full bg-zinc-800/50" />
-
-        {/* Move to Category Section */}
-        <div className="space-y-3 pb-8">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-            <ChevronRight size={12} /> Move to Category
-          </div>
-          <div className="space-y-2">
-            <select 
-              value={targetCategoryId} 
-              onChange={(e) => setTargetCategoryId(e.target.value)} 
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors"
+        <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
+          {rules.map((rule, idx) => (
+            <div key={idx} className="flex gap-2">
+              <input
+                value={rule.pattern}
+                onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
+                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Pattern"
+              />
+              <input
+                value={rule.replacement}
+                onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
+                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Replacement"
+              />
+              <button
+                onClick={() => setRules(rules.filter((_, i) => i !== idx))}
+                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                title="Remove Rule"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <div className="pt-2 flex justify-between items-center">
+            <button
+              onClick={() => setRules([...rules, { pattern: '', replacement: '' }])}
+              className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
             >
-              <option value="">Select Category...</option>
-              {categories.map(c => (
-                <option key={c.category_id || c.id} value={String(c.category_id || c.id)}>
-                  {c.category_name}
-                </option>
-              ))}
-            </select>
-            <button 
-              onClick={() => {
-                if (scope === 'all' && !window.confirm("Are you sure you want to move ALL channels into this category? This will clear all existing categories.")) return;
-                if (targetCategoryId) onMove(targetCategoryId, scope);
-              }}
-              disabled={!targetCategoryId}
-              className="w-full py-2.5 bg-emerald-500 text-zinc-950 text-xs font-bold rounded-lg hover:bg-emerald-400 transition-all disabled:opacity-30 disabled:cursor-not-allowed uppercase tracking-widest mt-2"
+              + Add Rule
+            </button>
+            <button
+              onClick={() => onBatchApply(rules)}
+              className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
             >
-              Move Selected
+              Apply Regex rename
             </button>
           </div>
         </div>
       </div>
-    </aside>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Quality Scan Section */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Search size={12} /> Quality Scan
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-zinc-400">Concurrency</span>
+            <select
+              value={scanConcurrency}
+              onChange={e => setScanConcurrency(Number(e.target.value))}
+              disabled={scanPolling}
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
+            >
+              {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={skipScanned}
+              onChange={e => setSkipScanned(e.target.checked)}
+              disabled={scanPolling}
+              className="accent-emerald-500"
+            />
+            Skip already scanned
+          </label>
+          {scanJob && (
+            <div className="space-y-1.5">
+              <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                  style={{ width: `${scanJob.total ? (scanJob.done / scanJob.total) * 100 : 0}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-zinc-500 font-mono">
+                <span>{scanJob.done} / {scanJob.total} done</span>
+                {scanJob.failed > 0 && <span className="text-red-400">{scanJob.failed} failed</span>}
+                <span className="capitalize">{scanJob.status}</span>
+              </div>
+            </div>
+          )}
+          {!scanPolling ? (
+            <button
+              onClick={startScan}
+              disabled={scanableCount === 0 || !playlist}
+              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            >
+              <Search size={14} />
+              Scan {scanableCount} channel{scanableCount !== 1 ? 's' : ''}
+            </button>
+          ) : (
+            <button
+              onClick={cancelScan}
+              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Visibility Actions */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <Eye size={12} /> Visibility
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onBatchVisibility(false)}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
+          >
+            <Eye size={14} />
+            Show All
+          </button>
+          <button
+            onClick={() => onBatchVisibility(true)}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+          >
+            <EyeOff size={14} />
+            Hide All
+          </button>
+        </div>
+      </div>
+
+      <div className="h-px w-full bg-zinc-800/50" />
+
+      {/* Move to Top */}
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+          <ArrowLeft className="rotate-90" size={12} /> Order
+        </div>
+        <button
+          onClick={onBatchMoveToTop}
+          disabled={streamIds.length === 0}
+          className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+        >
+          <ArrowLeft size={14} className="rotate-90" />
+          Move to Top
+        </button>
+      </div>
+    </div>
   );
 }
 
-function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle }: { 
+interface CategoryPaneProps {
+  selectedCategoryIds: Set<string>;
+  categories: any[];               // upstream category objects with category_id, name
+  categoryMappings: CategoryMapping[];
+  playlistId: string;
+  activeTab: 'live' | 'vod' | 'series';
+  sortedStreams: any[];             // all streams (to compute which belong to selected categories)
+  mappings: StreamMapping[];
+  playlist: Playlist | null;
+  onClose: () => void;
+  onMappingChange: () => void;     // refresh after changes
+  onBatchVisibility: (hidden: boolean) => void;   // for category-level hide/show
+  onMoveToTop: () => void;                         // move selected categories to top
+  onBatchApplyRegex: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
+  onMoveStreamsToTop: () => void;
+}
+
+function CategoryPane({
+  selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
+  sortedStreams, mappings, playlist, onClose, onMappingChange,
+  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
+}: CategoryPaneProps) {
+  const isSingle = selectedCategoryIds.size === 1;
+  const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
+
+  const category = catId ? categories.find(c => String(c.category_id) === catId) : null;
+  const mapping = catId ? categoryMappings.find(m => String(m.originalId) === catId) : null;
+
+  const [editingName, setEditingName] = useState(false);
+  const [nameVal, setNameVal] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync nameVal when selection changes
+  useEffect(() => {
+    setNameVal(mapping?.customName || category?.name || '');
+    setEditingName(false);
+  }, [catId, mapping?.customName, category?.name]);
+
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.focus();
+  }, [editingName]);
+
+  const handleRename = async () => {
+    if (!catId) return;
+    const trimmed = nameVal.trim();
+    if (!trimmed) return;
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { customName: trimmed });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: trimmed, order: 0, hidden: false });
+    }
+    setEditingName(false);
+    onMappingChange();
+  };
+
+  const handleToggleVisible = async () => {
+    if (!catId) return;
+    const newHidden = !(mapping?.hidden ?? false);
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { hidden: newHidden });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: newHidden });
+    }
+    onMappingChange();
+  };
+
+  const handleToggleSync = async () => {
+    if (!catId) return;
+    const newSync = !(mapping?.syncOnDemand ?? false);
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
+    } else {
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
+    }
+    onMappingChange();
+  };
+
+  // Streams that belong to ANY selected category
+  const scopedStreamIds = useMemo(
+    () => sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id))).map(s => String(s.stream_id ?? s._uniqueId)),
+    [sortedStreams, selectedCategoryIds]
+  );
+
+  const isHidden = mapping?.hidden ?? false;
+  const isSynced = mapping?.syncOnDemand ?? false;
+  const displayName = mapping?.customName || category?.name || '(unknown)';
+
+  return (
+    <div className="w-96 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Folder size={14} className="text-zinc-400 shrink-0" />
+          {isSingle ? (
+            editingName ? (
+              <input
+                ref={nameInputRef}
+                value={nameVal}
+                onChange={e => setNameVal(e.target.value)}
+                onBlur={handleRename}
+                onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setEditingName(false); }}
+                className="bg-zinc-800 text-white text-sm px-2 py-0.5 rounded outline-none border border-zinc-600 min-w-0 flex-1"
+              />
+            ) : (
+              <span
+                className="text-sm text-white font-medium truncate cursor-pointer hover:text-zinc-300"
+                onClick={() => setEditingName(true)}
+                title="Click to rename"
+              >
+                {displayName}
+              </span>
+            )
+          ) : (
+            <span className="text-sm text-white font-medium">{selectedCategoryIds.size} categories</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {isSingle && (
+            <>
+              <button
+                onClick={handleToggleVisible}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isHidden ? 'text-zinc-600' : 'text-zinc-300'}`}
+                title={isHidden ? 'Show category' : 'Hide category'}
+              >
+                {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+              <button
+                onClick={handleToggleSync}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
+                title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
+              >
+                <Activity size={14} />
+              </button>
+            </>
+          )}
+          {!isSingle && (
+            <>
+              <button onClick={() => onBatchVisibility(false)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Show all</button>
+              <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
+              <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
+            </>
+          )}
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1">
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Batch actions for streams in selected categories */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-4 space-y-4">
+        {scopedStreamIds.length > 0 ? (
+          <BatchActionsSection
+            streamIds={scopedStreamIds}
+            playlistId={playlistId}
+            activeTab={activeTab}
+            mappings={mappings}
+            playlist={playlist}
+            onRefresh={onMappingChange}
+            onBatchApply={onBatchApplyRegex}
+            onBatchVisibility={onBatchStreamVisibility}
+            onBatchMoveToTop={onMoveStreamsToTop}
+          />
+        ) : (
+          <div className="py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
+        )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle }: {
   cat: any; 
   mapping?: CategoryMapping;
   playlistId: string;
@@ -3013,7 +3418,7 @@ function TabButton({ active, onClick, label }: { active: boolean; onClick: () =>
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, playlist, globalFormat }: {
   streams: any[];
   selectedCategoryIds: Set<string>;
   activeTab: string;
@@ -3026,6 +3431,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onSelectStream: (stream: any, e: React.MouseEvent) => void;
   selectedStreamIds: Set<string>;
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
+  playlist?: Playlist | null;
+  globalFormat?: string;
 }) {
   const filteredStreams = streams;
 
@@ -3089,6 +3496,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   onSelectStream,
                   selectedStreamIds,
                   epgChannels,
+                  playlist,
+                  globalFormat,
                 }}
               >
                 {VirtualStreamRow}
@@ -3146,6 +3555,8 @@ const VirtualStreamRow = React.memo(({
     onSelectStream,
     selectedStreamIds,
     epgChannels,
+    playlist,
+    globalFormat,
   } = data;
   
   const stream = filteredStreams[index];
@@ -3158,7 +3569,10 @@ const VirtualStreamRow = React.memo(({
 
   const mapping = mappings.find(m => m.originalId === originalId && m.type === activeTab);
   const originalName = stream.name || stream.title || "";
-  const displayName = applyRegex(mapping?.customName || originalName, mapping?.regexRenames || []);
+  const baseName = mapping
+    ? computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat, originalName)
+    : originalName;
+  const displayName = applyRegex(baseName, mapping?.regexRenames || []);
   
   const combinedStyle = {
     ...style,
@@ -3342,24 +3756,154 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 
 const StreamRowMemo = React.memo(StreamRow);
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClose, onUpdate, selectedStreamIds, allStreams, allMappings }: {
+// ── Global Spotlight Search ────────────────────────────────────────────────────
+
+function GlobalSearch({ playlistId, onNavigate, onClose }: {
+  playlistId: string;
+  onNavigate: (type: 'live' | 'vod' | 'series', categoryId: string, streamId: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<{ streamId: string; name: string; type: 'live'|'vod'|'series'; categoryId: string; categoryName: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const search = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setResults([]); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.playlists.search(playlistId, q.trim());
+      setResults(data.results);
+      setFocusedIndex(0);
+    } catch {
+      setError('Search unavailable');
+    } finally {
+      setLoading(false);
+    }
+  }, [playlistId]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const q = e.target.value;
+    setQuery(q);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => search(q), 300);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setFocusedIndex(i => Math.min(i + 1, results.length - 1)); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setFocusedIndex(i => Math.max(i - 1, 0)); }
+    if (e.key === 'Enter' && results[focusedIndex]) {
+      const r = results[focusedIndex];
+      onNavigate(r.type, r.categoryId, r.streamId);
+    }
+  };
+
+  const typeIcon = (type: string) => {
+    if (type === 'live') return <Tv size={13} className="text-emerald-400 shrink-0" />;
+    if (type === 'vod') return <Film size={13} className="text-blue-400 shrink-0" />;
+    return <Clapperboard size={13} className="text-purple-400 shrink-0" />;
+  };
+
+  const typeLabel = (type: string) =>
+    type === 'live' ? 'Channel' : type === 'vod' ? 'Movie' : 'Series';
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-[14vh]"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[580px] mx-4 bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Input row */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800">
+          <Search size={15} className="text-zinc-400 shrink-0" />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder="Search channels, movies, series…"
+            className="flex-1 bg-transparent text-white placeholder-zinc-500 outline-none text-sm"
+          />
+          {loading && (
+            <div className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-300 rounded-full animate-spin shrink-0" />
+          )}
+          <kbd className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5 shrink-0">Esc</kbd>
+        </div>
+
+        {/* Results */}
+        <div className="max-h-[420px] overflow-y-auto">
+          {query.trim().length < 2 && (
+            <p className="px-4 py-10 text-center text-zinc-500 text-sm">Type at least 2 characters…</p>
+          )}
+          {query.trim().length >= 2 && !loading && !error && results.length === 0 && (
+            <p className="px-4 py-10 text-center text-zinc-500 text-sm">No results for &ldquo;{query}&rdquo;</p>
+          )}
+          {error && (
+            <p className="px-4 py-10 text-center text-red-400 text-sm">{error}</p>
+          )}
+          {results.map((r, i) => (
+            <button
+              key={`${r.type}:${r.streamId}`}
+              onClick={() => onNavigate(r.type, r.categoryId, r.streamId)}
+              onMouseEnter={() => setFocusedIndex(i)}
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors',
+                i === focusedIndex ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+              )}
+            >
+              {typeIcon(r.type)}
+              <span className="flex-1 text-sm text-white truncate">{r.name}</span>
+              <span className="text-[11px] text-zinc-500 shrink-0">
+                {typeLabel(r.type)}{r.categoryName ? ` · ${r.categoryName}` : ''}
+              </span>
+            </button>
+          ))}
+          {results.length > 0 && (
+            <p className="px-4 py-2 text-center text-[10px] text-zinc-600 border-t border-zinc-800">
+              {results.length === 50 ? 'Showing top 50 results' : `${results.length} result${results.length === 1 ? '' : 's'}`}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
   type: string;
   source?: UpstreamSource;
   playlist?: Playlist;
+  globalFormat?: string;
   onClose: () => void;
   onUpdate: () => void;
   selectedStreamIds?: Set<string>;
   allStreams?: any[];
   allMappings?: StreamMapping[];
+  onBatchApply?: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchVisibility?: (hidden: boolean) => void;
+  onBatchMoveToTop?: () => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
   const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || "");
   const [loading, setLoading] = useState(false);
   const [showTechInfo, setShowTechInfo] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [detectedMeta, setDetectedMeta] = useState(mapping?.detectedMeta ?? null);
 
   // EPG channel search
   const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
@@ -3415,6 +3959,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClo
     setEpgMapping(mapping?.epgMapping || "");
     setEpgSearch('');
     setEpgOpen(false);
+    setDetectedMeta(mapping?.detectedMeta ?? null);
   }, [mapping, stream._uniqueId]);
 
   const originalName = stream.name || stream.title || "";
@@ -3531,30 +4076,170 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClo
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Logo URL</label>
-                <div className="flex gap-2 items-start">
-                  <input
-                    value={customIcon}
-                    onChange={e => setCustomIcon(e.target.value)}
-                    placeholder="https://..."
-                    className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
-                  />
-                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-                    {(customIcon || originalIcon) ? (
-                      <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
-                    ) : (
-                      <Tv size={14} className="text-zinc-700" />
+              {/* VOD / Series download */}
+              {(type === 'vod' || type === 'series') && (
+                <a
+                  href={`/api/download/${type}/${playlistId}/${mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id)}?token=${localStorage.getItem('auth_token') ?? ''}`}
+                  download
+                  className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
+                >
+                  <Download size={13} />
+                  Download
+                </a>
+              )}
+
+              {/* Detected Quality */}
+              <div className="space-y-2 border border-zinc-800 rounded-xl p-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
+                  <button
+                    onClick={async () => {
+                      const streamId = mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id);
+                      setScanLoading(true);
+                      setScanError(null);
+                      try {
+                        const { jobId } = await api.qualityScan.start({
+                          playlistId,
+                          streamIds: [streamId],
+                          type: type as 'live' | 'vod' | 'series',
+                          concurrency: 1,
+                        });
+                        let job: any;
+                        do {
+                          await new Promise(r => setTimeout(r, 2000));
+                          job = await api.qualityScan.status(jobId);
+                        } while (job.status === 'running');
+                        const result = job.results.find((r: any) => r.streamId === streamId);
+                        if (result?.meta) {
+                          setDetectedMeta(result.meta); // show immediately, no parent round-trip needed
+                          onUpdate(); // also refresh parent so mapping is in sync
+                        } else if (result?.error) {
+                          setScanError(result.error);
+                        }
+                      } catch (e: any) {
+                        setScanError(e.message || 'Scan failed');
+                      } finally {
+                        setScanLoading(false);
+                      }
+                    }}
+                    disabled={scanLoading}
+                    className="text-[10px] text-emerald-500 hover:underline font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {scanLoading ? 'Scanning...' : 'Scan this channel'}
+                  </button>
+                </div>
+                {scanError && <p className="text-xs text-red-400 mt-1">{scanError}</p>}
+
+                {detectedMeta ? (
+                  <div className="flex flex-wrap gap-1">
+                    {detectedMeta.resolution && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.resolution}</span>
+                    )}
+                    {detectedMeta.videoCodec && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.videoCodec.toUpperCase()}</span>
+                    )}
+                    {detectedMeta.hdr && (
+                      <span className="px-1.5 py-0.5 bg-amber-500/15 border border-amber-500/30 rounded text-[10px] font-mono text-amber-400">{detectedMeta.hdr}</span>
+                    )}
+                    {detectedMeta.audioCodec && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">
+                        {detectedMeta.audioCodec.toUpperCase()}{detectedMeta.audioChannels ? ` ${detectedMeta.audioChannels}ch` : ''}
+                      </span>
+                    )}
+                    {detectedMeta.fps && (
+                      <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-700 rounded text-[10px] font-mono text-zinc-300">{detectedMeta.fps}fps</span>
+                    )}
+                    {detectedMeta.scannedAt && (
+                      <span className="px-1.5 py-0.5 text-[10px] text-zinc-600">Scanned {new Date(detectedMeta.scannedAt).toLocaleDateString()}</span>
                     )}
                   </div>
-                </div>
-                {originalIcon && customIcon && (
-                  <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
-                    Reset to default
-                  </button>
+                ) : (
+                  <p className="text-[10px] text-zinc-600 italic">Not scanned yet</p>
+                )}
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!mapping?.useDetectedQuality}
+                    onChange={async e => {
+                      if (!mapping?.id) return;
+                      await api.mappings.update(mapping.id, { useDetectedQuality: e.target.checked } as any);
+                      onUpdate();
+                    }}
+                    disabled={!mapping?.detectedMeta?.resolution}
+                    className="rounded accent-emerald-500"
+                  />
+                  <span className="text-xs text-zinc-400">Show quality in name</span>
+                </label>
+
+                {mapping?.useDetectedQuality && detectedMeta?.resolution && (
+                  <p className="text-[10px] text-zinc-500 truncate">
+                    Preview: &ldquo;{computeDisplayName({ ...mapping, detectedMeta }, playlist?.qualityLabelFormat, globalFormat)}&rdquo;
+                  </p>
                 )}
               </div>
+
             </>
+          )}
+
+          {/* Logo URL — visible in single and multi-select */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">
+              Logo URL{isMulti ? ' (applies to all selected)' : ''}
+            </label>
+            <div className="flex gap-2 items-start">
+              <input
+                value={customIcon}
+                onChange={e => setCustomIcon(e.target.value)}
+                placeholder="https://..."
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
+              />
+              <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
+                {(customIcon || originalIcon) ? (
+                  <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
+                ) : (
+                  <Tv size={14} className="text-zinc-700" />
+                )}
+              </div>
+            </div>
+            {!isMulti && originalIcon && customIcon && (
+              <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
+                Reset to default
+              </button>
+            )}
+          </div>
+
+          {/* Quality label toggle — multi-select only */}
+          {isMulti && allMappings && selectedStreamIds && (
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label</label>
+              {(() => {
+                const scanned = Array.from(selectedStreamIds).filter(id => allMappings.find(m => m.originalId === id && m.type === type)?.detectedMeta?.resolution);
+                if (!scanned.length) return <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>;
+                return (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: true }));
+                        if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                    >
+                      Enable ({scanned.length})
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: false }));
+                        if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
+                      }}
+                      className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
+                    >
+                      Disable
+                    </button>
+                  </div>
+                );
+              })()}
+            </div>
           )}
 
           {/* EPG Channel */}
@@ -3690,6 +4375,23 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, onClo
               </div>
             )}
           </div>
+
+          {isMulti && onBatchApply && onBatchVisibility && onBatchMoveToTop && (
+            <>
+              <div className="h-px w-full bg-zinc-800/50" />
+              <BatchActionsSection
+                streamIds={Array.from(selectedStreamIds ?? new Set())}
+                playlistId={playlistId}
+                activeTab={type as 'live' | 'vod' | 'series'}
+                mappings={allMappings ?? []}
+                playlist={playlist ?? null}
+                onRefresh={onUpdate}
+                onBatchApply={onBatchApply}
+                onBatchVisibility={onBatchVisibility}
+                onBatchMoveToTop={onBatchMoveToTop}
+              />
+            </>
+          )}
 
         </div>
       </div>

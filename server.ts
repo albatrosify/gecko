@@ -5,12 +5,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import cron from "node-cron";
 import { connectDb, getDb, toId, docWithId, docsWithId } from "./server/db.ts";
-import { createAuthRouter, requireAuth, AuthRequest } from "./server/auth.ts";
+import { createAuthRouter, requireAuth, requireAuthOrQuery, AuthRequest } from "./server/auth.ts";
 import { getCached, setCache, duplicateCache } from "./server/cache.ts";
 import { XtreamClient } from "./server/xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "./src/types.ts";
 import axios from "axios";
 import cronstrue from "cronstrue";
+import { computeDisplayName } from './src/quality.ts';
+import { probeStream } from './server/quality.ts';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 
@@ -279,6 +281,39 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
 }
 
 const activeCrons = new Map<string, any>();
+
+// ── Quality Scan Jobs ──────────────────────────────────────────────────────────
+interface ScanJob {
+  id: string;
+  userId: string;
+  status: 'running' | 'done' | 'cancelled';
+  total: number;
+  done: number;
+  failed: number;
+  results: { streamId: string; meta?: any; error?: string }[];
+}
+const scanJobs = new Map<string, ScanJob>();
+
+// Module-level cache for global quality format (invalidated on PATCH /api/settings)
+let _qualityFormatCache: { value: string; expiresAt: number } | null = null;
+
+async function getGlobalQualityFormat(): Promise<string> {
+  if (_qualityFormatCache && Date.now() < _qualityFormatCache.expiresAt) {
+    return _qualityFormatCache.value;
+  }
+  const db = getDb();
+  const doc = await db.collection('settings').findOne({ _id: 'global' as any });
+  const value = (doc as any)?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
+  _qualityFormatCache = { value, expiresAt: Date.now() + 60_000 };
+  return value;
+}
+
+function buildStreamUrl(sourceDoc: any, streamId: string, type: 'live' | 'vod' | 'series', extension?: string): string {
+  const cl = new XtreamClient(sourceDoc as any);
+  if (type === 'live') return cl.getLiveStreamUrl(streamId);
+  if (type === 'vod') return cl.getVodStreamUrl(streamId, extension || 'mp4');
+  return cl.getSeriesStreamUrl(streamId, extension || 'mp4');
+}
 
 async function initCronManager() {
   log("Initializing Source Cron Manager...");
@@ -866,6 +901,293 @@ async function startServer() {
     });
 
     // =====================================
+    // Global playlist search
+    // =====================================
+    app.get("/api/playlists/:id/search", requireAuth, async (req: AuthRequest, res) => {
+      const { q } = req.query;
+      if (!q || typeof q !== 'string' || q.trim().length < 2) {
+        return res.status(400).json({ error: 'q must be at least 2 characters' });
+      }
+
+      const db = getDb();
+      const playlistDoc = await db.collection('playlists').findOne({
+        _id: toId(req.params.id),
+        userId: req.user!.id,
+      });
+      if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+      const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceDocs = await Promise.all(
+        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+      );
+      const validSources = sourceDocs.filter(Boolean);
+
+      const qLower = q.trim().toLowerCase();
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      outer:
+      for (const sourceDoc of validSources) {
+        const sourceId = sourceDoc.id ?? sourceDoc._id.toString();
+
+        // Category name lookup from cache
+        const catCache = getCached(`${sourceId}_categories`);
+        const catMap = new Map<string, string>();
+        if (catCache?.data) {
+          for (const cat of catCache.data as any[]) {
+            catMap.set(String(cat.category_id), cat.category_name || '');
+          }
+        }
+
+        for (const type of ['live', 'vod', 'series'] as const) {
+          const cached = getCached(`${sourceId}_streams_${type}`);
+          if (!cached?.data) continue; // skip types not yet loaded in this session
+
+          for (const stream of cached.data as any[]) {
+            const name: string = stream.name || stream.title || '';
+            if (!name.toLowerCase().includes(qLower)) continue;
+
+            const streamId = String(stream.stream_id ?? stream.series_id);
+            const key = `${type}:${streamId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const categoryId = String(stream.category_id || '');
+            results.push({
+              streamId,
+              name,
+              type,
+              categoryId,
+              categoryName: catMap.get(categoryId) || '',
+            });
+
+            if (results.length >= 50) break outer;
+          }
+        }
+      }
+
+      res.json({ results });
+    });
+
+    // =====================================
+    // Settings
+    // =====================================
+    app.get("/api/settings", requireAuth, async (_req, res) => {
+      const db = getDb();
+      const doc = await db.collection('settings').findOne({ _id: 'global' as any });
+      res.json({
+        qualityLabelFormat: doc?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
+      });
+    });
+
+    app.patch("/api/settings", requireAuth, async (req: AuthRequest, res) => {
+      if ((req as AuthRequest).user?.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin only' });
+      }
+      const db = getDb();
+      const { qualityLabelFormat } = req.body;
+      if (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200) {
+        return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
+      }
+      await db.collection('settings').updateOne(
+        { _id: 'global' as any },
+        { $set: { qualityLabelFormat } },
+        { upsert: true }
+      );
+      _qualityFormatCache = null;
+      res.json({ success: true });
+    });
+
+    // =====================================
+    // Quality Scan
+    // =====================================
+    app.post("/api/quality-scan", requireAuth, async (req: AuthRequest, res) => {
+      const { playlistId, streamIds, type, concurrency = 1 } = req.body as {
+        playlistId: string;
+        streamIds: string[];
+        type: 'live' | 'vod' | 'series';
+        concurrency?: number;
+      };
+
+      if (!playlistId || !Array.isArray(streamIds) || !streamIds.length || !type) {
+        return res.status(400).json({ error: 'playlistId, streamIds, and type are required' });
+      }
+
+      if (streamIds.length > 500) {
+        return res.status(400).json({ error: 'Maximum 500 streams per scan job' });
+      }
+
+      if (!streamIds.every((id: any) => typeof id === 'string' && id.length > 0)) {
+        return res.status(400).json({ error: 'streamIds must be an array of non-empty strings' });
+      }
+
+      if (!['live', 'vod', 'series'].includes(type)) {
+        return res.status(400).json({ error: 'type must be live, vod, or series' });
+      }
+
+      const db = getDb();
+      const playlistDoc = await db.collection('playlists').findOne({
+        _id: toId(playlistId),
+        userId: req.user!.id,
+      });
+      if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+      const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceDocs = await Promise.all(
+        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+      );
+      const validSources = sourceDocs.filter(Boolean);
+      if (!validSources.length) return res.status(400).json({ error: 'No sources found for playlist' });
+
+      const jobId = Math.random().toString(36).slice(2);
+      const job: ScanJob = {
+        id: jobId,
+        userId: req.user!.id,
+        status: 'running',
+        total: streamIds.length,
+        done: 0,
+        failed: 0,
+        results: [],
+      };
+      scanJobs.set(jobId, job);
+      res.json({ jobId });
+
+      // Run in background — do not await
+      (async () => {
+        const cap = Math.max(1, Math.min(5, concurrency));
+
+        for (let i = 0; i < streamIds.length; i += cap) {
+          if (job.status === 'cancelled') break;
+          const batch = streamIds.slice(i, i + cap);
+
+          await Promise.all(batch.map(async (streamId) => {
+            if (job.status === 'cancelled') return;
+
+            let meta: any = null;
+            let lastError = '';
+
+            // Try each source until one works
+            for (const sourceDoc of validSources) {
+              try {
+                // For VOD/series, use the real container_extension from the stream cache
+                // (defaults to 'mp4' only when cache is cold — most providers ignore the extension anyway)
+                let extension: string | undefined;
+                if (type === 'vod' || type === 'series') {
+                  const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+                  if (cached?.data) {
+                    const streamData = (cached.data as any[]).find(
+                      (s: any) => String(s.stream_id ?? s.series_id) === streamId
+                    );
+                    extension = streamData?.container_extension || undefined;
+                  }
+                }
+                const url = buildStreamUrl(sourceDoc, streamId, type, extension);
+                meta = await probeStream(url);
+                break;
+              } catch (e: any) {
+                lastError = e.message;
+              }
+            }
+
+            if (meta) {
+              meta.scannedAt = new Date().toISOString();
+              // Upsert detectedMeta — create a minimal mapping if none exists yet
+              await db.collection('mappings').updateOne(
+                { playlistId, originalId: streamId, type },
+                {
+                  $set: { detectedMeta: meta },
+                  $setOnInsert: { originalName: '', customName: '', hidden: false, order: 0, categoryId: '' },
+                },
+                { upsert: true }
+              );
+              job.results.push({ streamId, meta });
+            } else {
+              job.results.push({ streamId, error: lastError || 'All sources failed' });
+              job.failed++;
+            }
+            job.done++;
+          }));
+        }
+
+        if (job.status !== 'cancelled') job.status = 'done';
+        // Auto-clean job after 10 minutes
+        setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
+      })().catch((e) => {
+        log(`[QualityScan] Job ${jobId} crashed: ${e.message}`);
+        job.status = 'done';
+      });
+    });
+
+    app.get("/api/quality-scan/:jobId", requireAuth, (req, res) => {
+      const job = scanJobs.get(req.params.jobId);
+      if (!job || job.userId !== (req as AuthRequest).user!.id)
+        return res.status(404).json({ error: 'Job not found' });
+      res.json(job);
+    });
+
+    app.delete("/api/quality-scan/:jobId", requireAuth, (req, res) => {
+      const job = scanJobs.get(req.params.jobId);
+      if (!job || job.userId !== (req as AuthRequest).user!.id)
+        return res.status(404).json({ error: 'Job not found' });
+      job.status = 'cancelled';
+      res.json({ success: true });
+    });
+
+    // =====================================
+    // VOD / Series download proxy
+    // =====================================
+    app.get("/api/download/:type/:playlistId/:streamId", requireAuthOrQuery, async (req: AuthRequest, res) => {
+      const { type, playlistId, streamId } = req.params;
+      if (!['vod', 'series'].includes(type)) {
+        return res.status(400).json({ error: 'type must be vod or series' });
+      }
+
+      try {
+        const db = getDb();
+        const playlistDoc = await db.collection('playlists').findOne({
+          _id: toId(playlistId),
+          userId: req.user!.id,
+        });
+        if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+        const sourceIds: string[] = playlistDoc.sourceIds || [];
+        const sourceDocs = await Promise.all(
+          sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+        );
+        const validSources = sourceDocs.filter(Boolean);
+        if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
+
+        // Use first available source; get container_extension from stream cache
+        const sourceDoc = validSources[0]!;
+        const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+        const streamData = (cached?.data as any[] | undefined)?.find(
+          (s: any) => String(s.stream_id ?? s.series_id) === streamId
+        );
+        const extension = streamData?.container_extension || 'mp4';
+        const title = streamData?.name || streamData?.title || streamId;
+
+        const url = buildStreamUrl(sourceDoc, streamId, type as 'vod' | 'series', extension);
+
+        // Proxy the upstream response as a file download
+        const upstreamRes = await axios.get(url, {
+          responseType: 'stream',
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0' },
+          timeout: 10_000,
+        });
+
+        const filename = `${title.replace(/[^\w\s.-]/g, '_')}.${extension}`;
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', upstreamRes.headers['content-type'] || 'application/octet-stream');
+        if (upstreamRes.headers['content-length']) {
+          res.setHeader('Content-Length', upstreamRes.headers['content-length']);
+        }
+        (upstreamRes.data as NodeJS.ReadableStream).pipe(res);
+      } catch (e: any) {
+        if (!res.headersSent) res.status(502).json({ error: `Upstream error: ${e.message}` });
+      }
+    });
+
+    // =====================================
     // CRUD: Mappings
     // =====================================
     app.get("/api/mappings", requireAuth, async (req: AuthRequest, res) => {
@@ -1137,6 +1459,8 @@ async function startServer() {
       const sourceIds: string[] = playlist.sourceIds || [];
       if (!sourceIds.length) return res.status(400).send("No source configured");
 
+      const globalFormat = await getGlobalQualityFormat();
+
       // Look up stream name from mappings (customName takes priority over originalName)
       const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
       const streamMapping = await db.collection('mappings').findOne({
@@ -1144,7 +1468,9 @@ async function startServer() {
         originalId: streamId,
         type: mappingTypeMap[type],
       });
-      const streamName = streamMapping?.customName || streamMapping?.originalName || `Stream ${streamId}`;
+      const streamName = streamMapping
+        ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
+        : `Stream ${streamId}`;
 
       const upstreamHeaders: Record<string, string> = {
         'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -1309,6 +1635,7 @@ async function startServer() {
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+      const globalFormat = await getGlobalQualityFormat();
 
       const sourceId = playlist.sourceIds?.[0];
       if (!sourceId) {
@@ -1456,7 +1783,7 @@ async function startServer() {
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
               
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
               const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
               if (resolvedIcon) s.stream_icon = resolvedIcon;
@@ -1545,6 +1872,9 @@ async function startServer() {
               if (categoryId && String(s.category_id) !== categoryId) return false;
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
+              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
+              s._streamOrder = mapping?.order ?? (999999 + idx);
               if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
               s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
@@ -1625,6 +1955,9 @@ async function startServer() {
               if (categoryId && String(s.category_id) !== categoryId) return false;
               const catMapping = catMap.get(String(s.category_id));
               if (catMapping?.hidden) return false;
+              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
+              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
+              s._streamOrder = mapping?.order ?? (999999 + idx);
               if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
               s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
@@ -1750,6 +2083,7 @@ async function startServer() {
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+      const m3uGlobalFormat = await getGlobalQualityFormat();
 
       try {
         let m3u = "#EXTM3U\n";
@@ -1833,7 +2167,10 @@ async function startServer() {
         for (const stream of streams) {
           const mapping = stream._mapping;
 
-          const name = mapping?.customName ? applyRegex(mapping.customName, mapping.regexRenames || []) : stream.name || stream.title;
+          const baseName = mapping
+            ? computeDisplayName(mapping, playlist.qualityLabelFormat, m3uGlobalFormat)
+            : (stream.name || stream.title);
+          const name = mapping ? applyRegex(baseName, mapping.regexRenames || []) : baseName;
           const logo = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
           const epgId = mapping?.epgMapping || stream.epg_channel_id;
           const categoryName = stream._displayCategoryName;
