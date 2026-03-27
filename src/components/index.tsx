@@ -2625,7 +2625,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                 const firstMapping = mappings.find(m => m.originalId === firstId && m.type === activeTab);
                 return (
                   <EditorPane
-                    key={selectedStreamIds.size === 1 ? firstId : Array.from(selectedStreamIds).sort().join(',')}
+                    key={firstId}
                     stream={firstStream}
                     mapping={firstMapping}
                     playlistId={id!}
@@ -3117,6 +3117,7 @@ function CategoryPane({
 
       {/* Batch actions for streams in selected categories */}
       <div className="flex-1 overflow-y-auto">
+        <div className="p-4 space-y-4">
         {scopedStreamIds.length > 0 ? (
           <BatchActionsSection
             streamIds={scopedStreamIds}
@@ -3130,8 +3131,9 @@ function CategoryPane({
             onBatchMoveToTop={onMoveStreamsToTop}
           />
         ) : (
-          <div className="px-4 py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
+          <div className="py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
         )}
+        </div>
       </div>
     </div>
   );
