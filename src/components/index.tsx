@@ -26,6 +26,7 @@ import {
   LogOut, 
   ChevronRight, 
   ChevronDown, 
+  ChevronUp,
   GripVertical,
   Activity,
   Folder,
@@ -2049,6 +2050,18 @@ export function PlaylistEditor({ user }: { user: User }) {
     }
   };
 
+  const moveSource = async (sourceId: string, direction: number) => {
+    if (!playlist || !id) return;
+    const newSourceIds = [...playlist.sourceIds];
+    const idx = newSourceIds.indexOf(sourceId);
+    if (idx === -1) return;
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= newSourceIds.length) return;
+    [newSourceIds[idx], newSourceIds[newIdx]] = [newSourceIds[newIdx], newSourceIds[idx]];
+    await api.playlists.update(id, { sourceIds: newSourceIds });
+    loadPlaylistData();
+  };
+
   const applyRegex = (name: string, rules: { pattern: string; replacement: string }[] = []) => {
     let newName = name;
     rules.forEach(rule => {
@@ -2445,9 +2458,45 @@ export function PlaylistEditor({ user }: { user: User }) {
                 </label>
               ))}
             </div>
+
+            {playlist.sourceIds.length > 1 && (
+              <div className="space-y-2 pt-4 border-t border-zinc-800">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">Processing Order</span>
+                <div className="space-y-1.5">
+                  {playlist.sourceIds.map((sid, idx) => {
+                    const s = allSources.find(as => as.id === sid);
+                    return (
+                      <div key={sid} className="flex items-center justify-between p-3 bg-zinc-950 border border-zinc-800 rounded-xl group/sitem">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-[10px] font-mono text-zinc-600 w-3">{idx + 1}.</span>
+                          <span className="text-sm font-medium truncate text-zinc-300">{s?.name || `[Deleted ${sid.slice(-4)}]`}</span>
+                        </div>
+                        <div className="flex gap-1 opacity-40 group-hover/sitem:opacity-100 transition-opacity">
+                          <button 
+                            disabled={idx === 0} 
+                            onClick={() => moveSource(sid, -1)} 
+                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0"
+                          >
+                            <ChevronUp size={14}/>
+                          </button>
+                          <button 
+                            disabled={idx === playlist.sourceIds.length - 1} 
+                            onClick={() => moveSource(sid, 1)} 
+                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0"
+                          >
+                            <ChevronDown size={14}/>
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             <button 
               onClick={() => setShowSourceSelector(false)}
-              className="w-full py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+              className="w-full py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10"
             >
               Done
             </button>

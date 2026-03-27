@@ -1705,12 +1705,14 @@ async function startServer() {
         let data;
         switch (action) {
           case 'get_live_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getLiveCategories().catch(() => []);
+              const cats = await cl.getLiveCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
+            
             data = allResults.flat().filter((c: any, i: number, a: any[]) => {
               const cid = String(c.category_id || c.id);
               return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
@@ -1721,22 +1723,23 @@ async function startServer() {
             data.forEach((c: any, idx: number) => {
               const cid = String(c.category_id || c.id);
               const mapping = catMap.get(cid);
-              c._order = mapping?.order ?? (999999 + idx);
+              // Fallback order: ensure sources stay grouped (1M per source)
+              c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
-            data.forEach((c: any) => { delete c._order; delete c._hidden; });
+            data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
             break;
           }
           case 'get_live_streams': {
             const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
               const streams = await cl.getLiveStreams().catch(() => []);
-              return streams.map((s: any) => ({ ...s, _client: cl }));
+              return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
             }));
             data = allResults.flat();
             
@@ -1745,11 +1748,12 @@ async function startServer() {
 
             // Build category order map for grouping
             const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getLiveCategories().catch(() => []);
+              const cats = await cl.getLiveCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
             const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
                 const cid = String(c.category_id || c.id);
@@ -1758,11 +1762,15 @@ async function startServer() {
             deduplicatedCats.forEach((c: any, idx: number) => {
                 const cid = String(c.category_id || c.id);
                 const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? (999999 + idx));
+                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
             });
 
+            const seenStreams = new Set<string>();
             data = data.filter((s: any, idx: number) => {
               const sid = String(s.stream_id);
+              if (seenStreams.has(sid)) return false;
+              seenStreams.add(sid);
+
               const mapping = mappingMap.get(sid);
               if (mapping?.hidden) return false;
               
@@ -1785,22 +1793,23 @@ async function startServer() {
                 s.direct_source = s._client.getLiveStreamUrl(s.stream_id);
               }
               
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
-              s._streamOrder = mapping?.order ?? (999999 + idx);
+              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000; // Put at the bottom if category mapping unknown
+              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
               return true;
             }).sort((a: any, b: any) => {
               if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
               return a._streamOrder - b._streamOrder;
             });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
+            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; delete s._sourceIdx; });
             break;
           }
           case 'get_vod_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getVodCategories().catch(() => []);
+              const cats = await cl.getVodCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
             data = allResults.flat().filter((c: any, i: number, a: any[]) => {
               const cid = String(c.category_id || c.id);
@@ -1809,21 +1818,22 @@ async function startServer() {
             data.forEach((c: any, idx: number) => {
               const cid = String(c.category_id || c.id);
               const mapping = catMappings.find(m => m.type === 'vod' && m.originalId === cid);
-              c._order = mapping?.order ?? (999999 + idx);
+              c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
-            data.forEach((c: any) => { delete c._order; delete c._hidden; });
+            data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
             break;
           }
           case 'get_vod_streams': {
             const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getVodStreams().catch(() => []);
+              const streams = await cl.getVodStreams().catch(() => []);
+              return streams.map((s: any) => ({ ...s, _sourceIdx: sourceIdx }));
             }));
             data = allResults.flat();
 
@@ -1831,11 +1841,12 @@ async function startServer() {
             const mappingMap = new Map(mappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
 
             const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getVodCategories().catch(() => []);
+              const cats = await cl.getVodCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
             const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
                 const cid = String(c.category_id || c.id);
@@ -1844,11 +1855,15 @@ async function startServer() {
             deduplicatedCats.forEach((c: any, idx: number) => {
                 const cid = String(c.category_id || c.id);
                 const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? (999999 + idx));
+                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
             });
 
+            const seenStreams = new Set<string>();
             data = data.filter((s: any, idx: number) => {
               const sid = String(s.stream_id);
+              if (seenStreams.has(sid)) return false;
+              seenStreams.add(sid);
+
               const mapping = mappingMap.get(sid);
               if (mapping?.hidden) return false;
               if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
@@ -1860,20 +1875,24 @@ async function startServer() {
               if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
               s._streamOrder = mapping?.order ?? (999999 + idx);
+              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
+              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
               return true;
             }).sort((a: any, b: any) => {
               if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
               return a._streamOrder - b._streamOrder;
             });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; });
+            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._sourceIdx; });
             break;
           }
           case 'get_series_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getSeriesCategories().catch(() => []);
+              const cats = await cl.getSeriesCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
             data = allResults.flat().filter((c: any, i: number, a: any[]) => {
               const cid = String(c.category_id || c.id);
@@ -1882,21 +1901,22 @@ async function startServer() {
             data.forEach((c: any, idx: number) => {
               const cid = String(c.category_id || c.id);
               const mapping = catMappings.find(m => m.type === 'series' && m.originalId === cid);
-              c._order = mapping?.order ?? (999999 + idx);
+              c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
-            data.forEach((c: any) => { delete c._order; delete c._hidden; });
+            data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
             break;
           }
           case 'get_series': {
             const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getSeries().catch(() => []);
+              const streams = await cl.getSeries().catch(() => []);
+              return streams.map((s: any) => ({ ...s, _sourceIdx: sourceIdx }));
             }));
             data = allResults.flat();
 
@@ -1904,11 +1924,12 @@ async function startServer() {
             const mappingMap = new Map(mappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
 
             const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return [];
               const cl = new XtreamClient(sDoc as any);
-              return cl.getSeriesCategories().catch(() => []);
+              const cats = await cl.getSeriesCategories().catch(() => []);
+              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
             const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
                 const cid = String(c.category_id || c.id);
@@ -1917,11 +1938,15 @@ async function startServer() {
             deduplicatedCats.forEach((c: any, idx: number) => {
                 const cid = String(c.category_id || c.id);
                 const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? (999999 + idx));
+                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
             });
 
+            const seenStreams = new Set<string>();
             data = data.filter((s: any, idx: number) => {
               const sid = String(s.series_id);
+              if (seenStreams.has(sid)) return false;
+              seenStreams.add(sid);
+
               const mapping = mappingMap.get(sid);
               if (mapping?.hidden) return false;
               if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
@@ -1933,12 +1958,15 @@ async function startServer() {
               if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
               s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
               s._streamOrder = mapping?.order ?? (999999 + idx);
+              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
+              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
+              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
               return true;
             }).sort((a: any, b: any) => {
               if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
               return a._streamOrder - b._streamOrder;
             });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; });
+            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._sourceIdx; });
             break;
           }
           case 'get_live_info': {
@@ -2062,7 +2090,7 @@ async function startServer() {
         const m3uType = (type as string) || 'live';
         const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
 
-        const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+        const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
           if (!sDoc) return [];
           const cl = new XtreamClient(sDoc as any);
@@ -2070,7 +2098,7 @@ async function startServer() {
           if (m3uType === 'vod') streams = await cl.getVodStreams().catch(() => []);
           else if (m3uType === 'series') streams = await cl.getSeries().catch(() => []);
           else streams = await cl.getLiveStreams().catch(() => []);
-          return streams.map((s: any) => ({ ...s, _client: cl }));
+          return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
         }));
         
         let rawStreams = allResults.flat();
@@ -2080,13 +2108,15 @@ async function startServer() {
 
         // Build category order map
         const catOrderMap = new Map();
-        const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+        const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
            const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
            if (!sDoc) return [];
            const cl = new XtreamClient(sDoc as any);
-           if (m3uType === 'vod') return cl.getVodCategories().catch(() => []);
-           if (m3uType === 'series') return cl.getSeriesCategories().catch(() => []);
-           return cl.getLiveCategories().catch(() => []);
+           let cats = [];
+           if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
+           else if (m3uType === 'series') cats = await cl.getSeriesCategories().catch(() => []);
+           else cats = await cl.getLiveCategories().catch(() => []);
+           return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
         }));
         const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
             const cid = String(c.category_id || c.id);
@@ -2096,14 +2126,18 @@ async function startServer() {
             const cid = String(c.category_id || c.id);
             const mapping = catMap.get(cid);
             catOrderMap.set(cid, { 
-                order: mapping?.order ?? (999999 + idx), 
+                order: mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx), 
                 name: mapping?.customName || c.category_name,
                 hidden: mapping?.hidden || false
             });
         });
 
+        const seenStreams = new Set<string>();
         const streams = rawStreams.filter((s: any, idx: number) => {
           const sid = String(s.stream_id || s.series_id);
+          if (seenStreams.has(sid)) return false;
+          seenStreams.add(sid);
+
           const mapping = mappingMap.get(sid);
           if (mapping?.hidden) return false;
           
@@ -2114,7 +2148,7 @@ async function startServer() {
           if (!catInfo || catInfo.hidden) return false;
           
           s._catOrder = catInfo.order;
-          s._streamOrder = mapping?.order ?? (999999 + idx);
+          s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
           s._displayCategoryName = catInfo.name;
           s._mapping = mapping; // Store for later use in name/logo construction
           return true;
