@@ -158,6 +158,9 @@ export const playlists = {
       `/api/playlists/${id}/search?q=${encodeURIComponent(q)}`
     );
   },
+  async seriesInfo(id: string, seriesId: string) {
+    return request<any>(`/api/playlists/${id}/series-info?seriesId=${encodeURIComponent(seriesId)}`);
+  },
 };
 
 // Mappings
@@ -218,16 +221,16 @@ export const categoryMappings = {
 
 // Upstream data
 export const upstream = {
-  async fetchCategories(source: any, forceRefresh = false) {
+  async fetchCategories(source: any, forceRefresh = false, sourceIndex?: number) {
     return request<any>('/api/fetch-upstream', {
       method: 'POST',
-      body: JSON.stringify({ source, forceRefresh }),
+      body: JSON.stringify({ source, forceRefresh, sourceIndex }),
     });
   },
-  async fetchStreams(source: any, type: string, forceRefresh = false) {
+  async fetchStreams(source: any, type: string, forceRefresh = false, sourceIndex?: number) {
     return request<any>('/api/fetch-streams', {
       method: 'POST',
-      body: JSON.stringify({ source, type, forceRefresh }),
+      body: JSON.stringify({ source, type, forceRefresh, sourceIndex }),
     });
   },
 };

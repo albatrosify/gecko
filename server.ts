@@ -31,6 +31,12 @@ function initLogFile() {
 }
 initLogFile();
 
+/** Rewrite an upstream image URL to go through the local /img proxy. */
+function proxyImageUrl(url: string | null | undefined, base: string): string {
+  if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return url || '';
+  return `${base}/img?url=${encodeURIComponent(url)}`;
+}
+
 function log(msg: string) {
   const time = new Date().toLocaleTimeString();
   const entry = `[${time}] ${msg}\n`;
@@ -197,7 +203,13 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
     let totalExamined = mappings.length;
 
     const ops = mappings.map(m => {
-      const upstream = streamMap.get(m.originalId) as any;
+      // originalId may be source-prefixed (e.g. "0_1234") — strip prefix for upstream lookup
+      let lookupId = m.originalId;
+      if (lookupId.includes('_')) {
+        const parts = lookupId.split('_');
+        if (!isNaN(parseInt(parts[0]))) lookupId = parts.slice(1).join('_');
+      }
+      const upstream = streamMap.get(lookupId) as any;
       if (!upstream) return null;
 
       const isUnmodified = !m.customName || m.customName === m.originalName;
@@ -369,6 +381,10 @@ async function startServer() {
     const PORT = parseInt(process.env.PORT || "3000");
 
     app.use(express.json({ limit: '50mb' }));
+    // Disable ETag-based caching for all API responses so clients always get
+    // fresh data after mutations (prevents 304 returning stale mapping orders)
+    app.set('etag', false);
+    app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
     // Health check — used by Docker healthcheck and monitoring
     app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -603,6 +619,7 @@ async function startServer() {
     app.delete("/api/epgs/:id", requireAuth, async (req: AuthRequest, res) => {
       const db = getDb();
       await db.collection('epgs').deleteOne({ _id: toId(req.params.id), userId: req.user!.id });
+      epgChannelCache.clear(); // EPG removed — could affect any playlist, clear all
       res.json({ success: true });
     });
 
@@ -622,8 +639,9 @@ async function startServer() {
       const playlistDoc = await db.collection('playlists').findOne({ _id: toId(playlistId as string) });
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
-      const fetchXmlHead = async (url: string): Promise<string> => {
+      const fetchXmlHead = async (url: string, sourceName: string): Promise<string> => {
         try {
+          log(`[EPG] Fetching channels from "${sourceName}" (${url.slice(0, 80)}...)`);
           const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
           let data = Buffer.from(response.data);
           if (url.endsWith('.gz') || response.headers['content-encoding'] === 'gzip') {
@@ -633,17 +651,22 @@ async function startServer() {
           const text = data.toString('utf-8');
           const cutoff = text.indexOf('<programme');
           return cutoff > 0 ? text.slice(0, cutoff) : text;
-        } catch { return ''; }
+        } catch (err: any) {
+          log(`[EPG] Failed to fetch "${sourceName}": ${err?.message || err}`);
+          return '';
+        }
       };
 
       const xmlSources: { xml: string; sourceName: string }[] = [];
 
       // Custom EPG sources
       const epgIds: string[] = playlistDoc.epgIds || [];
+      log(`[EPG] Playlist ${playlistId}: ${epgIds.length} custom EPG(s), sourceIds=${(playlistDoc.sourceIds || []).length}`);
       if (epgIds.length) {
         const epgDocs = await db.collection('epgs').find({ _id: { $in: epgIds.map(toId) } }).toArray();
+        log(`[EPG] Resolved ${epgDocs.length}/${epgIds.length} custom EPG docs from DB`);
         for (const e of epgDocs) {
-          if (e.url) xmlSources.push({ xml: await fetchXmlHead(e.url), sourceName: e.name || e.url });
+          if (e.url) xmlSources.push({ xml: await fetchXmlHead(e.url, e.name || e.url), sourceName: e.name || e.url });
         }
       }
 
@@ -655,7 +678,7 @@ async function startServer() {
       for (const s of sourceDocs) {
         if (s.url && s.username) {
           const url = `${s.url}/xmltv.php?username=${encodeURIComponent(s.username)}&password=${encodeURIComponent(s.password)}`;
-          xmlSources.push({ xml: await fetchXmlHead(url), sourceName: `Upstream: ${s.name || s.url}` });
+          xmlSources.push({ xml: await fetchXmlHead(url, `Upstream: ${s.name || s.url}`), sourceName: `Upstream: ${s.name || s.url}` });
         }
       }
 
@@ -663,6 +686,7 @@ async function startServer() {
       const channels: {id: string; name: string; icon?: string; source: string}[] = [];
       const seen = new Set<string>();
       for (const { xml, sourceName } of xmlSources) {
+        const before = channels.length;
         const channelRegex = /<channel\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/channel>/gi;
         let m;
         while ((m = channelRegex.exec(xml)) !== null) {
@@ -675,8 +699,10 @@ async function startServer() {
             channels.push({ id, name: nameMatch[1].trim(), icon: iconMatch?.[1], source: sourceName });
           }
         }
+        log(`[EPG] "${sourceName}": ${channels.length - before} channels parsed`);
       }
 
+      log(`[EPG] Total channels for playlist ${playlistId}: ${channels.length}`);
       epgChannelCache.set(playlistId as string, { channels, expiresAt: Date.now() + 3600_000 });
       res.json({ channels });
     });
@@ -861,6 +887,8 @@ async function startServer() {
         enabled: true,
         sourceIds: [],
         epgIds: [],
+        nextStreamId: 1,
+        isSynced: false, // Set to true if this is a synced upstream playlist
       };
       const result = await db.collection('playlists').insertOne(playlist);
       res.status(201).json({ id: result.insertedId.toString(), ...playlist });
@@ -869,6 +897,17 @@ async function startServer() {
     app.put("/api/playlists/:id", requireAuth, async (req: AuthRequest, res) => {
       const db = getDb();
       const { id, ...update } = req.body;
+
+      // Preserve nextStreamId if not explicitly updating
+      if (!update.nextStreamId) {
+        const existing = await db.collection('playlists').findOne({ 
+          _id: toId(req.params.id),
+          userId: req.user!.id 
+        });
+        if (existing) {
+          update.nextStreamId = existing.nextStreamId ?? 1;
+        }
+      }
 
       // Validate username uniqueness if changing
       if (update.username) {
@@ -885,7 +924,26 @@ async function startServer() {
         { _id: toId(req.params.id), userId: req.user!.id },
         { $set: update }
       );
+      epgChannelCache.delete(req.params.id);
       res.json({ success: true });
+    });
+
+    // =====================================
+    // Mark playlist as synced (keep upstream IDs)
+    // =====================================
+    app.post("/api/playlists/:id/sync", requireAuth, async (req: AuthRequest, res) => {
+      const db = getDb();
+      const { id } = req.params;
+      
+      await db.collection('playlists').updateOne(
+        { _id: toId(id), userId: req.user!.id },
+        { $set: { isSynced: true } }
+      );
+      
+      // Clear existing mappings and create new ones with original upstream IDs
+      await db.collection('mappings').deleteMany({ playlistId: id });
+      
+      res.json({ success: true, message: "Playlist marked as synced. Re-import streams to apply." });
     });
 
     app.delete("/api/playlists/:id", requireAuth, async (req: AuthRequest, res) => {
@@ -901,6 +959,54 @@ async function startServer() {
     });
 
     // =====================================
+    // Series info (seasons + episodes)
+    // =====================================
+    app.get("/api/playlists/:id/series-info", requireAuth, async (req: AuthRequest, res) => {
+      const { seriesId } = req.query;
+      if (!seriesId || typeof seriesId !== 'string') {
+        return res.status(400).json({ error: 'seriesId required' });
+      }
+      try {
+        const db = getDb();
+        const playlistDoc = await db.collection('playlists').findOne({
+          _id: toId(req.params.id),
+          userId: req.user!.id,
+        });
+        if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+        // Strip sourceIdx prefix (e.g. "0_12345" → sourceIdx=0, rawId="12345")
+        let targetSIdx: number | null = null;
+        let rawSeriesId = seriesId;
+        if (seriesId.includes('_')) {
+          const parts = seriesId.split('_');
+          const possibleIdx = parseInt(parts[0]);
+          if (!isNaN(possibleIdx)) {
+            targetSIdx = possibleIdx;
+            rawSeriesId = parts.slice(1).join('_');
+          }
+        }
+
+        const sourceIds: string[] = playlistDoc.sourceIds || [];
+        for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
+          if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
+          const sDoc = await db.collection('sources').findOne({ _id: toId(sourceIds[sourceIdx]) });
+          if (!sDoc) continue;
+          try {
+            const client = new XtreamClient(sDoc as any);
+            const info = await client.getSeriesInfo(rawSeriesId);
+            if (info && (info.seasons || info.episodes || info.info)) {
+              return res.json(info);
+            }
+          } catch { continue; }
+        }
+        res.status(404).json({ error: 'Series not found' });
+      } catch (err: any) {
+        log(`[series-info] error: ${err?.message || err}`);
+        res.status(500).json({ error: 'Failed to fetch series info' });
+      }
+    });
+
+    // =====================================
     // Global playlist search
     // =====================================
     app.get("/api/playlists/:id/search", requireAuth, async (req: AuthRequest, res) => {
@@ -909,64 +1015,70 @@ async function startServer() {
         return res.status(400).json({ error: 'q must be at least 2 characters' });
       }
 
-      const db = getDb();
-      const playlistDoc = await db.collection('playlists').findOne({
-        _id: toId(req.params.id),
-        userId: req.user!.id,
-      });
-      if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+      try {
+        const db = getDb();
+        const playlistDoc = await db.collection('playlists').findOne({
+          _id: toId(req.params.id),
+          userId: req.user!.id,
+        });
+        if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
-      const sourceIds: string[] = playlistDoc.sourceIds || [];
-      const sourceDocs = await Promise.all(
-        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-      );
-      const validSources = sourceDocs.filter(Boolean);
+        const sourceIds: string[] = playlistDoc.sourceIds || [];
+        const sourceDocs = await Promise.all(
+          sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
+        );
+        const validSources = sourceDocs.filter(Boolean);
 
-      const qLower = q.trim().toLowerCase();
-      const seen = new Set<string>();
-      const results: any[] = [];
+        const qLower = q.trim().toLowerCase();
+        const seen = new Set<string>();
+        const results: any[] = [];
 
-      outer:
-      for (const sourceDoc of validSources) {
-        const sourceId = sourceDoc.id ?? sourceDoc._id.toString();
+        outer:
+        for (const sourceDoc of validSources) {
+          const sourceId = sourceDoc._id.toString();
 
-        // Category name lookup from cache
-        const catCache = getCached(`${sourceId}_categories`);
-        const catMap = new Map<string, string>();
-        if (catCache?.data) {
-          for (const cat of catCache.data as any[]) {
-            catMap.set(String(cat.category_id), cat.category_name || '');
+          // Category name lookup — cache stores { liveCats, vodCats, seriesCats }
+          const catCache = getCached(`${sourceId}_categories`);
+          const catMap = new Map<string, string>();
+          if (catCache?.data) {
+            const { liveCats, vodCats, seriesCats } = catCache.data as any;
+            for (const cat of [...(liveCats || []), ...(vodCats || []), ...(seriesCats || [])]) {
+              catMap.set(String(cat.category_id), cat.category_name || '');
+            }
+          }
+
+          for (const type of ['live', 'vod', 'series'] as const) {
+            const cached = getCached(`${sourceId}_streams_${type}`);
+            if (!cached?.data) continue; // skip types not yet loaded in this session
+
+            for (const stream of cached.data as any[]) {
+              const name: string = stream.name || stream.title || '';
+              if (!name.toLowerCase().includes(qLower)) continue;
+
+              const streamId = String(stream.stream_id ?? stream.series_id);
+              const key = `${type}:${streamId}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+
+              const categoryId = String(stream.category_id || '');
+              results.push({
+                streamId,
+                name,
+                type,
+                categoryId,
+                categoryName: catMap.get(categoryId) || '',
+              });
+
+              if (results.length >= 50) break outer;
+            }
           }
         }
 
-        for (const type of ['live', 'vod', 'series'] as const) {
-          const cached = getCached(`${sourceId}_streams_${type}`);
-          if (!cached?.data) continue; // skip types not yet loaded in this session
-
-          for (const stream of cached.data as any[]) {
-            const name: string = stream.name || stream.title || '';
-            if (!name.toLowerCase().includes(qLower)) continue;
-
-            const streamId = String(stream.stream_id ?? stream.series_id);
-            const key = `${type}:${streamId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            const categoryId = String(stream.category_id || '');
-            results.push({
-              streamId,
-              name,
-              type,
-              categoryId,
-              categoryName: catMap.get(categoryId) || '',
-            });
-
-            if (results.length >= 50) break outer;
-          }
-        }
+        res.json({ results });
+      } catch (err: any) {
+        log(`[search] error: ${err?.message || err}`);
+        res.status(500).json({ error: 'Search failed' });
       }
-
-      res.json({ results });
     });
 
     // =====================================
@@ -1063,11 +1175,23 @@ async function startServer() {
           await Promise.all(batch.map(async (streamId) => {
             if (job.status === 'cancelled') return;
 
+            // Decode source-prefixed stream ID (e.g. "0_1234" → sIdx=0, originalId="1234")
+            let sIdx: number | null = null;
+            let originalStreamId = streamId;
+            if (streamId.includes('_')) {
+              const parts = streamId.split('_');
+              const firstPart = parseInt(parts[0]);
+              if (!isNaN(firstPart)) { sIdx = firstPart; originalStreamId = parts.slice(1).join('_'); }
+            }
+            const targetSources = (sIdx !== null && sIdx < validSources.length)
+              ? [validSources[sIdx]]
+              : validSources;
+
             let meta: any = null;
             let lastError = '';
 
             // Try each source until one works
-            for (const sourceDoc of validSources) {
+            for (const sourceDoc of targetSources) {
               try {
                 // For VOD/series, use the real container_extension from the stream cache
                 // (defaults to 'mp4' only when cache is cold — most providers ignore the extension anyway)
@@ -1076,12 +1200,12 @@ async function startServer() {
                   const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
                   if (cached?.data) {
                     const streamData = (cached.data as any[]).find(
-                      (s: any) => String(s.stream_id ?? s.series_id) === streamId
+                      (s: any) => String(s.stream_id ?? s.series_id) === originalStreamId
                     );
                     extension = streamData?.container_extension || undefined;
                   }
                 }
-                const url = buildStreamUrl(sourceDoc, streamId, type, extension);
+                const url = buildStreamUrl(sourceDoc, originalStreamId, type, extension);
                 meta = await probeStream(url);
                 break;
               } catch (e: any) {
@@ -1091,11 +1215,12 @@ async function startServer() {
 
             if (meta) {
               meta.scannedAt = new Date().toISOString();
-              // Upsert detectedMeta — create a minimal mapping if none exists yet
+              // Upsert detectedMeta — use raw originalStreamId (prefix already decoded above) so it
+              // matches the existing mapping document rather than creating an orphan with the prefixed key
               await db.collection('mappings').updateOne(
-                { playlistId, originalId: streamId, type },
+                { playlistId, originalId: originalStreamId, type },
                 {
-                  $set: { detectedMeta: meta },
+                  $set: { detectedMeta: meta, ...(sIdx !== null ? { sourceIdx: sIdx } : {}) },
                   $setOnInsert: { originalName: '', customName: '', hidden: false, order: 0, categoryId: '' },
                 },
                 { upsert: true }
@@ -1212,39 +1337,128 @@ async function startServer() {
     });
 
     app.post("/api/mappings/batch", requireAuth, async (req: AuthRequest, res) => {
-      const db = getDb();
-      const { updates } = req.body; // Array of { id?, originalId, playlistId, type, ...data }
-      
-      const ops = updates.map((update: any) => {
-        const { id, ...data } = update;
-        if (id) {
-          return {
-            updateOne: {
-              filter: { _id: toId(id) },
-              update: { $set: data }
-            }
-          };
-        } else {
-          return {
-            updateOne: {
-              filter: { originalId: data.originalId, playlistId: data.playlistId, type: data.type },
-              update: { $set: data },
-              upsert: true
-            }
-          };
-        }
-      });
+      try {
+        const db = getDb();
+        const { updates } = req.body; // Array of { id?, originalId, playlistId, type, ...data }
 
-      if (ops.length > 0) {
-        await db.collection('mappings').bulkWrite(ops);
+        const ops = updates.map((update: any) => {
+          const { id, ...data } = update;
+          // Use id-based update only when id is a valid 24-char hex ObjectId string;
+          // fall back to upsert-by-naturalKey otherwise to avoid throwing on bad IDs.
+          const isValidId = id && /^[a-f\d]{24}$/i.test(id);
+          if (isValidId) {
+            return {
+              updateOne: {
+                filter: { _id: toId(id) },
+                update: { $set: data }
+              }
+            };
+          } else {
+            return {
+              updateOne: {
+                filter: { originalId: data.originalId, playlistId: data.playlistId, type: data.type },
+                update: { $set: data },
+                upsert: true
+              }
+            };
+          }
+        });
+
+        if (ops.length > 0) {
+          await db.collection('mappings').bulkWrite(ops, { ordered: false });
+        }
+        res.json({ success: true, count: ops.length });
+      } catch (err: any) {
+        log(`[batch mappings] error: ${err?.message || err}`);
+        res.status(500).json({ error: String(err?.message || err) });
       }
-      res.json({ success: true, count: ops.length });
     });
 
     app.delete("/api/mappings/:id", requireAuth, async (req: AuthRequest, res) => {
       const db = getDb();
       await db.collection('mappings').deleteOne({ _id: toId(req.params.id) });
       res.json({ success: true });
+    });
+
+    // =====================================
+    // Migration: strip sourceIdx prefix from originalId
+    // =====================================
+    app.post("/api/migrate/strip-id-prefixes", requireAuth, async (req: AuthRequest, res) => {
+      const db = getDb();
+      const prefixPattern = /^(\d+)_(.+)$/;
+      let updated = 0;
+
+      for (const col of ['mappings', 'categoryMappings']) {
+        const docs = await db.collection(col).find({}).toArray();
+        for (const doc of docs) {
+          const match = String(doc.originalId || '').match(prefixPattern);
+          if (!match) continue;
+          const sourceIdx = parseInt(match[1]);
+          const rawId = match[2];
+          await db.collection(col).updateOne(
+            { _id: doc._id },
+            { $set: { originalId: rawId, ...(doc.sourceIdx == null ? { sourceIdx } : {}) } }
+          );
+          updated++;
+        }
+      }
+
+      res.json({ success: true, updated });
+    });
+
+    // =====================================
+    // Migration: move detectedMeta from orphan (prefixed) docs to real mappings
+    // =====================================
+    app.post("/api/migrate/fix-detectedmeta-orphans", requireAuth, async (req: AuthRequest, res) => {
+      try {
+        const db = getDb();
+        const prefixPattern = /^(\d+)_(.+)$/;
+        const orphans = await db.collection('mappings').find({ originalId: { $regex: /^\d+_/ } }).toArray();
+        let moved = 0, deleted = 0, renamed = 0;
+        const details: any[] = [];
+        for (const orphan of orphans) {
+          const match = String(orphan.originalId || '').match(prefixPattern);
+          if (!match) continue;
+          const rawId = match[2];
+          const conflict = await db.collection('mappings').findOne({ playlistId: orphan.playlistId, originalId: rawId, type: orphan.type });
+          // Try to merge detectedMeta into an existing raw-ID mapping
+          if (orphan.detectedMeta && conflict) {
+            const result = await db.collection('mappings').updateOne(
+              { _id: conflict._id },
+              { $set: { detectedMeta: orphan.detectedMeta, ...(orphan.useDetectedQuality != null ? { useDetectedQuality: orphan.useDetectedQuality } : {}) } }
+            );
+            if (result.matchedCount > 0) {
+              await db.collection('mappings').deleteOne({ _id: orphan._id });
+              moved++; deleted++;
+              details.push({ action: 'merged', orphanId: String(orphan.originalId), rawId });
+              continue;
+            }
+          }
+          if (!conflict) {
+            // No raw-ID document exists — rename the orphan itself by stripping the prefix
+            await db.collection('mappings').updateOne({ _id: orphan._id }, { $set: { originalId: rawId } });
+            renamed++;
+            details.push({ action: 'renamed', orphanId: String(orphan.originalId), rawId });
+          } else {
+            // Conflict exists — merge orphan's useful fields into the conflict doc, then delete orphan
+            const mergeFields: any = {};
+            if (orphan.customName && !conflict.customName) mergeFields.customName = orphan.customName;
+            if (orphan.customIcon && !conflict.customIcon) mergeFields.customIcon = orphan.customIcon;
+            if (orphan.epgMapping && !conflict.epgMapping) mergeFields.epgMapping = orphan.epgMapping;
+            if (orphan.detectedMeta && !conflict.detectedMeta) mergeFields.detectedMeta = orphan.detectedMeta;
+            if (orphan.useDetectedQuality != null && conflict.useDetectedQuality == null) mergeFields.useDetectedQuality = orphan.useDetectedQuality;
+            if (Object.keys(mergeFields).length > 0) {
+              await db.collection('mappings').updateOne({ _id: conflict._id }, { $set: mergeFields });
+            }
+            await db.collection('mappings').deleteOne({ _id: orphan._id });
+            deleted++;
+            details.push({ action: 'merged_and_deleted', orphanId: String(orphan.originalId), rawId, mergedFields: Object.keys(mergeFields) });
+          }
+        }
+        res.json({ success: true, orphansFound: orphans.length, moved, deleted, renamed, details });
+      } catch (err: any) {
+        res.status(500).json({ success: false, error: String(err?.message || err) });
+      }
     });
 
     // =====================================
@@ -1311,87 +1525,103 @@ async function startServer() {
     // Upstream data fetch (with disk cache)
     // =====================================
     app.post("/api/fetch-upstream", requireAuth, async (req, res) => {
-      const { source, forceRefresh } = req.body;
+      const { source, sourceIndex, forceRefresh } = req.body;
       if (!source?.id) return res.status(400).json({ error: "Missing source ID" });
 
-      log(`Fetching categories for source ${source.name} (id: ${source.id}, forceRefresh: ${forceRefresh})`);
+      log(`Fetching categories for source ${source.name} (id: ${source.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
       const cacheKey = `${source.id}_categories`;
 
-      if (!forceRefresh) {
-        const cached = getCached(cacheKey);
-        if (cached) {
-          log(`  Cache hit for categories: ${source.id}`);
-          return res.json({ ...cached.data, cached: true, lastUpdated: cached.lastUpdated });
-        }
-      }
-
-      log(`  Cache miss for categories: ${source.id}. Fetching from ${source.url}`);
-
-      if (source.type === 'xtream') {
-        const client = new XtreamClient(source);
-        try {
-          log(`  Requesting categories from Xtream API...`);
-          const [liveCats, vodCats, seriesCats] = await Promise.all([
-            client.getLiveCategories(),
-            client.getVodCategories(),
-            client.getSeriesCategories()
-          ]);
-          
-          log(`  Successfully fetched: ${liveCats?.length || 0} live, ${vodCats?.length || 0} vod, ${seriesCats?.length || 0} series categories`);
-          
-          const data = { liveCats, vodCats, seriesCats };
-          setCache(cacheKey, data);
-          res.json({ ...data, cached: false, lastUpdated: new Date().toISOString() });
-        } catch (error: any) {
-          log(`  ERROR fetching categories for ${source.id}: ${error.message}`);
-          if (error.response) {
-            log(`    Status: ${error.response.status}`);
-            log(`    Data: ${JSON.stringify(error.response.data)}`);
-          }
-          res.status(500).json({ error: "Failed to fetch categories: " + error.message });
-        }
+      let data;
+      const cached = !forceRefresh ? getCached(cacheKey) : null;
+      if (cached) {
+        log(`  Cache hit for categories: ${source.id}`);
+        data = { ...cached.data, cached: true, lastUpdated: cached.lastUpdated };
       } else {
-        res.status(400).json({ error: `Source type '${source.type}' does not support category fetching via Xtream API` });
+        log(`  Cache miss for categories: ${source.id}. Fetching from ${source.url}`);
+        if (source.type === 'xtream') {
+          const client = new XtreamClient(source);
+          try {
+            log(`  Requesting categories from Xtream API...`);
+            const [liveCats, vodCats, seriesCats] = await Promise.all([
+              client.getLiveCategories(),
+              client.getVodCategories(),
+              client.getSeriesCategories()
+            ]);
+            
+            log(`  Successfully fetched: ${liveCats?.length || 0} live, ${vodCats?.length || 0} vod, ${seriesCats?.length || 0} series categories`);
+            
+            data = { liveCats, vodCats, seriesCats };
+            setCache(cacheKey, data);
+            data = { ...data, cached: false, lastUpdated: new Date().toISOString() };
+          } catch (error: any) {
+            log(`  ERROR fetching categories for ${source.id}: ${error.message}`);
+            return res.status(500).json({ error: "Failed to fetch categories: " + error.message });
+          }
+        } else {
+          return res.status(400).json({ error: `Source type '${source.type}' does not support category fetching` });
+        }
       }
+
+      // Deep clone cached data to avoid modifying global cache in-place
+      const liveCats = data.liveCats ? JSON.parse(JSON.stringify(data.liveCats)) : null;
+      const vodCats = data.vodCats ? JSON.parse(JSON.stringify(data.vodCats)) : null;
+      const seriesCats = data.seriesCats ? JSON.parse(JSON.stringify(data.seriesCats)) : null;
+
+      // Tag categories with source index for editor use — do NOT mutate category_id or id
+      if (sourceIndex !== undefined && sourceIndex !== null) {
+        const tag = (cats: any[]) => cats?.forEach((c: any) => { c._sourceIdx = sourceIndex; });
+        tag(liveCats);
+        tag(vodCats);
+        tag(seriesCats);
+      }
+
+      res.json({ ...data, liveCats, vodCats, seriesCats });
     });
 
     app.post("/api/fetch-streams", requireAuth, async (req, res) => {
-      const { source, type, forceRefresh } = req.body;
+      const { source, type, sourceIndex, forceRefresh } = req.body;
       if (!source?.id || !type) return res.status(400).json({ error: "Missing source ID or type" });
 
-      log(`Fetching streams [${type}] for source ${source.name} (id: ${source.id}, forceRefresh: ${forceRefresh})`);
+      log(`Fetching streams [${type}] for source ${source.name} (id: ${source.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
       const cacheKey = `${source.id}_streams_${type}`;
 
-      if (!forceRefresh) {
-        const cached = getCached(cacheKey);
-        if (cached) {
-          log(`  Cache hit for streams [${type}]: ${source.id}`);
-          return res.json({ streams: cached.data, cached: true, lastUpdated: cached.lastUpdated });
+      let data;
+      const cached = !forceRefresh ? getCached(cacheKey) : null;
+      if (cached) {
+        log(`  Cache hit for streams [${type}]: ${source.id}`);
+        data = { streams: cached.data, cached: true, lastUpdated: cached.lastUpdated };
+      } else {
+        log(`  Cache miss for streams [${type}]: ${source.id}. Fetching from ${source.url}`);
+        const client = new XtreamClient(source);
+        try {
+          let streams;
+          log(`  Requesting streams [${type}] from Xtream API...`);
+          if (type === 'live') streams = await client.getLiveStreams();
+          else if (type === 'vod') streams = await client.getVodStreams();
+          else if (type === 'series') streams = await client.getSeries();
+
+          log(`  Successfully fetched ${streams?.length || 0} streams`);
+          setCache(cacheKey, streams);
+          data = { streams, cached: false, lastUpdated: new Date().toISOString() };
+        } catch (error: any) {
+          log(`  ERROR fetching streams [${type}] for ${source.id}: ${error.message}`);
+          return res.status(500).json({ error: "Failed to fetch streams: " + error.message });
         }
       }
 
-      log(`  Cache miss for streams [${type}]: ${source.id}. Fetching from ${source.url}`);
+      // Deep clone cached data to avoid modifying global cache in-place
+      const streams = data.streams ? JSON.parse(JSON.stringify(data.streams)) : null;
 
-      const client = new XtreamClient(source);
-      try {
-        let streams;
-        log(`  Requesting streams [${type}] from Xtream API...`);
-        if (type === 'live') streams = await client.getLiveStreams();
-        else if (type === 'vod') streams = await client.getVodStreams();
-        else if (type === 'series') streams = await client.getSeries();
-
-        log(`  Successfully fetched ${streams?.length || 0} streams`);
-        
-        setCache(cacheKey, streams);
-        res.json({ streams, cached: false, lastUpdated: new Date().toISOString() });
-      } catch (error: any) {
-        log(`  ERROR fetching streams [${type}] for ${source.id}: ${error.message}`);
-        if (error.response) {
-          log(`    Status: ${error.response.status}`);
-          log(`    Data: ${JSON.stringify(error.response.data)}`);
+      // Tag streams with their source index for UI deduplication — do NOT mutate stream_id or category_id
+      if (sourceIndex !== undefined && sourceIndex !== null) {
+        if (streams) {
+          streams.forEach((s: any) => {
+            s._sourceIdx = sourceIndex;
+          });
         }
-        res.status(500).json({ error: "Failed to fetch streams: " + error.message });
       }
+
+      res.json({ ...data, streams });
     });
 
     // =====================================
@@ -1461,7 +1691,12 @@ async function startServer() {
 
       const globalFormat = await getGlobalQualityFormat();
 
-      // Look up stream name from mappings (customName takes priority over originalName)
+      // Use integer stream ID directly (no underscore prefix)
+      let originalId = streamId;
+      // sourceIdx is now stored in the mapping, not the stream ID
+
+
+      // Look up stream mapping by raw upstream stream ID.
       const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
       const streamMapping = await db.collection('mappings').findOne({
         playlistId: String(playlist.id),
@@ -1477,15 +1712,21 @@ async function startServer() {
       };
       if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'] as string;
 
+      // Use sourceIdx from the mapping to route to the correct upstream
+      const sourceIdx = streamMapping?.sourceIdx ?? -1;
+      const targetSourceIds = (sourceIdx >= 0 && sourceIdx < sourceIds.length)
+        ? [sourceIds[sourceIdx]]
+        : sourceIds;
+
       // Try each source in order, fall back to the next on failure
       let lastError = '';
-      for (const sourceId of sourceIds) {
+      for (const sourceId of targetSourceIds) {
         const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
         if (!sourceDoc) continue;
 
         const upstreamUrl = ext
-          ? `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${streamId}.${ext}`
-          : `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${streamId}`;
+          ? `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}.${ext}`
+          : `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}`;
 
         try {
           const response = await axios({
@@ -1612,6 +1853,28 @@ async function startServer() {
     });
 
 
+    // ── Image proxy — tunnels upstream thumbnails/logos through this server ──────
+    // No auth: IPTV clients need to fetch thumbnails without credentials.
+    app.get("/img", async (req, res) => {
+      const { url } = req.query;
+      if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        return res.status(400).send('Missing or invalid url');
+      }
+      try {
+        const upstream = await axios.get(url, {
+          responseType: 'stream',
+          timeout: 10000,
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        });
+        const ct = upstream.headers['content-type'] || 'image/jpeg';
+        res.set('Content-Type', ct);
+        res.set('Cache-Control', 'public, max-age=86400');
+        upstream.data.pipe(res);
+      } catch {
+        res.status(502).send('Failed to fetch image');
+      }
+    });
+
     app.get("/player_api.php", async (req, res) => {
       const { username, password, u, p, action } = req.query;
       
@@ -1691,6 +1954,11 @@ async function startServer() {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
 
+      // Base URL for proxying image URLs through this server
+      const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
+      const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString();
+      const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+
       // Check if this action requires On-Demand Sync (Dynamic Sync)
       // If categories in this playlist have syncOnDemand, we refresh the source for that type
       const hasSyncOnDemandLive = catMappings.some(m => m.type === 'live' && m.syncOnDemand);
@@ -1712,286 +1980,376 @@ async function startServer() {
               const cats = await cl.getLiveCategories().catch(() => []);
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
-            
-            data = allResults.flat().filter((c: any, i: number, a: any[]) => {
-              const cid = String(c.category_id || c.id);
-              return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            
+
+            data = allResults.flat();
+
             const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
-            
+
             data.forEach((c: any, idx: number) => {
-              const cid = String(c.category_id || c.id);
-              const mapping = catMap.get(cid);
-              // Fallback order: ensure sources stay grouped (1M per source)
+              const originalId = String(c.category_id || c.id);
+              const prefixedId = `${c._sourceIdx}_${originalId}`;
+
+              // Use prefixed ID for mapping lookup
+              const mapping = catMap.get(prefixedId) || catMap.get(originalId);
+
+              // Store order by prefixed ID for consistency
               c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
+            // Strip source prefix from category_id only if it matches pattern ^\d+_
+            data.forEach((c: any) => {
+              if (c.category_id && /^\d+_/.test(String(c.category_id))) {
+                c.category_id = String(c.category_id).split('_').slice(1).join('_');
+              }
+            });
             data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
             break;
           }
-          case 'get_live_streams': {
-            const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const streams = await cl.getLiveStreams().catch(() => []);
-              return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-            }));
-            data = allResults.flat();
-            
-            const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
-            const mappingMap = new Map(mappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
+           case 'get_live_streams': {
+             const categoryId = req.query.category_id as string;
+             const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               if (!sDoc) return [];
+               const cl = new XtreamClient(sDoc as any);
+               const streams = await cl.getLiveStreams().catch(() => []);
+               return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
+             }));
 
-            // Build category order map for grouping
-            const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getLiveCategories().catch(() => []);
-              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
-            const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
-                const cid = String(c.category_id || c.id);
-                return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            deduplicatedCats.forEach((c: any, idx: number) => {
-                const cid = String(c.category_id || c.id);
-                const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
-            });
+             data = allResults.flat();
 
-            const seenStreams = new Set<string>();
-            data = data.filter((s: any, idx: number) => {
-              const sid = String(s.stream_id);
-              if (seenStreams.has(sid)) return false;
-              seenStreams.add(sid);
+             const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
+             const mappingMap = new Map(mappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
 
-              const mapping = mappingMap.get(sid);
-              if (mapping?.hidden) return false;
-              
-              if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
-                s.category_id = mapping.categoryId;
-              }
-              
-              if (categoryId && String(s.category_id) !== categoryId) return false;
-              
-              const catMapping = catMap.get(String(s.category_id));
-              if (catMapping?.hidden) return false;
-              
-              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
-              // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
-              const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
-              if (resolvedIcon) s.stream_icon = resolvedIcon;
-              if (mapping?.epgMapping) s.epg_channel_id = mapping.epgMapping;
-              
-              if (playlist.directStreams && s._client) {
-                s.direct_source = s._client.getLiveStreamUrl(s.stream_id);
-              }
-              
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000; // Put at the bottom if category mapping unknown
-              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
-              return true;
-            }).sort((a: any, b: any) => {
-              if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
-              return a._streamOrder - b._streamOrder;
-            });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; delete s._sourceIdx; });
-            break;
+             // Build category order map using PREFIXED category IDs for consistency
+             const catOrderMap = new Map();
+             const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               if (!sDoc) return [];
+               const cl = new XtreamClient(sDoc as any);
+               const cats = await cl.getLiveCategories().catch(() => []);
+               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+             }));
+             const deduplicatedCats = allCatsResults.flat();
+
+             // Store order by PREFIXED category ID
+             deduplicatedCats.forEach((c: any, idx: number) => {
+               const originalId = String(c.category_id || c.id);
+               const prefixedId = `${c._sourceIdx}_${originalId}`;
+               catOrderMap.set(prefixedId, idx);
+             });
+
+             const seenStreams = new Set<string>();
+             data = data.filter((s: any, idx: number) => {
+               const originalId = String(s.stream_id);
+
+               if (seenStreams.has(originalId)) return false;
+               seenStreams.add(originalId);
+
+               const mapping = mappingMap.get(originalId);
+               if (mapping?.hidden) return false;
+
+               // Use PREFIXED category ID for mapping lookup (s.category_id is raw from upstream, never prefixed)
+               const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+               const catMapping = catMap.get(prefixedCatId) || catMap.get(String(s.category_id || ''));
+
+               if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+                 s.category_id = mapping.categoryId;
+               }
+
+               // Filter by processed category_id (stripped prefix for Telvizo)
+               if (categoryId && String(s.category_id) !== categoryId) return false;
+
+               if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
+               // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
+               const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
+               if (resolvedIcon) s.stream_icon = resolvedIcon;
+               if (mapping?.epgMapping) s.epg_channel_id = mapping.epgMapping;
+
+               if (playlist.directStreams && s._client) {
+                 s.direct_source = s._client.getLiveStreamUrl(originalId);
+               }
+
+               s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+               s._streamOrder = mapping?.order ?? idx;
+               s.sourceIdx = mapping?.sourceIdx ?? -1;
+
+               // Keep raw upstream stream_id so the proxy can fetch the correct stream from upstream.
+               // streamId (camelCase) is for the editor UI only.
+               if (!playlist.isSynced) {
+                 s.streamId = String(mapping?.order ?? idx);
+               }
+               return true;
+             }).sort((a: any, b: any) => {
+               if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
+               return a._streamOrder - b._streamOrder;
+             });
+
+             // Strip source prefix from category_id only if it matches pattern ^\d+_
+             data.forEach((s: any) => {
+               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
+                 s.category_id = String(s.category_id).split('_').slice(1).join('_');
+               }
+             });
+             data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
+             data.forEach((s: any) => { if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
+             break;
           }
-          case 'get_vod_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getVodCategories().catch(() => []);
-              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
-            data = allResults.flat().filter((c: any, i: number, a: any[]) => {
-              const cid = String(c.category_id || c.id);
-              return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            data.forEach((c: any, idx: number) => {
-              const cid = String(c.category_id || c.id);
-              const mapping = catMappings.find(m => m.type === 'vod' && m.originalId === cid);
-              c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
-              if (mapping?.customName) c.category_name = mapping.customName;
-              c._hidden = mapping?.hidden || false;
-            });
-            data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
-            data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
-            break;
-          }
-          case 'get_vod_streams': {
-            const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const streams = await cl.getVodStreams().catch(() => []);
-              return streams.map((s: any) => ({ ...s, _sourceIdx: sourceIdx }));
-            }));
-            data = allResults.flat();
+            case 'get_vod_categories': {
+              const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const cats = await cl.getVodCategories().catch(() => []);
+                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+              }));
 
-            const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
-            const mappingMap = new Map(mappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
+              data = allResults.flat();
 
-            const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getVodCategories().catch(() => []);
-              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
-            const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
-                const cid = String(c.category_id || c.id);
-                return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            deduplicatedCats.forEach((c: any, idx: number) => {
-                const cid = String(c.category_id || c.id);
-                const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
-            });
+              const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
 
-            const seenStreams = new Set<string>();
-            data = data.filter((s: any, idx: number) => {
-              const sid = String(s.stream_id);
-              if (seenStreams.has(sid)) return false;
-              seenStreams.add(sid);
+              data.forEach((c: any, idx: number) => {
+                const originalId = String(c.category_id || c.id);
+                const prefixedId = `${c._sourceIdx}_${originalId}`;
 
-              const mapping = mappingMap.get(sid);
-              if (mapping?.hidden) return false;
-              if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
-                s.category_id = mapping.categoryId;
-              }
-              if (categoryId && String(s.category_id) !== categoryId) return false;
-              const catMapping = catMap.get(String(s.category_id));
-              if (catMapping?.hidden) return false;
-              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
-              s._streamOrder = mapping?.order ?? (999999 + idx);
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
-              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
-              return true;
-            }).sort((a: any, b: any) => {
-              if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
-              return a._streamOrder - b._streamOrder;
-            });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._sourceIdx; });
-            break;
-          }
-          case 'get_series_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getSeriesCategories().catch(() => []);
-              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
-            data = allResults.flat().filter((c: any, i: number, a: any[]) => {
-              const cid = String(c.category_id || c.id);
-              return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            data.forEach((c: any, idx: number) => {
-              const cid = String(c.category_id || c.id);
-              const mapping = catMappings.find(m => m.type === 'series' && m.originalId === cid);
-              c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
-              if (mapping?.customName) c.category_name = mapping.customName;
-              c._hidden = mapping?.hidden || false;
-            });
-            data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
-            data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
-            break;
-          }
-          case 'get_series': {
-            const categoryId = req.query.category_id as string;
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const streams = await cl.getSeries().catch(() => []);
-              return streams.map((s: any) => ({ ...s, _sourceIdx: sourceIdx }));
-            }));
-            data = allResults.flat();
+                // Use prefixed ID for mapping lookup
+                const mapping = catMap.get(prefixedId) || catMap.get(originalId);
 
-            const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
-            const mappingMap = new Map(mappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
+                c._order = mapping?.order ?? idx;
+                if (mapping?.customName) c.category_name = mapping.customName;
+                c._hidden = mapping?.hidden || false;
+              });
+              data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
+              // Strip source prefix from category_id only if it matches pattern ^\d+_
+              data.forEach((c: any) => {
+                if (c.category_id && /^\d+_/.test(String(c.category_id))) {
+                  c.category_id = String(c.category_id).split('_').slice(1).join('_');
+                }
+              });
+              data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
+              break;
+            }
+            case 'get_vod_streams': {
+              const categoryId = req.query.category_id as string;
+              const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const streams = await cl.getVodStreams().catch(() => []);
+                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
+              }));
+              data = allResults.flat();
 
-            const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getSeriesCategories().catch(() => []);
-              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
-            const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
-                const cid = String(c.category_id || c.id);
-                return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-            });
-            deduplicatedCats.forEach((c: any, idx: number) => {
-                const cid = String(c.category_id || c.id);
-                const mapping = catMap.get(cid);
-                catOrderMap.set(cid, mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx));
-            });
+              const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
+              const mappingMap = new Map(mappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
 
-            const seenStreams = new Set<string>();
-            data = data.filter((s: any, idx: number) => {
-              const sid = String(s.series_id);
-              if (seenStreams.has(sid)) return false;
-              seenStreams.add(sid);
+              // Build category order map using PREFIXED category IDs
+              const catOrderMap = new Map();
+              const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const cats = await cl.getVodCategories().catch(() => []);
+                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+              }));
+              const deduplicatedCats = allCatsResults.flat();
+              
+              // Store order by PREFIXED category ID
+              deduplicatedCats.forEach((c: any, idx: number) => {
+                const originalId = String(c.category_id || c.id);
+                const prefixedId = `${c._sourceIdx}_${originalId}`;
+                catOrderMap.set(prefixedId, idx);
+              });
 
-              const mapping = mappingMap.get(sid);
-              if (mapping?.hidden) return false;
-              if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
-                s.category_id = mapping.categoryId;
-              }
-              if (categoryId && String(s.category_id) !== categoryId) return false;
-              const catMapping = catMap.get(String(s.category_id));
-              if (catMapping?.hidden) return false;
-              if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 1999999;
-              s._streamOrder = mapping?.order ?? (999999 + idx);
-              if (mapping?.customName) s.name = applyRegex(mapping.customName, mapping.regexRenames || []);
-              s._catOrder = catOrderMap.get(String(s.category_id)) ?? 2000000000;
-              s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
-              return true;
-            }).sort((a: any, b: any) => {
-              if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
-              return a._streamOrder - b._streamOrder;
-            });
-            data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._sourceIdx; });
-            break;
-          }
-          case 'get_live_info': {
-            const liveStreamId = req.query.stream_id as string;
-            const liveResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return null;
-              const cl = new XtreamClient(sDoc as any);
-              try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
-            }));
-            data = liveResults.find(r => r !== null) || {};
-            break;
-          }
+              const seenStreams = new Set<string>();
+              data = data.filter((s: any, idx: number) => {
+                const originalId = String(s.stream_id);
 
-          case 'get_short_epg': {
-            const epgStreamId = req.query.stream_id as string;
-            const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-            const epgResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return null;
-              const cl = new XtreamClient(sDoc as any);
-              try {
-                const r = await cl.getShortEpg(epgStreamId, epgLimit);
-                if (r && (r.epg_listings?.length || r.length)) return r;
-              } catch { return null; }
+                if (seenStreams.has(originalId)) return false;
+                seenStreams.add(originalId);
+
+                const mapping = mappingMap.get(originalId);
+                if (mapping?.hidden) return false;
+
+                // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
+                const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+
+                if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+                  s.category_id = mapping.categoryId;
+                }
+
+                // Filter by raw upstream category ID (Xtream sends raw IDs)
+                if (categoryId && String(s.category_id) !== categoryId) return false;
+
+                const catMapping = catMap.get(prefixedCatId);
+                if (catMapping?.hidden) return false;
+
+                if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
+
+                s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+                s._streamOrder = mapping?.order ?? idx;
+                s.sourceIdx = mapping?.sourceIdx ?? -1;
+                
+                // Keep raw upstream stream_id so the proxy can fetch the correct stream from upstream.
+                if (!playlist.isSynced) {
+                  s.streamId = String(mapping?.order ?? idx);
+                }
+                return true;
+              }).sort((a: any, b: any) => {
+                if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
+                return a._streamOrder - b._streamOrder;
+              });
+              data.forEach((s: any) => {
+                if (s.category_id && /^\d+_/.test(String(s.category_id))) {
+                  s.category_id = String(s.category_id).split('_').slice(1).join('_');
+                }
+              });
+              data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
+              data.forEach((s: any) => { if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
+              break;
+            }
+            case 'get_series_categories': {
+              const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const cats = await cl.getSeriesCategories().catch(() => []);
+                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+              }));
+
+              data = allResults.flat();
+
+              const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
+
+              data.forEach((c: any, idx: number) => {
+                const originalId = String(c.category_id || c.id);
+                const prefixedId = `${c._sourceIdx}_${originalId}`;
+
+                // Use prefixed ID for mapping lookup
+                const mapping = catMap.get(prefixedId) || catMap.get(originalId);
+
+                c._order = mapping?.order ?? idx;
+                if (mapping?.customName) c.category_name = mapping.customName;
+                c._hidden = mapping?.hidden || false;
+              });
+              data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
+              // Strip source prefix from category_id only if it matches pattern ^\d+_
+              data.forEach((c: any) => {
+                if (c.category_id && /^\d+_/.test(String(c.category_id))) {
+                  c.category_id = String(c.category_id).split('_').slice(1).join('_');
+                }
+              });
+              data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
+              break;
+            }
+            case 'get_series': {
+              const categoryId = req.query.category_id as string;
+              const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const streams = await cl.getSeries().catch(() => []);
+                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
+              }));
+              data = allResults.flat();
+
+              const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
+              const mappingMap = new Map(mappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
+
+              // Build category order map using PREFIXED category IDs
+              const catOrderMap = new Map();
+              const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                const cl = new XtreamClient(sDoc as any);
+                const cats = await cl.getSeriesCategories().catch(() => []);
+                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+              }));
+              const deduplicatedCats = allCatsResults.flat();
+              
+              // Store order by PREFIXED category ID
+              deduplicatedCats.forEach((c: any, idx: number) => {
+                const originalId = String(c.category_id || c.id);
+                const prefixedId = `${c._sourceIdx}_${originalId}`;
+                catOrderMap.set(prefixedId, idx);
+              });
+
+              const seenStreams = new Set<string>();
+              data = data.filter((s: any, idx: number) => {
+                const sid = String(s.series_id);
+                if (seenStreams.has(sid)) return false;
+                seenStreams.add(sid);
+
+                const mapping = mappingMap.get(sid);
+                if (mapping?.hidden) return false;
+
+                // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
+                const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+
+                if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+                  s.category_id = mapping.categoryId;
+                }
+
+                // Filter by raw upstream category ID (Xtream sends raw IDs)
+                if (categoryId && String(s.category_id) !== categoryId) return false;
+
+                const catMapping = catMap.get(prefixedCatId);
+                if (catMapping?.hidden) return false;
+
+                if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
+
+                s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+                s._streamOrder = mapping?.order ?? idx;
+                s.sourceIdx = mapping?.sourceIdx ?? -1;
+
+                // Keep raw upstream stream_id so the proxy can fetch the correct stream from upstream.
+                if (!playlist.isSynced) {
+                  s.streamId = String(mapping?.order ?? idx);
+                }
+                return true;
+              }).sort((a: any, b: any) => {
+                if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
+                return a._streamOrder - b._streamOrder;
+              });
+              data.forEach((s: any) => {
+                if (s.category_id && /^\d+_/.test(String(s.category_id))) {
+                  s.category_id = String(s.category_id).split('_').slice(1).join('_');
+                }
+              });
+              data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
+              data.forEach((s: any) => { if (s.cover) s.cover = proxyImageUrl(s.cover, imgBase); });
+              break;
+            }
+        case 'get_live_info': {
+              let liveStreamId = req.query.stream_id as string;
+              // Try streamId first (new integer ID), then fall back to stream_id
+              if (!liveStreamId && req.body?.streamId) liveStreamId = req.body.streamId;
+              // Use integer stream ID directly (no underscore prefix)
+              const liveResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               if (!sDoc) return null;
+               const cl = new XtreamClient(sDoc as any);
+               try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
+             }));
+             data = liveResults.find(r => r !== null) || {};
+             break;
+           }
+
+           case 'get_short_epg': {
+              let epgStreamId = req.query.stream_id as string;
+              // Try streamId first (new integer ID), then fall back to stream_id
+              if (!epgStreamId && req.body?.streamId) epgStreamId = req.body.streamId;
+              // Use integer stream ID directly (no underscore prefix)
+              const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+              const epgResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               if (!sDoc) return null;
+               const cl = new XtreamClient(sDoc as any);
+               try {
+                 const r = await cl.getShortEpg(epgStreamId, epgLimit);
+                 if (r && (r.epg_listings?.length || r.length)) return r;
+               } catch { return null; }
               return null;
             }));
             data = epgResults.find(r => r !== null) || { epg_listings: [] };
@@ -1999,8 +2357,11 @@ async function startServer() {
           }
 
           case 'get_simple_data_table': {
-            const tableStreamId = req.query.stream_id as string;
-            const tableResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            let tableStreamId = req.query.stream_id as string;
+            // Try streamId first (new integer ID), then fall back to stream_id
+            if (!tableStreamId && req.body?.streamId) tableStreamId = req.body.streamId;
+            // Use integer stream ID directly (no underscore prefix)
+            const tableResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
@@ -2015,8 +2376,16 @@ async function startServer() {
           }
 
           case 'get_vod_info': {
-            const vodId = req.query.vod_id as string;
-            const allVodResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            let vodId = req.query.vod_id as string;
+            let targetSIdx: number | null = null;
+            if (vodId.includes('_')) {
+              const parts = vodId.split('_');
+              targetSIdx = parseInt(parts[0]);
+              vodId = parts.slice(1).join('_');
+            }
+
+            const allVodResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+              if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
@@ -2033,8 +2402,16 @@ async function startServer() {
           }
 
           case 'get_series_info': {
-            const seriesId = req.query.series_id as string;
-            const allSourceResults = await Promise.all(playlist.sourceIds.map(async (sid: string) => {
+            let seriesId = req.query.series_id as string;
+            let targetSIdx: number | null = null;
+            if (seriesId.includes('_')) {
+              const parts = seriesId.split('_');
+              targetSIdx = parseInt(parts[0]);
+              seriesId = parts.slice(1).join('_');
+            }
+
+            const allSourceResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+              if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
@@ -2052,6 +2429,22 @@ async function startServer() {
             
             // Return first one that has actual data
             data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
+            // Proxy image URLs in series info
+            if (data && !data.error) {
+              if (data.info?.cover) data.info.cover = proxyImageUrl(data.info.cover, imgBase);
+              if (Array.isArray(data.info?.backdrop_path)) {
+                data.info.backdrop_path = data.info.backdrop_path.map((u: string) => proxyImageUrl(u, imgBase));
+              } else if (data.info?.backdrop_path) {
+                data.info.backdrop_path = proxyImageUrl(data.info.backdrop_path, imgBase);
+              }
+              if (data.episodes && typeof data.episodes === 'object') {
+                for (const season of Object.values(data.episodes) as any[][]) {
+                  for (const ep of season) {
+                    if (ep.info?.movie_image) ep.info.movie_image = proxyImageUrl(ep.info.movie_image, imgBase);
+                  }
+                }
+              }
+            }
             break;
           }
           default:
@@ -2118,44 +2511,58 @@ async function startServer() {
            else cats = await cl.getLiveCategories().catch(() => []);
            return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
         }));
-        const deduplicatedCats = allCatsResults.flat().filter((c: any, i: number, a: any[]) => {
-            const cid = String(c.category_id || c.id);
-            return a.findIndex(cc => String(cc.category_id || cc.id) === cid) === i;
-        });
+        const deduplicatedCats = allCatsResults.flat();
+        
+        // Build category order map using PREFIXED category IDs
         deduplicatedCats.forEach((c: any, idx: number) => {
-            const cid = String(c.category_id || c.id);
-            const mapping = catMap.get(cid);
-            catOrderMap.set(cid, { 
-                order: mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx), 
-                name: mapping?.customName || c.category_name,
-                hidden: mapping?.hidden || false
-            });
+          const originalCatId = String(c.category_id || c.id);
+          const prefixedId = `${c._sourceIdx}_${originalCatId}`;
+          
+          const mapping = catMap.get(originalCatId);
+          catOrderMap.set(prefixedId, {
+            order: mapping?.order ?? idx,
+            name: mapping?.customName || c.category_name,
+            hidden: mapping?.hidden || false
+          });
         });
 
         const seenStreams = new Set<string>();
         const streams = rawStreams.filter((s: any, idx: number) => {
-          const sid = String(s.stream_id || s.series_id);
-          if (seenStreams.has(sid)) return false;
-          seenStreams.add(sid);
+          const originalId = String(s.stream_id || s.series_id);
 
-          const mapping = mappingMap.get(sid);
+          if (seenStreams.has(originalId)) return false;
+          seenStreams.add(originalId);
+
+          const mapping = mappingMap.get(originalId);
           if (mapping?.hidden) return false;
-          
-          if (mapping?.categoryId && mapping.categoryId !== String(s.category_id)) {
+
+          // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
+          const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+
+          if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
             s.category_id = mapping.categoryId;
           }
-          const catInfo = catOrderMap.get(String(s.category_id));
+
+          const catInfo = catOrderMap.get(prefixedCatId);
           if (!catInfo || catInfo.hidden) return false;
-          
+
           s._catOrder = catInfo.order;
-          s._streamOrder = mapping?.order ?? ((s._sourceIdx + 1) * 1000000 + idx);
+          s._streamOrder = mapping?.order ?? idx;
           s._displayCategoryName = catInfo.name;
-          s._mapping = mapping; // Store for later use in name/logo construction
+          s._mapping = mapping;
+          s.sourceIdx = mapping?.sourceIdx ?? -1;
           return true;
         }).sort((a: any, b: any) => {
           if (a._catOrder !== b._catOrder) return a._catOrder - b._catOrder;
           return a._streamOrder - b._streamOrder;
         });
+        
+        // Only generate integer stream IDs for custom playlists (not synced)
+         const streamsWithIds = !playlist.isSynced ? streams.map((s: any, idx: number) => {
+           const streamId = (playlist.nextStreamId || 1) + idx;
+           s.streamId = streamId;
+           return s;
+         }) : streams;
 
         // Build base URL for proxied streams
         const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
@@ -2164,26 +2571,28 @@ async function startServer() {
         const port = hostHeader.toString().split(':')[1] || (protocol === 'https' ? '443' : '80');
         const proxyBaseUrl = process.env.APP_URL || `${protocol}://${hostname}${port && port !== '80' && port !== '443' ? `:${port}` : ''}`;
 
-        for (const stream of streams) {
+        for (const stream of streamsWithIds) {
           const mapping = stream._mapping;
+          const streamId = stream.streamId;
 
           const baseName = mapping
             ? computeDisplayName(mapping, playlist.qualityLabelFormat, m3uGlobalFormat)
             : (stream.name || stream.title);
           const name = mapping ? applyRegex(baseName, mapping.regexRenames || []) : baseName;
-          const logo = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
+          const rawLogo = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
+          const logo = rawLogo ? proxyImageUrl(rawLogo, proxyBaseUrl) : '';
           const epgId = mapping?.epgMapping || stream.epg_channel_id;
           const categoryName = stream._displayCategoryName;
-          const sid = String(stream.stream_id || stream.series_id);
           
           let url;
           if (playlist.directStreams && stream._client) {
-            if (m3uType === 'vod') url = stream._client.getVodStreamUrl(stream.stream_id, stream.container_extension);
-            else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(stream.stream_id, stream.container_extension);
-            else url = stream._client.getLiveStreamUrl(stream.stream_id);
+            const originalStreamId = String(stream.stream_id || stream.series_id);
+            if (m3uType === 'vod') url = stream._client.getVodStreamUrl(originalStreamId, stream.container_extension);
+            else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(originalStreamId, stream.container_extension);
+            else url = stream._client.getLiveStreamUrl(originalStreamId);
           } else {
             const pathType = m3uType === 'vod' ? 'movie' : m3uType === 'series' ? 'series' : 'live';
-            url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${sid}.ts`;
+            url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${streamId}.ts`;
           }
 
           m3u += `#EXTINF:-1 tvg-id="${epgId || ''}" tvg-name="${stream.name || stream.title || ''}" tvg-logo="${logo || ''}" group-title="${categoryName || ''}",${name}\n`;

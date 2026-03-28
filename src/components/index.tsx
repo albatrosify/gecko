@@ -49,7 +49,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import axios from 'axios';
-import { computeDisplayName } from '../quality';
+import { computeDisplayName, resolutionToLabel } from '../quality';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -1708,6 +1708,11 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [selectedStreamIds, setSelectedStreamIds] = useState<Set<string>>(new Set());
   const [lastSelectedStreamId, setLastSelectedStreamId] = useState<string | null>(null);
   const [globalFormat, setGlobalFormat] = useState<string>('[{label}]');
+  const [showAutoMatchModal, setShowAutoMatchModal] = useState(false);
+  const [autoMatchEnabledSources, setAutoMatchEnabledSources] = useState<Set<string>>(new Set());
+  const [autoMatchRematch, setAutoMatchRematch] = useState(false);
+  const [scrollToStreamId, setScrollToStreamId] = useState<string | null>(null);
+  const pendingNavRef = useRef<{ categoryId: string; streamId: string } | null>(null);
 
   useEffect(() => {
     api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {});
@@ -1740,7 +1745,8 @@ export function PlaylistEditor({ user }: { user: User }) {
     const fetchSources = async () => {
       try {
         const allSources = await api.sources.list();
-        setSources(allSources.filter(s => playlist.sourceIds.includes(s.id)));
+        setSources(allSources.filter(s => playlist.sourceIds.includes(s.id))
+                              .sort((a, b) => playlist.sourceIds.indexOf(a.id) - playlist.sourceIds.indexOf(b.id)));
       } catch (error) {
         console.error('Failed to load sources:', error);
       }
@@ -1749,21 +1755,55 @@ export function PlaylistEditor({ user }: { user: User }) {
   }, [playlist]);
 
   const loadData = async (forceRefresh = false) => {
-    if (!sources.length) {
+    if (!playlist || !playlist.sourceIds.length) {
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const source = sources[0];
-      const catData = await api.upstream.fetchCategories(source, forceRefresh);
-      const streamData = await api.upstream.fetchStreams(source, activeTab, forceRefresh);
+      const activeSourceIds = playlist.sourceIds;
+      const activeSources = allSources.filter(s => activeSourceIds.includes(s.id))
+                              .sort((a, b) => activeSourceIds.indexOf(a.id) - activeSourceIds.indexOf(b.id));
+
+      // Fetch categories from all sources
+      const catResults = await Promise.all(activeSources.map(s => 
+        api.upstream.fetchCategories(s, forceRefresh, activeSourceIds.indexOf(s.id))
+      ));
       
-      const cats = activeTab === 'live' ? catData.liveCats : activeTab === 'vod' ? catData.vodCats : catData.seriesCats;
+      const mergedLiveCats = catResults.flatMap(r => r.liveCats || []);
+      const mergedVodCats = catResults.flatMap(r => r.vodCats || []);
+      const mergedSeriesCats = catResults.flatMap(r => r.seriesCats || []);
+      
+      const cats = activeTab === 'live' ? mergedLiveCats : activeTab === 'vod' ? mergedVodCats : mergedSeriesCats;
       setCategories(cats || []);
-      setStreams(streamData.streams || []);
-      setLastUpdated(catData.lastUpdated);
-      setIsCached(catData.cached);
+      
+      // Fetch streams from all sources
+      const streamResults = await Promise.all(activeSources.map(s => 
+        api.upstream.fetchStreams(s, activeTab, forceRefresh, activeSourceIds.indexOf(s.id))
+      ));
+      const mergedStreams = streamResults.flatMap(r => r.streams || []);
+      setStreams(mergedStreams);
+
+      // Apply pending spotlight navigation (cross-tab: tab change cleared selections before load)
+      const nav = pendingNavRef.current;
+      if (nav) {
+        pendingNavRef.current = null;
+        setSelectedCategoryIds(new Set([nav.categoryId]));
+        const targetStream = mergedStreams.find((s: any) =>
+          String(s.stream_id ?? s.series_id) === nav.streamId
+        );
+        if (targetStream) {
+          const originalId = String(targetStream.stream_id ?? targetStream.series_id);
+          const uniqueId = targetStream._sourceIdx != null ? `${targetStream._sourceIdx}_${originalId}` : originalId;
+          setSelectedStreamIds(new Set([uniqueId]));
+          setScrollToStreamId(uniqueId);
+        }
+      }
+
+      if (catResults.length > 0) {
+        setLastUpdated(catResults[0].lastUpdated);
+        setIsCached(catResults[0].cached);
+      }
     } catch (error) {
       console.error("Failed to load data", error);
     }
@@ -1870,42 +1910,110 @@ export function PlaylistEditor({ user }: { user: User }) {
     setLoading(true);
     try {
       if (scope === 'categories') {
-        const selected = Array.from(selectedCategoryIds);
-        const moving = sortedCategories.filter(c => selected.includes(String(c.category_id || c.id)));
-        const other = sortedCategories.filter(c => !selected.includes(String(c.category_id || c.id)));
-        const newOrder = [...moving, ...other];
+        const selectedSet = new Set(selectedCategoryIds);
+        const selectedList = Array.from(selectedCategoryIds);
         
-        setCategories(newOrder);
-        const updates = newOrder.map((c, idx) => {
-          const catId = String(c.category_id || c.id);
-          const mapping = categoryMappings.find(m => m.originalId === catId && m.type === activeTab);
-          return { id: mapping?.id, originalId: catId, playlistId: id, type: activeTab, order: idx };
+        // 1. Get existing mappings for this tab
+        const activeMappings = categoryMappings.filter(m => m.type === activeTab);
+        const mappingMap = new Map(activeMappings.map(m => [m.originalId, m]));
+        
+        // 2. Prepare updates for items being moved to the very top
+        const updates: any[] = [];
+        
+        // Items being moved take orders 0, 1, 2...
+        selectedList.forEach((catId, idx) => {
+          const mapping = mappingMap.get(catId);
+          updates.push({
+            id: mapping?.id,
+            originalId: catId,
+            playlistId: id,
+            type: activeTab,
+            order: idx,
+            hidden: mapping?.hidden ?? false,
+            syncOnDemand: mapping?.syncOnDemand ?? false
+          });
         });
+        
+        // 3. Shift other existing mappings down, preserving their current visual order
+        const otherMappings = activeMappings
+          .filter(m => !selectedSet.has(m.originalId))
+          .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999));
+        otherMappings.forEach((m, idx) => {
+          updates.push({
+            ...m,
+            order: selectedList.length + idx
+          });
+        });
+
+        // 4. Update UI optimistically and sync DB
+        // (For categories we can still do the full sort for UI if we want)
+        const moving = sortedCategories.filter(c => selectedSet.has(String(c.category_id || c.id)));
+        const other = sortedCategories.filter(c => !selectedSet.has(String(c.category_id || c.id)));
+        setCategories([...moving, ...other]);
+        
         await api.categoryMappings.batchUpdate(updates);
       } else {
-        const selected = Array.from(selectedStreamIds);
-        const moving = sortedStreams.filter(s => selected.includes(s._uniqueId));
-        const other = sortedStreams.filter(s => !selected.includes(s._uniqueId));
-        const newOrder = [...moving, ...other];
+        const selectedSet = new Set(selectedStreamIds);
+        const selectedList = Array.from(selectedStreamIds);
         
-        const updates = newOrder.map((s, idx) => {
-          const mapping = mappings.find(m => m.originalId === s._uniqueId && m.type === activeTab);
-          return { 
-            id: mapping?.id, 
-            originalId: s._uniqueId, 
-            playlistId: id, 
-            type: activeTab, 
-            order: idx,
-            originalName: s.name || s.title || "",
-            customName: mapping?.customName || s.name || s.title || "",
-            categoryId: String(s.category_id)
-          };
+        // 1. Get existing mappings for this tab
+        const activeMappings = mappings.filter(m => m.type === activeTab);
+        const mappingMap = new Map(activeMappings.map(m => [m.originalId, m]));
+
+        // 2. Pre-index sortedStreams for faster lookup during selectedList iteration
+        const streamMap = new Map(sortedStreams.filter(s => selectedSet.has(s._uniqueId)).map(s => [s._uniqueId, s]));
+
+        // Sort selected items by their current visual order so move-to-top preserves relative sequence
+        const sortedSelectedList = [...selectedList].sort((a, b) => {
+          const sa = streamMap.get(a);
+          const sb = streamMap.get(b);
+          return (sa?.order ?? 999999) - (sb?.order ?? 999999);
         });
-        await api.mappings.batchUpdate(updates);
+
+        const updates: any[] = [];
+
+        // 3. Set selected items to order 0, 1, 2...
+        sortedSelectedList.forEach((sid, idx) => {
+          const s = streamMap.get(sid);
+          const rawId = String(s?._rawId || s?._uniqueId || sid);
+          const mapping = mappingMap.get(rawId);
+          updates.push({
+            id: mapping?.id,
+            originalId: rawId,
+            sourceIdx: s?._sourceIdx ?? mapping?.sourceIdx,
+            playlistId: id,
+            type: activeTab,
+            order: idx,
+            originalName: s?.name || s?.title || (mapping?.originalName) || "",
+            customName: mapping?.customName || s?.name || s?.title || "",
+            categoryId: String(s?.category_id || mapping?.categoryId || "")
+          });
+        });
+
+        // 4. Shift other existing mappings down — selectedSet contains _uniqueId values, compare against raw originalIds
+        const selectedRawIds = new Set(sortedSelectedList.map(uid => {
+          const s = streamMap.get(uid);
+          return String(s?._rawId || s?._uniqueId || uid);
+        }));
+        const otherMappings = activeMappings
+          .filter(m => !selectedRawIds.has(m.originalId))
+          .sort((a, b) => (a.order ?? 999999) - (b.order ?? 999999));
+        otherMappings.forEach((m, idx) => {
+          updates.push({
+            ...m,
+            order: sortedSelectedList.length + idx
+          });
+        });
+
+        // 5. Sync DB (We don't need a full UI sort here, refreshMappings will trigger re-memoization)
+        if (updates.length > 0) {
+          await api.mappings.batchUpdate(updates);
+        }
       }
       refreshMappings();
     } catch (error) {
       console.error('Batch move to top failed:', error);
+      alert('Failed to move channels to top. Check console for details.');
     }
     setLoading(false);
   };
@@ -1922,7 +2030,7 @@ export function PlaylistEditor({ user }: { user: User }) {
       
       const oldIndex = filteredStreams.findIndex((i) => i._uniqueId === activeId);
       const newIndex = filteredStreams.findIndex((i) => i._uniqueId === overId);
-      
+
       if (oldIndex === -1 || newIndex === -1) return;
 
       let newOrder = [...filteredStreams];
@@ -1936,24 +2044,31 @@ export function PlaylistEditor({ user }: { user: User }) {
       newOrder.splice(adjustedInsertIndex, 0, ...draggedItems);
 
       try {
-        const updates = newOrder.map((s, idx) => {
-          const originalId = s._uniqueId;
+        // Build updates — one per unique originalId (raw stream ID). When multiple
+        // sources share the same stream_id the same DB mapping document is targeted,
+        // so we deduplicate keeping the first occurrence (= the visually intended position).
+        const seenIds = new Set<string>();
+        const updates = newOrder.flatMap((s, idx) => {
+          const originalId = s._rawId || (s.stream_id || s.series_id || s._uniqueId).toString();
+          if (seenIds.has(originalId)) return [];
+          seenIds.add(originalId);
           const originalName = s.name || s.title || "";
           const mapping = mappings.find(m => m.originalId === originalId && m.type === activeTab);
-          
-          return {
+          return [{
             id: mapping?.id,
             playlistId: id!,
             type: activeTab,
             originalId,
+            sourceIdx: s._sourceIdx ?? mapping?.sourceIdx,
             originalName,
             customName: mapping?.customName || originalName,
             order: idx,
             hidden: mapping?.hidden || false,
-            categoryId: s.category_id.toString()
-          };
+            categoryId: (s.category_id ?? '').toString()
+          }];
         });
 
+        // Optimistic update — instant visual feedback before DB round-trip
         setMappings(prev => {
           const next = [...prev];
           updates.forEach(u => {
@@ -1988,8 +2103,12 @@ export function PlaylistEditor({ user }: { user: User }) {
 
     const streamsWithOrder = streams.map((s, idx) => {
       const originalId = (s.stream_id || s.series_id || `idx-${idx}`).toString();
+      // _uniqueId uses sourceIdx prefix internally to avoid collisions between upstreams with overlapping IDs.
+      // It is never shown to the user and never stored in the DB — originalId (raw upstream ID) is stored instead.
+      const uniqueId = s._sourceIdx != null ? `${s._sourceIdx}_${originalId}` : originalId;
       const mapping = originalId ? mappingByOriginalId.get(originalId) : null;
-      return { ...s, _uniqueId: originalId, order: mapping ? (mapping.order ?? 999999) : 999999 };
+      // _rawId = raw upstream ID for DB operations; _uniqueId = sourceIdx-prefixed key for UI deduplication only
+      return { ...s, _uniqueId: uniqueId, _rawId: originalId, order: mapping ? (mapping.order ?? 999999) : 999999, _detectedMeta: mapping?.detectedMeta ?? null };
     });
     return streamsWithOrder.sort((a, b) => a.order - b.order);
   }, [streams, mappings, activeTab]);
@@ -2004,29 +2123,39 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     });
 
-    const categoriesWithOrder = (categories || []).map((c) => {
+    const categoriesWithMapping = (categories || []).map((c) => {
       const catId = String(c.category_id || c.id);
       const mapping = mappingByOriginalId.get(catId);
-      return { ...c, order: mapping ? (mapping.order ?? 999999) : 999999 };
+      return { 
+        ...c, 
+        customName: mapping?.customName,
+        order: mapping ? (mapping.order ?? 999999) : 999999,
+        hidden: mapping?.hidden ?? false,
+        syncOnDemand: mapping?.syncOnDemand ?? false
+      };
     });
     
-    const sorted = categoriesWithOrder.sort((a, b) => a.order - b.order);
+    const sorted = categoriesWithMapping.sort((a, b) => a.order - b.order);
     if (!categorySearch.trim()) return sorted;
     const q = categorySearch.toLowerCase();
-    return sorted.filter(c => (c.category_name || c.name || '').toLowerCase().includes(q));
+    return sorted.filter(c => (c.customName || c.category_name || c.name || '').toLowerCase().includes(q));
   }, [categories, categoryMappings, activeTab, categorySearch]);
 
   const filteredStreams = useMemo(() => {
-    if (selectedCategoryIds.size === 0) return [];
-    
     const searchLower = searchTerm.toLowerCase();
     
     return sortedStreams.filter(s => {
-      // Fast path: bypass string allocations and checks if category doesn't match
-      if (!selectedCategoryIds.has(String(s.category_id))) return false;
+      // 1. Category Filter
+      if (selectedCategoryIds.size > 0) {
+        if (!selectedCategoryIds.has(String(s.category_id))) return false;
+      }
       
-      if (!searchLower) return true;
-      return (s.name || s.title || "").toLowerCase().includes(searchLower);
+      // 2. Search Filter
+      if (searchLower) {
+        return (s.name || s.title || "").toLowerCase().includes(searchLower);
+      }
+      
+      return true;
     });
   }, [sortedStreams, searchTerm, selectedCategoryIds]);
 
@@ -2094,12 +2223,12 @@ export function PlaylistEditor({ user }: { user: User }) {
     const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
 
     const updates = activeStreams.map(stream => {
-      const sid = String(stream._uniqueId);
+      const sid = String(stream._rawId || stream._uniqueId);
       const existingMapping = mappingLookup.get(sid);
       const originalName = stream.name || stream.title || "";
       let newName = existingMapping?.customName || originalName;
       const initialName = newName;
-      
+
       rules.forEach(rule => {
         try {
           if (!rule.pattern) return;
@@ -2154,9 +2283,9 @@ export function PlaylistEditor({ user }: { user: User }) {
     const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
 
     const updates = activeStreams.map(stream => {
-      const sid = String(stream._uniqueId);
+      const sid = String(stream._rawId || stream._uniqueId);
       const existingMapping = mappingLookup.get(sid);
-      
+
       if (existingMapping && existingMapping.hidden === hidden) return null;
       if (!existingMapping && !hidden) return null; // Already visible by default
 
@@ -2204,12 +2333,12 @@ export function PlaylistEditor({ user }: { user: User }) {
     const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
 
     const updates = activeStreams.map(stream => {
-      const sid = String(stream._uniqueId);
+      const sid = String(stream._rawId || stream._uniqueId);
       const existingMapping = mappingLookup.get(sid);
-      
+
       if (existingMapping && existingMapping.categoryId === newCategoryId) return null;
       if (!existingMapping && String(stream.category_id) === newCategoryId) return null;
-      
+
       return {
         id: existingMapping?.id,
         originalId: sid,
@@ -2237,32 +2366,47 @@ export function PlaylistEditor({ user }: { user: User }) {
   };
 
 
+  const openAutoMatchModal = async () => {
+    if (!id) return;
+    const { channels } = await api.epgs.channels(id).catch(() => ({ channels: [] as any[] }));
+    if (!channels.length) { alert('No EPG channels available. Enable "Use Upstream EPG" on a source or add custom EPG sources.'); return; }
+    // Populate epgChannels if not yet loaded and default all sources enabled
+    setEpgChannels(channels);
+    const sources = new Set<string>(channels.map((c: any) => c.source));
+    setAutoMatchEnabledSources(sources);
+    setShowAutoMatchModal(true);
+  };
+
   const handleAutoMatchEpg = async () => {
     if (!id) return;
+    setShowAutoMatchModal(false);
     try {
-      const { channels } = await api.epgs.channels(id);
-      if (!channels.length) { alert('No EPG channels available. Enable "Use Upstream EPG" on a source or add custom EPG sources.'); return; }
+      const channels = epgChannels.filter(c => autoMatchEnabledSources.has(c.source));
+      if (!channels.length) { alert('No EPG channels in the selected sources.'); return; }
 
       const normalize = (s: string) =>
         s.toLowerCase().replace(/\b(hd|fhd|4k|sd|uhd|the|le|la|les|das|der|die)\b/gi, '').replace(/[^a-z0-9]/g, '').trim();
 
-      // Streams without any EPG mapping
+      // Streams to name-match: unmatched ones, plus already-matched if re-match is on
       const streamsToMatch = filteredStreams.filter(s => {
-        const m = mappings.find(mp => mp.originalId === String(s._uniqueId));
-        return !m?.epgMapping;
+        const m = mappings.find(mp => mp.originalId === String(s._rawId || s._uniqueId));
+        return autoMatchRematch ? true : !m?.epgMapping;
       });
 
-      // Streams already mapped but missing epgIcon (icon was not saved when matched)
-      const streamsToUpdateIcon = filteredStreams.filter(s => {
-        const m = mappings.find(mp => mp.originalId === String(s._uniqueId));
+      // Streams already matched but missing icon — only when not doing a full re-match
+      const streamsToUpdateIcon = autoMatchRematch ? [] : filteredStreams.filter(s => {
+        const m = mappings.find(mp => mp.originalId === String(s._rawId || s._uniqueId));
         return m?.epgMapping && !m?.epgIcon;
       });
 
       const updates: any[] = [];
 
-      // Full name-based auto-match for unmatched streams
+      // Full name-based auto-match
       for (const stream of streamsToMatch) {
-        const target = normalize(stream.name || stream.title || '');
+        const rawId = String(stream._rawId || stream._uniqueId);
+        const existing = mappings.find(mp => mp.originalId === rawId);
+        const effectiveName = existing?.customName || stream.name || stream.title || '';
+        const target = normalize(effectiveName);
         if (!target) continue;
         let best: { id: string; name: string; icon?: string; source?: string } | null = null;
         let bestScore = 0;
@@ -2273,24 +2417,23 @@ export function PlaylistEditor({ user }: { user: User }) {
           if (score > bestScore) { best = ch; bestScore = score; }
         }
         if (!best || bestScore === 0) continue;
-        const existing = mappings.find(mp => mp.originalId === String(stream._uniqueId));
         updates.push(existing?.id
           ? { id: existing.id, epgMapping: best.id, epgIcon: best.icon || '', epgSource: best.source || '' }
-          : { playlistId: id, type: activeTab === 'vod' ? 'vod' : activeTab, originalId: String(stream._uniqueId), originalName: stream.name || stream.title || '', customName: stream.name || stream.title || '', order: 0, hidden: false, categoryId: String(stream.category_id || ''), epgMapping: best.id, epgIcon: best.icon || '', epgSource: best.source || '' }
+          : { playlistId: id, type: activeTab === 'vod' ? 'vod' : activeTab, originalId: rawId, originalName: stream.name || stream.title || '', customName: stream.name || stream.title || '', order: stream.order ?? 999999, hidden: false, categoryId: String(stream.category_id || ''), epgMapping: best.id, epgIcon: best.icon || '', epgSource: best.source || '', sourceIdx: stream._sourceIdx ?? 0 }
         );
       }
 
-      // Icon-only update for already-matched streams that are missing their icon
+      // Icon-only update for already-matched streams missing their icon
       for (const stream of streamsToUpdateIcon) {
-        const existing = mappings.find(mp => mp.originalId === String(stream._uniqueId));
+        const existing = mappings.find(mp => mp.originalId === String(stream._rawId || stream._uniqueId));
         if (!existing?.id || !existing.epgMapping) continue;
-        const ch = channels.find(c => c.id === existing.epgMapping);
+        const ch = epgChannels.find(c => c.id === existing.epgMapping);
         if (ch?.icon || ch?.source) {
           updates.push({ id: existing.id, epgIcon: ch?.icon || '', epgSource: ch?.source || '' });
         }
       }
 
-      if (!updates.length) { alert('All streams are already matched and have icons.'); return; }
+      if (!updates.length) { alert('No matches found or all streams already matched from selected sources.'); return; }
       await api.mappings.batchUpdate(updates);
       await refreshMappings();
       const iconUpdates = updates.filter(u => !u.epgMapping).length;
@@ -2504,14 +2647,92 @@ export function PlaylistEditor({ user }: { user: User }) {
         </div>
       )}
 
+      {showAutoMatchModal && (() => {
+        const uniqueSources = Array.from(new Set(epgChannels.map(c => c.source)));
+        return (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full space-y-6"
+            >
+              <div>
+                <h3 className="text-xl font-bold">Auto-match EPG</h3>
+                <p className="text-xs text-zinc-500 mt-1">Match channel names against selected EPG sources</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Sources</label>
+                {uniqueSources.map(source => (
+                  <label key={source} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded accent-emerald-500"
+                      checked={autoMatchEnabledSources.has(source)}
+                      onChange={e => {
+                        const next = new Set(autoMatchEnabledSources);
+                        e.target.checked ? next.add(source) : next.delete(source);
+                        setAutoMatchEnabledSources(next);
+                      }}
+                    />
+                    <span className="text-sm font-medium truncate">{source}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-zinc-800">
+                <label className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded accent-emerald-500"
+                    checked={autoMatchRematch}
+                    onChange={e => setAutoMatchRematch(e.target.checked)}
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Re-match already matched channels</div>
+                    <div className="text-[10px] text-zinc-500">Overwrites existing EPG assignments</div>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowAutoMatchModal(false)}
+                  className="flex-1 py-2.5 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAutoMatchEpg}
+                  disabled={autoMatchEnabledSources.size === 0}
+                  className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Run
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
+
       {showGlobalSearch && (
         <GlobalSearch
           playlistId={id!}
           onClose={() => setShowGlobalSearch(false)}
           onNavigate={(type, categoryId, streamId) => {
-            setActiveTab(type);
-            setSelectedCategoryIds(new Set([categoryId]));
-            setSelectedStreamIds(new Set([streamId]));
+            if (type !== activeTab) {
+              // Cross-tab: store target — the tab-change useEffect will clear selections,
+              // so loadData will apply them after streams are loaded
+              pendingNavRef.current = { categoryId, streamId };
+              setActiveTab(type);
+            } else {
+              // Same tab: streams already loaded, apply immediately
+              setSelectedCategoryIds(new Set([categoryId]));
+              const stream = sortedStreams.find((s: any) => s._rawId === streamId);
+              const uniqueId = stream?._uniqueId ?? streamId;
+              setSelectedStreamIds(new Set([uniqueId]));
+              setScrollToStreamId(uniqueId);
+            }
             setShowGlobalSearch(false);
           }}
         />
@@ -2603,6 +2824,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                         mapping={mapping}
                         activeTab={activeTab}
                         playlistId={id || ""}
+                        allSources={allSources}
+                        playlistSourceIds={playlist.sourceIds}
                         onMappingChange={refreshMappings}
                         onBatchVisibilityToggle={handleCategoryBatchVisibility}
                         isSelected={selectedCategoryIds.has(catId)}
@@ -2660,9 +2883,9 @@ export function PlaylistEditor({ user }: { user: User }) {
               </div>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={handleAutoMatchEpg}
+                  onClick={openAutoMatchModal}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors whitespace-nowrap"
-                  title="Auto-match EPG channels by name for all unmatched streams"
+                  title="Auto-match EPG channels by name"
                 >
                   <Tv size={12} />
                   Auto-match EPG
@@ -2684,12 +2907,12 @@ export function PlaylistEditor({ user }: { user: User }) {
             {/* Stream list + Editor pane side by side */}
             <div className="flex-1 flex flex-row min-h-0">
               <div className="flex-1 min-h-0 min-w-0 flex flex-col">
-                <StreamTable
+                <StreamTableMemo 
                   streams={filteredStreams}
                   selectedCategoryIds={selectedCategoryIds}
                   activeTab={activeTab}
                   mappings={mappings}
-                  playlistId={id!}
+                  playlistId={id || ""}
                   applyRegex={applyRegex}
                   onMappingChange={refreshMappings}
                   onDragEnd={handleStreamDragEnd}
@@ -2697,16 +2920,22 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onSelectStream={handleStreamClick}
                   selectedStreamIds={selectedStreamIds}
                   epgChannels={epgChannels}
+                  allSources={allSources}
+                  playlistSourceIds={playlist.sourceIds}
                   playlist={playlist}
                   globalFormat={globalFormat}
+                  scrollToId={scrollToStreamId}
+                  onScrolled={() => setScrollToStreamId(null)}
                 />
+
               </div>
 
               {selectedStreamIds.size >= 1 && (() => {
                 const firstId = Array.from(selectedStreamIds)[0];
                 const firstStream = sortedStreams.find((s: any) => s._uniqueId === firstId || String(s.stream_id) === firstId);
                 if (!firstStream) return null;
-                const firstMapping = mappings.find(m => m.originalId === firstId && m.type === activeTab);
+                const firstRawId = firstStream._rawId || firstId;
+                const firstMapping = mappings.find(m => m.originalId === firstRawId && m.type === activeTab);
                 return (
                   <EditorPane
                     key="editor-pane"
@@ -2714,7 +2943,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                     mapping={firstMapping}
                     playlistId={id!}
                     type={activeTab}
-                    source={sources[0]}
+                    source={sources[firstStream._sourceIdx ?? 0]}
                     playlist={playlist}
                     globalFormat={globalFormat}
                     onClose={() => setSelectedStreamIds(new Set())}
@@ -3223,7 +3452,8 @@ function CategoryPane({
   );
 }
 
-function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle }: {
+function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle, allSources, playlistSourceIds }: { 
+
   cat: any; 
   mapping?: CategoryMapping;
   playlistId: string;
@@ -3232,6 +3462,8 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
   onClick: (e: React.MouseEvent) => void; 
   onMappingChange: () => void;
   onBatchVisibilityToggle?: (hidden: boolean) => void;
+  allSources: any[];
+  playlistSourceIds: string[];
 }) {
   const catId = String(cat.category_id || cat.id);
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: catId });
@@ -3353,12 +3585,14 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           </form>
         ) : (
           <div className="flex flex-col truncate">
-            <span className={cn(
-              "text-xs font-medium truncate transition-colors",
-              isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
-            )}>
-              {mapping?.customName || cat.category_name}
-            </span>
+            <div className="flex items-center gap-1 min-w-0">
+              <span className={cn(
+                "text-xs font-medium truncate transition-colors",
+                isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
+              )}>
+                {mapping?.customName || cat.category_name}
+              </span>
+            </div>
             {mapping?.syncOnDemand && (
               <span className="text-[8px] text-emerald-500/60 uppercase font-black flex items-center gap-0.5 mt-0.5">
                 <Activity size={8} /> Dynamic Sync
@@ -3418,7 +3652,25 @@ function TabButton({ active, onClick, label }: { active: boolean; onClick: () =>
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, playlist, globalFormat }: {
+function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number, allSources: any[], playlistSourceIds: string[] }) {
+  if (index === undefined || index === null || playlistSourceIds.length <= 1) return null;
+  const sourceId = playlistSourceIds[index];
+  const source = allSources.find(s => s.id === sourceId);
+  if (!source) return null;
+  
+  return (
+    <span 
+      className="ml-2 px-1.5 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-500 text-[9px] font-bold uppercase tracking-tight flex items-center gap-1"
+      title={`Source: ${source.name}`}
+    >
+      <Database size={8} />
+      {source.name.slice(0, 8)}{source.name.length > 8 ? '...' : ''}
+    </span>
+  );
+}
+
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
+
   streams: any[];
   selectedCategoryIds: Set<string>;
   activeTab: string;
@@ -3431,18 +3683,33 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onSelectStream: (stream: any, e: React.MouseEvent) => void;
   selectedStreamIds: Set<string>;
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
+  allSources?: any[];
+  playlistSourceIds?: string[];
   playlist?: Playlist | null;
   globalFormat?: string;
+  scrollToId?: string | null;
+  onScrolled?: () => void;
+
 }) {
   const filteredStreams = streams;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<any>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo(0, 0);
     }
   }, [selectedCategoryIds]);
+
+  useEffect(() => {
+    if (!scrollToId || !listRef.current) return;
+    const idx = filteredStreams.findIndex((s: any) => s._uniqueId === scrollToId);
+    if (idx !== -1) {
+      listRef.current.scrollToItem(idx, 'smart');
+      onScrolled?.();
+    }
+  }, [scrollToId, filteredStreams]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -3478,10 +3745,23 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
           No items found in this category
         </div>
       ) : (
-        <div className="flex-1 min-h-0 bg-zinc-900/10">
+        <div className="flex-1 min-h-0 flex flex-col bg-zinc-900/10">
+          {/* Column headers */}
+          <div className="flex items-center gap-2 px-2 py-1 border-b border-zinc-800 bg-zinc-950/60 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-zinc-600 select-none">
+            <div className="w-6 shrink-0" />{/* drag handle */}
+            <div className="w-8 shrink-0 text-center">Logo</div>
+            <div className="w-10 shrink-0 text-center">ID</div>
+            <div className="flex-1 min-w-0">Name</div>
+            <div className="w-16 shrink-0 text-center">HDR</div>
+            <div className="w-20 shrink-0 text-center">Audio</div>
+            <div className="w-12 shrink-0 text-center">Res</div>
+            <div className="w-8 shrink-0 text-center">Vis</div>
+          </div>
+          <div className="flex-1 min-h-0">
           <AutoSizer renderProp={({ height, width }) => {
             const content = (
               <List
+                ref={listRef}
                 height={height || 0}
                 itemCount={filteredStreams.length}
                 itemSize={58}
@@ -3496,8 +3776,11 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   onSelectStream,
                   selectedStreamIds,
                   epgChannels,
+                  allSources,
+                  playlistSourceIds,
                   playlist,
                   globalFormat,
+
                 }}
               >
                 {VirtualStreamRow}
@@ -3530,6 +3813,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
               </DndContext>
             );
           }} />
+          </div>
         </div>
       )}
     </div>
@@ -3555,15 +3839,19 @@ const VirtualStreamRow = React.memo(({
     onSelectStream,
     selectedStreamIds,
     epgChannels,
+    allSources,
+    playlistSourceIds,
     playlist,
     globalFormat,
+
   } = data;
   
   const stream = filteredStreams[index];
-  const originalId = stream?._uniqueId || "fallback-id";
-  const isSelected = selectedStreamIds.has(originalId);
-  
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: originalId });
+  const sortableId = stream?._uniqueId || "fallback-id"; // prefixed, for drag/selection dedup
+  const originalId = stream?._rawId || stream?._uniqueId || "fallback-id"; // raw upstream ID, for DB ops
+  const isSelected = selectedStreamIds.has(sortableId);
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
 
   if (!stream) return <div style={style} />;
 
@@ -3603,6 +3891,8 @@ const VirtualStreamRow = React.memo(({
       isDragging={isDragging}
       isSelected={isSelected}
       epgChannels={epgChannels}
+      allSources={allSources}
+      playlistSourceIds={playlistSourceIds}
     />
   );
 });
@@ -3617,14 +3907,35 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   originalName: string;
   originalId: string;
   index: number;
+  isSelected: boolean;
   onMappingChange: () => void;
   onSelectStream: (stream: any, e: React.MouseEvent) => void;
   dragAttributes?: any;
   dragListeners?: any;
   isDragging?: boolean;
-  isSelected?: boolean;
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
-}>(({ style, stream, type, mapping, playlistId, displayName, originalName, originalId, index, onMappingChange, onSelectStream, dragAttributes, dragListeners, isDragging, isSelected, epgChannels }, ref) => {
+  allSources?: any[];
+  playlistSourceIds?: string[];
+}>(({ 
+  style, 
+  stream, 
+  type, 
+  mapping, 
+  playlistId, 
+  displayName, 
+  originalName, 
+  originalId, 
+  index,
+  isSelected, 
+  onMappingChange, 
+  onSelectStream, 
+  dragAttributes, 
+  dragListeners, 
+  isDragging, 
+  epgChannels,
+  allSources,
+  playlistSourceIds
+}, ref) => {
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
 
@@ -3641,7 +3952,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
           customName: originalName,
           order: 0,
           hidden: true,
-          categoryId: String(stream.category_id || "")
+          categoryId: String(stream.category_id || ""),
+          sourceIdx: stream._sourceIdx ?? 0
         });
       }
       onMappingChange();
@@ -3651,26 +3963,27 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   };
 
   const handleRename = async (newName: string) => {
-    try {
-      if (mapping?.id) {
-        await api.mappings.update(mapping.id, { customName: newName });
-      } else {
-        await api.mappings.create({
-          playlistId,
-          type,
-          originalId,
-          originalName,
-          customName: newName,
-          order: 0,
-          hidden: false,
-          categoryId: String(stream.category_id || "")
-        });
-      }
-      onMappingChange();
-    } catch (error) {
-      console.error('Failed to rename stream:', error);
-    }
-  };
+     try {
+       if (mapping?.id) {
+         await api.mappings.update(mapping.id, { customName: newName });
+       } else {
+         await api.mappings.create({
+           playlistId,
+           type,
+           originalId,
+           originalName,
+           customName: newName,
+           order: 0,
+           hidden: false,
+           categoryId: String(stream.category_id || ""),
+           sourceIdx: stream._sourceIdx ?? 0
+         });
+       }
+       onMappingChange();
+     } catch (error) {
+       console.error('Failed to rename stream:', error);
+     }
+   };
 
   return (
     <div
@@ -3678,27 +3991,28 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       style={style}
       onClick={(e) => onSelectStream(stream, e)}
       className={cn(
-        "flex items-center gap-2 px-4 border-b border-zinc-800/50 transition-colors cursor-pointer group",
+        "flex items-center gap-2 px-2 border-b border-zinc-800/50 transition-colors cursor-pointer group",
         mapping?.hidden && "opacity-40",
-        isSelected 
-          ? "bg-emerald-500/10" 
+        isSelected
+          ? "bg-emerald-500/10"
           : isDragging ? "bg-zinc-800" : (index % 2 === 0 ? "bg-zinc-950/30" : "bg-transparent"),
         !isDragging && !isSelected && "hover:bg-zinc-900/80"
       )}
     >
-      <button 
-        {...dragAttributes} 
-        {...dragListeners} 
-        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1"
+      {/* Drag handle */}
+      <button
+        {...dragAttributes}
+        {...dragListeners}
+        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
         onClick={e => e.stopPropagation()}
       >
         <GripVertical size={14} />
       </button>
 
-      {/* Icon */}
+      {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
         {icon ? (
-          <img src={icon} alt="" className="w-full h-full object-contain" referrerPolicy="no-referrer" loading="lazy" />
+          <img src={icon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-zinc-800">
             <Tv size={12} />
@@ -3713,14 +4027,15 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 
       {/* Name + EPG info */}
       <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
-        <span className={cn(
-          "text-sm truncate block",
-          mapping?.customName && mapping.customName !== originalName
-            ? "text-emerald-400"
-            : "text-zinc-300"
-        )}>
-          {displayName}
-        </span>
+        <div className="flex items-center gap-1 min-w-0">
+          <span className={cn(
+            "text-[13px] font-bold truncate transition-colors",
+            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white"
+          )}>
+            {displayName}
+          </span>
+          <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
+        </div>
         {mapping?.epgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-[10px] text-zinc-600 font-mono truncate">{mapping.epgMapping}</span>
@@ -3733,10 +4048,80 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         )}
       </div>
 
-      {/* No more inline editor here */}
+      {/* HDR column */}
+      {(() => {
+        const hdr = stream._detectedMeta?.hdr ?? null;
+        const hdrColors = hdr
+          ? (hdr.toLowerCase().includes('dolby') || hdr.toLowerCase().includes('dv')
+              ? 'text-orange-400 border-orange-700 bg-orange-900/20'
+              : hdr.toLowerCase().includes('hdr')
+              ? 'text-blue-400 border-blue-700 bg-blue-900/20'
+              : hdr.toLowerCase().includes('hlg')
+              ? 'text-green-400 border-green-700 bg-green-900/20'
+              : 'text-amber-400 border-amber-700 bg-amber-900/20')
+          : '';
+        return (
+          <div className="w-16 shrink-0 flex items-center justify-center">
+            {hdr && (
+              <span className={cn("text-[9px] font-bold px-1 py-px rounded border", hdrColors)}>{hdr}</span>
+            )}
+          </div>
+        );
+      })()}
 
-      {/* Actions */}
-      <div className="w-20 shrink-0 flex justify-center gap-1">
+      {/* Audio column */}
+      {(() => {
+        const m = stream._detectedMeta;
+        if (!m) return <div className="w-20 shrink-0" />;
+        const audioCodecRaw = (m.audioCodec ?? '').toLowerCase();
+        const audioLabel = ({
+          eac3: 'DD+', 'e-ac-3': 'DD+', ac3: 'DD', truehd: 'TrueHD',
+          dts: 'DTS', 'dts-hd': 'DTS-HD', aac: 'AAC', mp3: 'MP3',
+          mp2: 'MP2', opus: 'Opus', vorbis: 'Vorbis', flac: 'FLAC',
+        } as Record<string, string>)[audioCodecRaw] ?? (m.audioCodec ? m.audioCodec.toUpperCase() : null);
+        const chLabel = m.audioChannels === 1 ? 'Mono' : m.audioChannels === 2 ? '2.0' : m.audioChannels === 6 ? '5.1' : m.audioChannels === 8 ? '7.1' : m.audioChannels != null ? `${m.audioChannels}ch` : null;
+        // WoW tier: Legendary=TrueHD, Epic=DTS/DTS-HD, Rare=DD+/FLAC, Uncommon=DD, Common=rest
+        const audioColors = ({
+          truehd:   'text-orange-400 border-orange-700 bg-orange-900/20',
+          'dts-hd': 'text-purple-400 border-purple-700 bg-purple-900/20',
+          dts:      'text-purple-400 border-purple-700 bg-purple-900/20',
+          eac3:     'text-blue-400 border-blue-700 bg-blue-900/20',
+          'e-ac-3': 'text-blue-400 border-blue-700 bg-blue-900/20',
+          flac:     'text-blue-400 border-blue-700 bg-blue-900/20',
+          ac3:      'text-green-400 border-green-700 bg-green-900/20',
+        } as Record<string, string>)[audioCodecRaw] ?? 'text-zinc-400 border-zinc-600 bg-zinc-800/60';
+        return (
+          <div className="w-20 shrink-0 flex items-center justify-center gap-0.5">
+            {audioLabel && <span className={cn("text-[9px] font-bold px-1 py-px rounded border", audioColors)}>{audioLabel}</span>}
+            {chLabel && <span className="text-[9px] px-1 py-px rounded border text-zinc-500 border-zinc-700 bg-zinc-800/60">{chLabel}</span>}
+          </div>
+        );
+      })()}
+
+      {/* Resolution column — WoW quality tiers */}
+      {(() => {
+        const m = stream._detectedMeta;
+        const resLabel = m?.resolution ? resolutionToLabel(m.resolution) : null;
+        // SD=grey, HD=green, FHD=blue, QHD=purple, UHD=orange, 8K=gold
+        const resColors = ({
+          SD:  'text-zinc-400 border-zinc-600 bg-zinc-800/60',
+          HD:  'text-green-400 border-green-700 bg-green-900/20',
+          FHD: 'text-blue-400 border-blue-700 bg-blue-900/20',
+          QHD: 'text-purple-400 border-purple-700 bg-purple-900/20',
+          UHD: 'text-orange-400 border-orange-700 bg-orange-900/20',
+          '8K': 'text-yellow-300 border-yellow-500 bg-yellow-900/20',
+        } as Record<string, string>)[resLabel ?? ''] ?? '';
+        return (
+          <div className="w-12 shrink-0 flex items-center justify-center">
+            {resLabel && (
+              <span className={cn("text-[9px] font-bold px-1 py-px rounded border", resColors)}>{resLabel}</span>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Visibility toggle */}
+      <div className="w-8 shrink-0 flex items-center justify-center">
         <button
           onClick={toggleVisibility}
           className={cn(
@@ -3754,6 +4139,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   );
 });
 
+const StreamTableMemo = React.memo(StreamTable);
 const StreamRowMemo = React.memo(StreamRow);
 
 // ── Global Spotlight Search ────────────────────────────────────────────────────
@@ -3879,6 +4265,117 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
   );
 }
 
+function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; seriesId: string }) {
+  const [info, setInfo] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [openSeasons, setOpenSeasons] = useState<Set<string>>(new Set());
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await api.playlists.seriesInfo(playlistId, seriesId);
+      setInfo(data);
+      // Auto-open first season
+      const firstSeason = Object.keys(data.episodes || {})[0];
+      if (firstSeason) setOpenSeasons(new Set([firstSeason]));
+    } catch (e: any) {
+      setError(e.message || 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reset when series changes
+  useEffect(() => { setInfo(null); setError(null); setOpenSeasons(new Set()); }, [seriesId]);
+
+  const toggleSeason = (s: string) =>
+    setOpenSeasons(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
+
+  const formatDuration = (secs?: number) => {
+    if (!secs) return null;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  if (!info && !loading && !error) {
+    return (
+      <button
+        onClick={load}
+        className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-400 hover:text-zinc-100 transition-all"
+      >
+        <LayoutList size={13} />
+        Show Seasons & Episodes
+      </button>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-4 text-xs text-zinc-600">
+        <RefreshCw size={13} className="animate-spin" /> Loading seasons…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-between py-2 text-xs text-red-400">
+        <span>{error}</span>
+        <button onClick={load} className="underline">Retry</button>
+      </div>
+    );
+  }
+
+  const episodes: Record<string, any[]> = info?.episodes || {};
+  const seasonKeys = Object.keys(episodes).sort((a, b) => parseInt(a) - parseInt(b));
+
+  if (!seasonKeys.length) {
+    return <p className="text-[10px] text-zinc-600 italic">No episode data available.</p>;
+  }
+
+  return (
+    <div className="space-y-1">
+      {seasonKeys.map(season => {
+        const eps: any[] = episodes[season];
+        const isOpen = openSeasons.has(season);
+        return (
+          <div key={season} className="border border-zinc-800 rounded-xl overflow-hidden">
+            <button
+              onClick={() => toggleSeason(season)}
+              className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold text-zinc-300 hover:bg-zinc-800/60 transition-colors"
+            >
+              <span>Season {season}</span>
+              <span className="flex items-center gap-1.5 text-zinc-600 font-normal">
+                <span>{eps.length} ep</span>
+                <ChevronDown size={12} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+              </span>
+            </button>
+            {isOpen && (
+              <div className="border-t border-zinc-800 divide-y divide-zinc-800/60">
+                {eps.map((ep: any) => {
+                  const dur = formatDuration(ep.info?.duration_secs);
+                  return (
+                    <div key={ep.id} className="flex items-center gap-2 px-3 py-1.5">
+                      <span className="text-[10px] font-mono text-zinc-600 w-6 shrink-0 text-right">
+                        {ep.episode_num}
+                      </span>
+                      <span className="flex-1 text-[11px] text-zinc-300 truncate">{ep.title}</span>
+                      {dur && <span className="text-[10px] text-zinc-600 shrink-0">{dur}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
   stream: any;
   mapping?: StreamMapping;
@@ -3959,8 +4456,17 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
     setEpgMapping(mapping?.epgMapping || "");
     setEpgSearch('');
     setEpgOpen(false);
-    setDetectedMeta(mapping?.detectedMeta ?? null);
+    // Always sync detectedMeta from mapping when it has data (e.g. after a re-scan).
+    // If mapping has no detectedMeta, keep whatever local state was set by the scan
+    // handler so toggling useDetectedQuality doesn't wipe a freshly-scanned result.
+    if (mapping?.detectedMeta) setDetectedMeta(mapping.detectedMeta);
   }, [mapping, stream._uniqueId]);
+
+  // Reset all local state (including detectedMeta) when the stream itself changes
+  useEffect(() => {
+    setDetectedMeta(mapping?.detectedMeta ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream._uniqueId]);
 
   const originalName = stream.name || stream.title || "";
   const originalIcon = stream.stream_icon || stream.cover || "";
@@ -3981,11 +4487,12 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
         // Batch update all selected streams (EPG/icon fields only, not name)
         const updates = Array.from(selectedStreamIds).map(streamId => {
           const s = allStreams.find(s => s._uniqueId === streamId);
-          const m = allMappings.find(m => m.originalId === streamId && m.type === type);
+          const rawId = s?._rawId || streamId;
+          const m = allMappings.find(m => m.originalId === rawId && m.type === type);
           if (!s) return null;
           return {
             ...(m?.id ? { id: m.id } : {
-              originalId: streamId,
+              originalId: rawId,
               playlistId,
               type,
               originalName: s.name || s.title || '',
@@ -4006,11 +4513,12 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           await api.mappings.create({
             playlistId,
             type,
-            originalId: stream._uniqueId,
+            originalId: stream._rawId || stream._uniqueId,
             originalName,
             order: mapping?.order || 0,
             hidden: mapping?.hidden || false,
             categoryId: String(stream.category_id || ""),
+            sourceIdx: stream._sourceIdx ?? 0,
             ...data
           });
         }
@@ -4079,7 +4587,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               {/* VOD / Series download */}
               {(type === 'vod' || type === 'series') && (
                 <a
-                  href={`/api/download/${type}/${playlistId}/${mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id)}?token=${localStorage.getItem('auth_token') ?? ''}`}
+                   href={`/api/download/${type}/${playlistId}/${stream.streamId || stream.stream_id || mapping?.originalId || stream._uniqueId}?token=${localStorage.getItem('auth_token') ?? ''}`}
                   download
                   className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
                 >
@@ -4094,7 +4602,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
                   <button
                     onClick={async () => {
-                      const streamId = mapping?.originalId ?? stream._uniqueId ?? String(stream.stream_id);
+                      const streamId = stream._rawId || stream.stream_id || mapping?.originalId || String(stream.series_id || stream._uniqueId);
                       setScanLoading(true);
                       setScanError(null);
                       try {
@@ -4182,8 +4690,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             </>
           )}
 
-          {/* Logo URL — visible in single and multi-select */}
-          <div className="space-y-1.5">
+          {/* Logo URL — live only */}
+          {type === 'live' && <div className="space-y-1.5">
             <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">
               Logo URL{isMulti ? ' (applies to all selected)' : ''}
             </label>
@@ -4207,20 +4715,24 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 Reset to default
               </button>
             )}
-          </div>
+          </div>}
 
           {/* Quality label toggle — multi-select only */}
           {isMulti && allMappings && selectedStreamIds && (
             <div className="space-y-2">
               <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label</label>
               {(() => {
-                const scanned = Array.from(selectedStreamIds).filter(id => allMappings.find(m => m.originalId === id && m.type === type)?.detectedMeta?.resolution);
+                const scanned = Array.from(selectedStreamIds).filter(id => {
+                  const s = allStreams?.find(s => s._uniqueId === id);
+                  const rawId = s?._rawId || id;
+                  return allMappings.find(m => m.originalId === rawId && m.type === type)?.detectedMeta?.resolution;
+                });
                 if (!scanned.length) return <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>;
                 return (
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
-                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: true }));
+                        const updates = scanned.map(id => { const s = allStreams?.find(s => s._uniqueId === id); const rawId = s?._rawId || id; return allMappings.find(m => m.originalId === rawId && m.type === type); }).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: true }));
                         if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
                       }}
                       className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
@@ -4229,7 +4741,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     </button>
                     <button
                       onClick={async () => {
-                        const updates = scanned.map(id => allMappings.find(m => m.originalId === id && m.type === type)).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: false }));
+                        const updates = scanned.map(id => { const s = allStreams?.find(s => s._uniqueId === id); const rawId = s?._rawId || id; return allMappings.find(m => m.originalId === rawId && m.type === type); }).filter((m): m is StreamMapping => !!m?.id).map(m => ({ id: m.id, useDetectedQuality: false }));
                         if (updates.length) { await api.mappings.batchUpdate(updates); onUpdate(); }
                       }}
                       className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
@@ -4242,8 +4754,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             </div>
           )}
 
-          {/* EPG Channel */}
-          <div className="space-y-1.5" ref={epgRef}>
+          {/* EPG Channel — live only */}
+          {type === 'live' && <div className="space-y-1.5" ref={epgRef}>
             <div className="flex items-center justify-between">
               <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Channel</label>
               <div className="flex items-center gap-2">
@@ -4326,7 +4838,18 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {!epgMapping && originalEpg && (
               <p className="text-[10px] text-zinc-600">Original: <span className="italic font-mono">{originalEpg}</span></p>
             )}
-          </div>
+          </div>}
+
+          {/* Seasons & Episodes — series only */}
+          {type === 'series' && !isMulti && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Seasons & Episodes</label>
+              <SeriesSeasonsBrowser
+                playlistId={playlistId}
+                seriesId={stream._rawId || String(stream.series_id || stream._uniqueId)}
+              />
+            </div>
+          )}
 
           {/* Technical info — collapsed by default */}
           <div className="border border-zinc-800 rounded-xl overflow-hidden">
@@ -4342,7 +4865,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 <div className="grid grid-cols-2 gap-1 text-[10px] pt-2">
                   <div className="text-zinc-600">Type: {type}</div>
                   <div className="text-zinc-600">Mapped: {mapping ? "Yes" : "No"}</div>
-                  <div className="text-zinc-600 col-span-2 truncate">Category: {stream.category_name || stream.category_id}</div>
+                  <div className="text-zinc-600">Source: {source?.name || 'Unknown'}</div>
+                  <div className="text-zinc-600">S-Idx: {stream._sourceIdx ?? 'N/A'}</div>
+                  <div className="text-zinc-600 col-span-1 truncate">Category: {stream.category_name || (stream._originalCategoryId || stream.category_id)}</div>
+                  <div className="text-zinc-600 col-span-1 truncate text-right">ID: {stream.streamId || stream.stream_id || stream.series_id || stream._originalId || 'N/A'}</div>
                 </div>
                 {source && (
                   <div className="space-y-2">
@@ -4350,9 +4876,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
                       <div className="flex gap-1.5">
                         <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
-                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{source.username}/{source.password}/{stream.stream_id || stream.series_id}{type === 'live' ? '.ts' : '.mp4'}
+                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{source.username}/{source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
                         </code>
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${source.username}/${source.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${source.username}/${source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
                           <ExternalLink size={11} />
                         </button>
                       </div>
@@ -4380,7 +4906,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             <>
               <div className="h-px w-full bg-zinc-800/50" />
               <BatchActionsSection
-                streamIds={Array.from(selectedStreamIds ?? new Set())}
+                streamIds={Array.from(selectedStreamIds ?? new Set()).map(uid => { const s = allStreams?.find(s => s._uniqueId === uid); return s?._rawId || uid; })}
                 playlistId={playlistId}
                 activeTab={type as 'live' | 'vod' | 'series'}
                 mappings={allMappings ?? []}

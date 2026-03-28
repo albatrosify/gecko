@@ -8,6 +8,9 @@ import Logo from './assets/logo.png';
 
 import pkg from '../package.json';
 
+// Get commit hash from environment variable or fallback to 'unknown'
+const COMMIT_HASH = import.meta.env.VITE_APP_COMMIT_HASH || 'unknown';
+
 export default function App() {
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,12 +57,15 @@ export default function App() {
                 <h1 className="text-xl font-bold tracking-tighter flex items-center gap-3">
                   <img src={Logo} alt="Gecko" className="w-8 h-8 shrink-0" />
                   <span className="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300 whitespace-nowrap hidden sm:block">GECKO</span>
-                  <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded ml-2 opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300 whitespace-nowrap">
-                    v{pkg.version}
-                    {import.meta.env.VITE_APP_VERSION && import.meta.env.VITE_APP_VERSION !== 'unknown' && (
-                      <span className="ml-1 opacity-50 font-mono text-[8px]">({import.meta.env.VITE_APP_VERSION.slice(0, 7)})</span>
-                    )}
-                  </span>
+                 <span className="text-[10px] bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 rounded ml-2 opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300 whitespace-nowrap">
+                     v{pkg.version}
+                     {import.meta.env.VITE_APP_VERSION && import.meta.env.VITE_APP_VERSION !== 'unknown' && (
+                       <span className="ml-1 opacity-50 font-mono text-[8px]">({import.meta.env.VITE_APP_VERSION.slice(0, 7)})</span>
+                     )}
+                     {COMMIT_HASH !== 'unknown' && (
+                       <span className="ml-1 opacity-50 font-mono text-[7px]">({COMMIT_HASH})</span>
+                     )}
+                   </span>
                 </h1>
               </div>
               

@@ -1,3 +1,4 @@
+# Production setup with Gluetun VPN. This is separate from docker-compose.yml — do NOT merge these two files.
 services:
   gluetun:
     image: qmcgaw/gluetun
@@ -31,6 +32,7 @@ services:
       - NODE_ENV=production
       - APP_URL=${APP_URL}
       - CACHE_DIR=/app/data/cache
+      - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
