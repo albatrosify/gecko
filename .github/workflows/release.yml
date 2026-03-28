@@ -1,4 +1,4 @@
-name: Build & Publish
+name: Release Build
 
 on:
   push:
@@ -33,9 +33,18 @@ jobs:
         with:
           images: ghcr.io/albatrosify/gecko
           tags: |
-            type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Determine version label
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "APP_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          else
+            echo "APP_VERSION=$SHORT_SHA" >> $GITHUB_ENV
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -45,4 +54,5 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
-            VITE_APP_VERSION=${{ env.SHORT_SHA }}
+            VITE_APP_VERSION=${{ env.APP_VERSION }}
+            VITE_APP_COMMIT_HASH=${{ env.SHORT_SHA }}
