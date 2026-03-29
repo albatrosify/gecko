@@ -331,10 +331,29 @@ async function initCronManager() {
   log("Initializing Source Cron Manager...");
   const db = getDb();
   const sources = await db.collection('sources').find({ autoSyncEnabled: true, syncCron: { $exists: true } }).toArray();
-  
+
   for (const source of sources) {
     scheduleSourceCron(source);
   }
+
+  // Warm cold stream caches in the background so the first IPTV client request
+  // is served from cache rather than blocking on an upstream fetch.
+  (async () => {
+    try {
+      const allSources = await db.collection('sources').find({}).toArray();
+      for (const source of allSources) {
+        const sid = source._id.toString();
+        for (const type of ['live', 'vod', 'series'] as const) {
+          if (!getCached(`${sid}_streams_${type}`)) {
+            log(`[Startup] Warming cold cache: ${source.name} (${type})`);
+            await refreshSource(sid, type, false).catch(() => {});
+          }
+        }
+      }
+    } catch (e: any) {
+      log(`[Startup] Cache warm-up error: ${e.message}`);
+    }
+  })();
 }
 
 function scheduleSourceCron(source: any) {
