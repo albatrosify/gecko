@@ -2025,10 +2025,15 @@ async function startServer() {
              // Build category order map using PREFIXED category IDs for consistency
              const catOrderMap = new Map();
              const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-               if (!sDoc) return [];
-               const cl = new XtreamClient(sDoc as any);
-               const cats = await cl.getLiveCategories().catch(() => []);
+               const catsCached = getCached(`${sid}_categories`);
+               let cats: any[];
+               if (catsCached?.data?.liveCats) {
+                 cats = catsCached.data.liveCats;
+               } else {
+                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 if (!sDoc) return [];
+                 cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
+               }
                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
              }));
              const deduplicatedCats = allCatsResults.flat();
@@ -2147,10 +2152,15 @@ async function startServer() {
               // Build category order map using PREFIXED category IDs
               const catOrderMap = new Map();
               const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getVodCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.vodCats) {
+                  cats = catsCached.data.vodCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
               const deduplicatedCats = allCatsResults.flat();
@@ -2260,10 +2270,15 @@ async function startServer() {
               // Build category order map using PREFIXED category IDs
               const catOrderMap = new Map();
               const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getSeriesCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.seriesCats) {
+                  cats = catsCached.data.seriesCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
               const deduplicatedCats = allCatsResults.flat();
@@ -2502,14 +2517,20 @@ async function startServer() {
         // Build category order map
         const catOrderMap = new Map();
         const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-           if (!sDoc) return [];
-           const cl = new XtreamClient(sDoc as any);
-           let cats = [];
-           if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
-           else if (m3uType === 'series') cats = await cl.getSeriesCategories().catch(() => []);
-           else cats = await cl.getLiveCategories().catch(() => []);
-           return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+          const catsCached = getCached(`${sid}_categories`);
+          let cats: any[];
+          if (catsCached?.data) {
+            const key = m3uType === 'vod' ? 'vodCats' : m3uType === 'series' ? 'seriesCats' : 'liveCats';
+            cats = catsCached.data[key] || [];
+          } else {
+            const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+            if (!sDoc) return [];
+            const cl = new XtreamClient(sDoc as any);
+            if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
+            else if (m3uType === 'series') cats = await cl.getSeriesCategories().catch(() => []);
+            else cats = await cl.getLiveCategories().catch(() => []);
+          }
+          return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
         }));
         const deduplicatedCats = allCatsResults.flat();
         
