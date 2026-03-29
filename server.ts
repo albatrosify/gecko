@@ -1974,10 +1974,15 @@ async function startServer() {
         switch (action) {
           case 'get_live_categories': {
             const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getLiveCategories().catch(() => []);
+              const catsCached = getCached(`${sid}_categories`);
+              let cats: any[];
+              if (catsCached?.data?.liveCats) {
+                cats = catsCached.data.liveCats;
+              } else {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
+              }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
 
@@ -2013,7 +2018,8 @@ async function startServer() {
                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streams = await cl.getLiveStreams().catch(() => []);
+               const streamsCached = getCached(`${sid}_streams_live`);
+               const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
              }));
 
@@ -2103,10 +2109,15 @@ async function startServer() {
           }
             case 'get_vod_categories': {
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getVodCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.vodCats) {
+                  cats = catsCached.data.vodCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
 
@@ -2141,7 +2152,8 @@ async function startServer() {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
                 const cl = new XtreamClient(sDoc as any);
-                const streams = await cl.getVodStreams().catch(() => []);
+                const streamsCached = getCached(`${sid}_streams_vod`);
+                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                 return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
               }));
               data = allResults.flat();
@@ -2221,10 +2233,15 @@ async function startServer() {
             }
             case 'get_series_categories': {
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getSeriesCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.seriesCats) {
+                  cats = catsCached.data.seriesCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
 
@@ -2259,7 +2276,8 @@ async function startServer() {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
                 const cl = new XtreamClient(sDoc as any);
-                const streams = await cl.getSeries().catch(() => []);
+                const streamsCached = getCached(`${sid}_streams_series`);
+                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                 return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
               }));
               data = allResults.flat();
@@ -2502,10 +2520,18 @@ async function startServer() {
           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
           if (!sDoc) return [];
           const cl = new XtreamClient(sDoc as any);
-          let streams = [];
-          if (m3uType === 'vod') streams = await cl.getVodStreams().catch(() => []);
-          else if (m3uType === 'series') streams = await cl.getSeries().catch(() => []);
-          else streams = await cl.getLiveStreams().catch(() => []);
+          const cacheType = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
+          const streamsCached = getCached(`${sid}_streams_${cacheType}`);
+          let streams: any[];
+          if (streamsCached?.data) {
+            streams = streamsCached.data;
+          } else if (m3uType === 'vod') {
+            streams = await cl.getVodStreams().catch(() => []);
+          } else if (m3uType === 'series') {
+            streams = await cl.getSeries().catch(() => []);
+          } else {
+            streams = await cl.getLiveStreams().catch(() => []);
+          }
           return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
         }));
         
