@@ -1984,21 +1984,14 @@ async function startServer() {
       const hasSyncOnDemandVod = catMappings.some(m => m.type === 'vod' && m.syncOnDemand);
       const hasSyncOnDemandSeries = catMappings.some(m => m.type === 'series' && m.syncOnDemand);
 
-      // Dynamic Sync: stale-while-revalidate across all sources.
-      // If every source has a warm cache, kick off sync in the background and serve immediately.
-      // If any source has a cold cache, block until that source is synced (no data to serve otherwise).
-      const runDynamicSync = async (type: 'live' | 'vod' | 'series') => {
-        const cacheKey = (sid: string) => `${sid}_streams_${type}`;
-        const allWarm = playlist.sourceIds.every((sid: string) => getCached(cacheKey(sid)) !== null);
-        if (allWarm) {
-          Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, type).catch(() => {}))); // background
-        } else {
-          await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, type).catch(() => {})));
-        }
-      };
-      if (action === 'get_live_streams' && hasSyncOnDemandLive) await runDynamicSync('live');
-      if (action === 'get_vod_streams' && hasSyncOnDemandVod) await runDynamicSync('vod');
-      if (action === 'get_series' && hasSyncOnDemandSeries) await runDynamicSync('series');
+      // Dynamic Sync: block until all sources are synced before serving.
+      // refreshSource has a 5-min cooldown, so upstream is only hit at most once per 5 minutes.
+      if (action === 'get_live_streams' && hasSyncOnDemandLive)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'live').catch(() => {})));
+      if (action === 'get_vod_streams' && hasSyncOnDemandVod)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'vod').catch(() => {})));
+      if (action === 'get_series' && hasSyncOnDemandSeries)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'series').catch(() => {})));
 
       try {
         let data;
