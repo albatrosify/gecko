@@ -57,7 +57,7 @@ const applyRegex = (name: string, rules: { pattern: string; replacement: string 
       const regex = new RegExp(rule.pattern, 'g');
       result = result.replace(regex, rule.replacement);
     } catch (e) {
-      console.error("Invalid regex:", rule.pattern);
+      log(`Invalid regex: ${rule.pattern}`);
     }
   }
   return result;
@@ -180,7 +180,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
   const source = await db.collection('sources').findOne({ _id: toId(sourceId) });
   if (!source) return { error: "Source not found" };
 
-  console.log(`[Sync] Starting ${type} sync for: ${source.name}`);
+  log(`[Sync] Starting ${type} sync for: ${source.name}`);
   const client = new XtreamClient(source as any);
   
   try {
@@ -189,7 +189,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
     else if (type === 'vod') upstreamStreams = await client.getMovies();
     else if (type === 'series') upstreamStreams = await client.getSeries();
 
-    console.log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
+    log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
 
     const playlistIds = (await db.collection('playlists').find({ sourceIds: sourceId.toString() }).toArray()).map(p => p._id.toString());
     const mappings = await db.collection('mappings').find({ 
@@ -244,7 +244,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
       { upsert: true }
     );
 
-    console.log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
+    log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
 
     // Update disk cache for the UI
     const cacheKey = `${sourceId}_streams_${type}`;
@@ -287,7 +287,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
 
     return { success: true, updatedCount, totalExamined, lastUpdated };
   } catch (err: any) {
-    console.log(`[Sync] Error for ${source.name} (${type}): ${err.message}`);
+    log(`[Sync] Error for ${source.name} (${type}): ${err.message}`);
     return { error: err.message };
   }
 }
@@ -331,10 +331,29 @@ async function initCronManager() {
   log("Initializing Source Cron Manager...");
   const db = getDb();
   const sources = await db.collection('sources').find({ autoSyncEnabled: true, syncCron: { $exists: true } }).toArray();
-  
+
   for (const source of sources) {
     scheduleSourceCron(source);
   }
+
+  // Warm cold stream caches in the background so the first IPTV client request
+  // is served from cache rather than blocking on an upstream fetch.
+  (async () => {
+    try {
+      const allSources = await db.collection('sources').find({}).toArray();
+      for (const source of allSources) {
+        const sid = source._id.toString();
+        for (const type of ['live', 'vod', 'series'] as const) {
+          if (!getCached(`${sid}_streams_${type}`)) {
+            log(`[Startup] Warming cold cache: ${source.name} (${type})`);
+            await refreshSource(sid, type, false).catch(() => {});
+          }
+        }
+      }
+    } catch (e: any) {
+      log(`[Startup] Cache warm-up error: ${e.message}`);
+    }
+  })();
 }
 
 function scheduleSourceCron(source: any) {
@@ -729,11 +748,11 @@ async function startServer() {
 
         let newSourceIds = [...sourcePlaylist.sourceIds];
         const originalPlaylistIdStr = playlistId.toString();
-        console.log(`[Clone] Duplicating: ${sourcePlaylist.name} (${originalPlaylistIdStr}). Original Source IDs: ${newSourceIds.join(', ')}`);
+        log(`[Clone] Duplicating: ${sourcePlaylist.name} (${originalPlaylistIdStr}). Original Source IDs: ${newSourceIds.join(', ')}`);
 
         // 0. Optionally create a new source if new credentials are provided
         if (sourceUsername && sourcePassword && sourcePlaylist.sourceIds.length > 0) {
-          console.log(`[Clone] Creating new source override for: ${sourceUsername}`);
+          log(`[Clone] Creating new source override for: ${sourceUsername}`);
           const originalSourceId = sourcePlaylist.sourceIds[0]; 
           const originalSource = await db.collection('sources').findOne({ _id: toId(originalSourceId) });
           
@@ -750,7 +769,7 @@ async function startServer() {
             delete (newSourceDoc as any)._id;
             const sourceResult = await db.collection('sources').insertOne(newSourceDoc);
             newSourceIds = [sourceResult.insertedId.toString()];
-            console.log(`[Clone] Source cloned successfully: ${newSourceIds[0]}`);
+            log(`[Clone] Source cloned successfully: ${newSourceIds[0]}`);
             
             // Re-schedule cron for the new source IF enabled
             const ns = newSourceDoc as any;
@@ -771,10 +790,10 @@ async function startServer() {
             // We do this in the background to not block the clone response too long, 
             // but we start it now.
             refreshSource(sourceResult.insertedId.toString(), 'live', true).catch(err => {
-              console.error(`[Clone] Background refresh failed for new source ${sourceResult.insertedId}:`, err);
+              log(`[Clone] Background refresh failed for new source ${sourceResult.insertedId}: ${err?.message || err}`);
             });
           } else {
-            console.warn(`[Clone] WARNING: Original source ${originalSourceId} not found in DB.`);
+            log(`[Clone] WARNING: Original source ${originalSourceId} not found in DB.`);
           }
         }
 
@@ -800,7 +819,7 @@ async function startServer() {
         // 2. Clone Category Mappings
         const catMappings = await db.collection('categoryMappings').find(playlistFilter).toArray();
         if (catMappings.length > 0) {
-          console.log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
+          log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
           const newCatMappings = catMappings.map(m => {
             const newM = { ...m, _id: undefined, playlistId: newPlaylistId };
             delete (newM as any)._id;
@@ -808,7 +827,7 @@ async function startServer() {
           });
           await db.collection('categoryMappings').insertMany(newCatMappings);
         } else {
-          console.log(`[Clone] No category mappings found for source ${originalPlaylistIdStr}`);
+          log(`[Clone] No category mappings found for source ${originalPlaylistIdStr}`);
         }
 
         // Helper to replace credentials in URLs
@@ -821,7 +840,7 @@ async function startServer() {
         // 3. Clone Stream Mappings
         const streamMappings = await db.collection('mappings').find(playlistFilter).toArray();
         if (streamMappings.length > 0) {
-          console.log(`[Clone] Found ${streamMappings.length} stream mappings to duplicate.`);
+          log(`[Clone] Found ${streamMappings.length} stream mappings to duplicate.`);
           
           let oldUser = '', oldPass = '';
           if (sourceUsername && sourcePassword) {
@@ -851,12 +870,12 @@ async function startServer() {
             });
             await db.collection('mappings').insertMany(batch);
           }
-          console.log(`[Clone] Stream mappings duplicated successfully.`);
+          log(`[Clone] Stream mappings duplicated successfully.`);
         } else {
-          console.warn(`[Clone] No stream mappings found for source playlist ${originalPlaylistIdStr}`);
+          log(`[Clone] No stream mappings found for source playlist ${originalPlaylistIdStr}`);
         }
 
-        console.log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
+        log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
         res.json({ id: newPlaylistId });
       } catch (err: any) {
         log(`Error cloning playlist ${playlistId}: ${err.message}`);
@@ -1965,19 +1984,29 @@ async function startServer() {
       const hasSyncOnDemandVod = catMappings.some(m => m.type === 'vod' && m.syncOnDemand);
       const hasSyncOnDemandSeries = catMappings.some(m => m.type === 'series' && m.syncOnDemand);
 
-      if (action === 'get_live_streams' && hasSyncOnDemandLive) await refreshSource(sourceId, 'live');
-      if (action === 'get_vod_streams' && hasSyncOnDemandVod) await refreshSource(sourceId, 'vod');
-      if (action === 'get_series' && hasSyncOnDemandSeries) await refreshSource(sourceId, 'series');
+      // Dynamic Sync: block until all sources are synced before serving.
+      // refreshSource has a 5-min cooldown, so upstream is only hit at most once per 5 minutes.
+      if (action === 'get_live_streams' && hasSyncOnDemandLive)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'live').catch(() => {})));
+      if (action === 'get_vod_streams' && hasSyncOnDemandVod)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'vod').catch(() => {})));
+      if (action === 'get_series' && hasSyncOnDemandSeries)
+        await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'series').catch(() => {})));
 
       try {
         let data;
         switch (action) {
           case 'get_live_categories': {
             const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-              if (!sDoc) return [];
-              const cl = new XtreamClient(sDoc as any);
-              const cats = await cl.getLiveCategories().catch(() => []);
+              const catsCached = getCached(`${sid}_categories`);
+              let cats: any[];
+              if (catsCached?.data?.liveCats) {
+                cats = catsCached.data.liveCats;
+              } else {
+                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                if (!sDoc) return [];
+                cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
+              }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
             }));
 
@@ -2013,7 +2042,8 @@ async function startServer() {
                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streams = await cl.getLiveStreams().catch(() => []);
+               const streamsCached = getCached(`${sid}_streams_live`);
+               const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
              }));
 
@@ -2025,10 +2055,15 @@ async function startServer() {
              // Build category order map using PREFIXED category IDs for consistency
              const catOrderMap = new Map();
              const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-               if (!sDoc) return [];
-               const cl = new XtreamClient(sDoc as any);
-               const cats = await cl.getLiveCategories().catch(() => []);
+               const catsCached = getCached(`${sid}_categories`);
+               let cats: any[];
+               if (catsCached?.data?.liveCats) {
+                 cats = catsCached.data.liveCats;
+               } else {
+                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 if (!sDoc) return [];
+                 cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
+               }
                return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
              }));
              const deduplicatedCats = allCatsResults.flat();
@@ -2098,10 +2133,15 @@ async function startServer() {
           }
             case 'get_vod_categories': {
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getVodCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.vodCats) {
+                  cats = catsCached.data.vodCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
 
@@ -2136,7 +2176,8 @@ async function startServer() {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
                 const cl = new XtreamClient(sDoc as any);
-                const streams = await cl.getVodStreams().catch(() => []);
+                const streamsCached = getCached(`${sid}_streams_vod`);
+                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                 return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
               }));
               data = allResults.flat();
@@ -2147,10 +2188,15 @@ async function startServer() {
               // Build category order map using PREFIXED category IDs
               const catOrderMap = new Map();
               const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getVodCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.vodCats) {
+                  cats = catsCached.data.vodCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
               const deduplicatedCats = allCatsResults.flat();
@@ -2211,10 +2257,15 @@ async function startServer() {
             }
             case 'get_series_categories': {
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getSeriesCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.seriesCats) {
+                  cats = catsCached.data.seriesCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
 
@@ -2249,7 +2300,8 @@ async function startServer() {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
                 const cl = new XtreamClient(sDoc as any);
-                const streams = await cl.getSeries().catch(() => []);
+                const streamsCached = getCached(`${sid}_streams_series`);
+                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                 return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
               }));
               data = allResults.flat();
@@ -2260,10 +2312,15 @@ async function startServer() {
               // Build category order map using PREFIXED category IDs
               const catOrderMap = new Map();
               const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-                if (!sDoc) return [];
-                const cl = new XtreamClient(sDoc as any);
-                const cats = await cl.getSeriesCategories().catch(() => []);
+                const catsCached = getCached(`${sid}_categories`);
+                let cats: any[];
+                if (catsCached?.data?.seriesCats) {
+                  cats = catsCached.data.seriesCats;
+                } else {
+                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  if (!sDoc) return [];
+                  cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
+                }
                 return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
               }));
               const deduplicatedCats = allCatsResults.flat();
@@ -2487,10 +2544,18 @@ async function startServer() {
           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
           if (!sDoc) return [];
           const cl = new XtreamClient(sDoc as any);
-          let streams = [];
-          if (m3uType === 'vod') streams = await cl.getVodStreams().catch(() => []);
-          else if (m3uType === 'series') streams = await cl.getSeries().catch(() => []);
-          else streams = await cl.getLiveStreams().catch(() => []);
+          const cacheType = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
+          const streamsCached = getCached(`${sid}_streams_${cacheType}`);
+          let streams: any[];
+          if (streamsCached?.data) {
+            streams = streamsCached.data;
+          } else if (m3uType === 'vod') {
+            streams = await cl.getVodStreams().catch(() => []);
+          } else if (m3uType === 'series') {
+            streams = await cl.getSeries().catch(() => []);
+          } else {
+            streams = await cl.getLiveStreams().catch(() => []);
+          }
           return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
         }));
         
@@ -2502,14 +2567,20 @@ async function startServer() {
         // Build category order map
         const catOrderMap = new Map();
         const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
-           if (!sDoc) return [];
-           const cl = new XtreamClient(sDoc as any);
-           let cats = [];
-           if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
-           else if (m3uType === 'series') cats = await cl.getSeriesCategories().catch(() => []);
-           else cats = await cl.getLiveCategories().catch(() => []);
-           return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
+          const catsCached = getCached(`${sid}_categories`);
+          let cats: any[];
+          if (catsCached?.data) {
+            const key = m3uType === 'vod' ? 'vodCats' : m3uType === 'series' ? 'seriesCats' : 'liveCats';
+            cats = catsCached.data[key] || [];
+          } else {
+            const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+            if (!sDoc) return [];
+            const cl = new XtreamClient(sDoc as any);
+            if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
+            else if (m3uType === 'series') cats = await cl.getSeriesCategories().catch(() => []);
+            else cats = await cl.getLiveCategories().catch(() => []);
+          }
+          return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
         }));
         const deduplicatedCats = allCatsResults.flat();
         
