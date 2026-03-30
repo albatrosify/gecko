@@ -10,9 +10,22 @@ chown -R node:node /data/db /var/log/mongodb
 # Start MongoDB
 echo "Starting MongoDB..."
 if ! mongod --bind_ip_all --fork --logpath /var/log/mongodb/mongodb.log; then
-  echo "MongoDB failed to start. Log output:"
-  cat /var/log/mongodb/mongodb.log
-  exit 1
+  echo "MongoDB failed to start. Attempting repair..."
+  if mongod --dbpath /data/db --repair; then
+    echo "Repair successful."
+  else
+    echo "Repair failed."
+  fi
+
+  # Re-ensure permissions after repair
+  chown -R node:node /data/db /var/log/mongodb
+
+  echo "Restarting MongoDB after repair..."
+  if ! mongod --bind_ip_all --fork --logpath /var/log/mongodb/mongodb.log; then
+    echo "MongoDB failed to start even after repair. Log output:"
+    cat /var/log/mongodb/mongodb.log
+    exit 1
+  fi
 fi
 
 # Wait for MongoDB to start
