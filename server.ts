@@ -2093,16 +2093,22 @@ async function startServer() {
                if (seenStreams.has(originalId)) continue;
                seenStreams.add(originalId);
 
-               const mapping = mappingMap.get(originalId);
+               const prefixedStreamId = `${s._sourceIdx}_${originalId}`;
+               const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId);
                if (mapping?.hidden) continue;
 
-               // Use PREFIXED category ID for mapping lookup (s.category_id is raw from upstream, never prefixed)
-               const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-               const catMapping = catMap.get(prefixedCatId) || catMap.get(String(s.category_id || ''));
+               // Determine target category ID (respect mapping override)
+               let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+               if (mapping?.categoryId) {
+                 targetCatId = mapping.categoryId;
+               }
 
+               // Check if the final category is hidden
+               const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
                if (catMapping?.hidden) continue;
 
-               if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+               // Apply category override to the stream object for output
+               if (mapping?.categoryId) {
                  s.category_id = mapping.categoryId;
                }
 
@@ -2126,7 +2132,7 @@ async function startServer() {
                  s.direct_source = s._client.getLiveStreamUrl(originalId);
                }
 
-               s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+               s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
                s._streamOrder = mapping?.order ?? idx;
 
                if (!playlist.isSynced) {
@@ -2256,15 +2262,22 @@ async function startServer() {
                 if (seenStreams.has(originalId)) continue;
                 seenStreams.add(originalId);
 
-                const mapping = mappingMap.get(originalId);
+                const prefixedStreamId = `${s._sourceIdx}_${originalId}`;
+                const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId);
                 if (mapping?.hidden) continue;
 
-                // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
-                const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-                const catMapping = catMap.get(prefixedCatId);
+                // Determine target category ID (respect mapping override)
+                let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+                if (mapping?.categoryId) {
+                  targetCatId = mapping.categoryId;
+                }
+
+                // Check if the final category is hidden
+                const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
                 if (catMapping?.hidden) continue;
 
-                if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+                // Apply category override to the stream object for output
+                if (mapping?.categoryId) {
                   s.category_id = mapping.categoryId;
                 }
 
@@ -2279,7 +2292,7 @@ async function startServer() {
                   s.sourceIdx = mapping.sourceIdx ?? -1;
                 }
 
-                s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+                s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
                 s._streamOrder = mapping?.order ?? idx;
                 
                 if (!playlist.isSynced) {
@@ -2403,15 +2416,22 @@ async function startServer() {
                 if (seenStreams.has(sid)) continue;
                 seenStreams.add(sid);
 
-                const mapping = mappingMap.get(sid);
+                const prefixedStreamId = `${s._sourceIdx}_${sid}`;
+                const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(sid);
                 if (mapping?.hidden) continue;
 
-                // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
-                const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-                const catMapping = catMap.get(prefixedCatId);
+                // Determine target category ID (respect mapping override)
+                let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
+                if (mapping?.categoryId) {
+                  targetCatId = mapping.categoryId;
+                }
+
+                // Check if the final category is hidden
+                const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
                 if (catMapping?.hidden) continue;
 
-                if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+                // Apply category override to the stream object for output
+                if (mapping?.categoryId) {
                   s.category_id = mapping.categoryId;
                 }
 
@@ -2426,7 +2446,7 @@ async function startServer() {
                   s.sourceIdx = mapping.sourceIdx ?? -1;
                 }
 
-                s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+                s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
                 s._streamOrder = mapping?.order ?? idx;
 
                 if (!playlist.isSynced) {
