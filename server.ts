@@ -1923,6 +1923,10 @@ async function startServer() {
       }
 
       const db = getDb();
+      // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
+      const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+
       // Load all category mappings (usually small) but defer stream mappings (can be huge)
       const catMappingDocs = await db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray();
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
@@ -1934,7 +1938,7 @@ async function startServer() {
         return res.json({ status: "error", message: "No source configured for this playlist" });
       }
 
-      const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+      const sourceDoc = sourcesMap.get(sourceId);
       if (!sourceDoc) {
         return res.json({ status: "error", message: "Source not found" });
       }
@@ -2013,7 +2017,7 @@ async function startServer() {
               if (catsCached?.data?.liveCats) {
                 cats = catsCached.data.liveCats;
               } else {
-                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                const sDoc = sourcesMap.get(sid);
                 if (!sDoc) return [];
                 cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
               }
@@ -2051,7 +2055,7 @@ async function startServer() {
              const [mappingDocs, allResults] = await Promise.all([
                db.collection('mappings').find({ playlistId: playlist.id, type: 'live' }).toArray(),
                Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 const sDoc = sourcesMap.get(sid);
                  if (!sDoc) return [];
                  const cl = new XtreamClient(sDoc as any);
                  const streamsCached = getCached(`${sid}_streams_live`);
@@ -2074,7 +2078,7 @@ async function startServer() {
                if (catsCached?.data?.liveCats) {
                  cats = catsCached.data.liveCats;
                } else {
-                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 const sDoc = sourcesMap.get(sid);
                  if (!sDoc) return [];
                  cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
                }
@@ -2183,7 +2187,7 @@ async function startServer() {
                 if (catsCached?.data?.vodCats) {
                   cats = catsCached.data.vodCats;
                 } else {
-                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  const sDoc = sourcesMap.get(sid);
                   if (!sDoc) return [];
                   cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
                 }
@@ -2220,7 +2224,7 @@ async function startServer() {
              const [mappingDocs, allResults] = await Promise.all([
                db.collection('mappings').find({ playlistId: playlist.id, type: 'vod' }).toArray(),
                Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 const sDoc = sourcesMap.get(sid);
                  if (!sDoc) return [];
                  const cl = new XtreamClient(sDoc as any);
                  const streamsCached = getCached(`${sid}_streams_vod`);
@@ -2243,7 +2247,7 @@ async function startServer() {
                 if (catsCached?.data?.vodCats) {
                   cats = catsCached.data.vodCats;
                 } else {
-                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  const sDoc = sourcesMap.get(sid);
                   if (!sDoc) return [];
                   cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
                 }
@@ -2338,7 +2342,7 @@ async function startServer() {
                 if (catsCached?.data?.seriesCats) {
                   cats = catsCached.data.seriesCats;
                 } else {
-                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  const sDoc = sourcesMap.get(sid);
                   if (!sDoc) return [];
                   cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
                 }
@@ -2375,7 +2379,7 @@ async function startServer() {
              const [mappingDocs, allResults] = await Promise.all([
                db.collection('mappings').find({ playlistId: playlist.id, type: 'series' }).toArray(),
                Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                 const sDoc = sourcesMap.get(sid);
                  if (!sDoc) return [];
                  const cl = new XtreamClient(sDoc as any);
                  const streamsCached = getCached(`${sid}_streams_series`);
@@ -2398,7 +2402,7 @@ async function startServer() {
                 if (catsCached?.data?.seriesCats) {
                   cats = catsCached.data.seriesCats;
                 } else {
-                  const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+                  const sDoc = sourcesMap.get(sid);
                   if (!sDoc) return [];
                   cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
                 }
@@ -2491,7 +2495,7 @@ async function startServer() {
               if (!liveStreamId && req.body?.streamId) liveStreamId = req.body.streamId;
               // Use integer stream ID directly (no underscore prefix)
               const liveResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               const sDoc = sourcesMap.get(sid);
                if (!sDoc) return null;
                const cl = new XtreamClient(sDoc as any);
                try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
@@ -2507,7 +2511,7 @@ async function startServer() {
               // Use integer stream ID directly (no underscore prefix)
               const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
               const epgResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-               const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+               const sDoc = sourcesMap.get(sid);
                if (!sDoc) return null;
                const cl = new XtreamClient(sDoc as any);
                try {
@@ -2526,7 +2530,7 @@ async function startServer() {
             if (!tableStreamId && req.body?.streamId) tableStreamId = req.body.streamId;
             // Use integer stream ID directly (no underscore prefix)
             const tableResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+              const sDoc = sourcesMap.get(sid);
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
               try {
@@ -2550,7 +2554,7 @@ async function startServer() {
 
             const allVodResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+              const sDoc = sourcesMap.get(sid);
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
               try {
@@ -2576,7 +2580,7 @@ async function startServer() {
 
             const allSourceResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
               if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
-              const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+              const sDoc = sourcesMap.get(sid);
               if (!sDoc) return null;
               const cl = new XtreamClient(sDoc as any);
               try {
@@ -2634,6 +2638,10 @@ async function startServer() {
       if (!playlist) return res.status(401).send("Invalid credentials");
 
       const db = getDb();
+      // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
+      const m3uSourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+
       const m3uType = (type as string) || 'live';
       const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
 
@@ -2649,7 +2657,7 @@ async function startServer() {
         let m3u = "#EXTM3U\n";
 
         const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-          const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+          const sDoc = m3uSourcesMap.get(sid);
           if (!sDoc) return [];
           const cl = new XtreamClient(sDoc as any);
           const cacheType = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
@@ -2681,7 +2689,7 @@ async function startServer() {
             const key = m3uType === 'vod' ? 'vodCats' : m3uType === 'series' ? 'seriesCats' : 'liveCats';
             cats = catsCached.data[key] || [];
           } else {
-            const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
+            const sDoc = m3uSourcesMap.get(sid);
             if (!sDoc) return [];
             const cl = new XtreamClient(sDoc as any);
             if (m3uType === 'vod') cats = await cl.getVodCategories().catch(() => []);
