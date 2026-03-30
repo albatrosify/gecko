@@ -7,6 +7,7 @@ import { scheduleSourceCron, refreshSource } from "../sync.ts";
 import { duplicateCache, getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
+import { getBaseUrl, proxySeriesInfoImages } from "../utils.ts";
 
 export function createPlaylistsRouter(epgsRouter?: Router) {
   const router = Router();
@@ -292,6 +293,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         }
       }
 
+      const imgBase = getBaseUrl(req);
       const sourceIds: string[] = playlistDoc.sourceIds || [];
       for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
         if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
@@ -301,7 +303,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           const client = new XtreamClient(sDoc as any);
           const info = await client.getSeriesInfo(rawSeriesId);
           if (info && (info.seasons || info.episodes || info.info)) {
-            return res.json(info);
+            return res.json(proxySeriesInfoImages(info, imgBase));
           }
         } catch { continue; }
       }

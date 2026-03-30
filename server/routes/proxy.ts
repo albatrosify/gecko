@@ -2,7 +2,7 @@ import express, { Router } from "express";
 import axios from "axios";
 import { getDb, toId, docWithId, docsWithId } from "../db.ts";
 import { log } from "../logger.ts";
-import { getClientInfo, proxyImageUrl, applyRegex } from "../utils.ts";
+import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
 import { proxyStats } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { DEFAULT_PORT } from "../config.ts";
@@ -265,27 +265,12 @@ export function createProxyRouter() {
       }
 
       if (auth.server_info) {
-        const protocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
-        const hostHeader = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${DEFAULT_PORT}`).toString();
-        const appUrl = process.env.APP_URL && !process.env.APP_URL.includes('YOUR_LAN_IP')
-          ? process.env.APP_URL
-          : null;
-
-        if (appUrl) {
-          const parsed = new URL(appUrl);
-          // url must be scheme+host only — no trailing slash, no port (port is a separate field)
-          auth.server_info.url = `${parsed.protocol}//${parsed.hostname}`;
-          auth.server_info.port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-          auth.server_info.https_port = parsed.protocol === 'https:' ? (parsed.port || '443') : '443';
-          auth.server_info.server_protocol = parsed.protocol.replace(':', '');
-        } else {
-          const hostname = hostHeader.split(':')[0];
-          const port = hostHeader.split(':')[1] || (protocol === 'https' ? '443' : '80');
-          auth.server_info.url = `${protocol}://${hostname}`;
-          auth.server_info.port = port;
-          auth.server_info.https_port = protocol === 'https' ? port : "443";
-          auth.server_info.server_protocol = protocol;
-        }
+        const baseUrl = getBaseUrl(req);
+        const parsed = new URL(baseUrl);
+        auth.server_info.url = `${parsed.protocol}//${parsed.hostname}`;
+        auth.server_info.port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+        auth.server_info.https_port = parsed.protocol === 'https:' ? (parsed.port || '443') : '443';
+        auth.server_info.server_protocol = parsed.protocol.replace(':', '');
       }
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -298,9 +283,7 @@ export function createProxyRouter() {
     res.setHeader('Expires', '0');
 
     // Base URL for proxying image URLs through this server
-    const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
-    const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${DEFAULT_PORT}`).toString();
-    const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+    const imgBase = getBaseUrl(req);
 
     // Check if this action requires On-Demand Sync (Dynamic Sync)
     // If categories in this playlist have syncOnDemand, we refresh the source for that type
@@ -349,6 +332,8 @@ export function createProxyRouter() {
             c._order = mapping?.order ?? ((c._sourceIdx + 1) * 1000000 + idx);
             if (mapping?.customName) c.category_name = mapping.customName;
             c._hidden = mapping?.hidden || false;
+            // Proxy category icon
+            if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase);
           });
           data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
           // Strip source prefix from category_id only if it matches pattern ^\d+_
@@ -518,6 +503,8 @@ export function createProxyRouter() {
               c._order = mapping?.order ?? idx;
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
+              // Proxy category icon
+              if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase);
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
             // Strip source prefix from category_id only if it matches pattern ^\d+_
@@ -673,6 +660,8 @@ export function createProxyRouter() {
               c._order = mapping?.order ?? idx;
               if (mapping?.customName) c.category_name = mapping.customName;
               c._hidden = mapping?.hidden || false;
+              // Proxy category icon
+              if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase);
             });
             data = data.filter((c: any) => !c._hidden).sort((a: any, b: any) => a._order - b._order);
             // Strip source prefix from category_id only if it matches pattern ^\d+_
@@ -811,6 +800,7 @@ export function createProxyRouter() {
              try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
            }));
            data = liveResults.find(r => r !== null) || {};
+           if (data.info?.stream_icon) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
            break;
          }
 
@@ -826,7 +816,14 @@ export function createProxyRouter() {
              const cl = new XtreamClient(sDoc as any);
              try {
                const r = await cl.getShortEpg(epgStreamId, epgLimit);
-               if (r && (r.epg_listings?.length || r.length)) return r;
+               if (r && (r.epg_listings?.length || r.length)) {
+                 if (Array.isArray(r.epg_listings)) {
+                   r.epg_listings.forEach((listing: any) => {
+                     if (listing.icon) listing.icon = proxyImageUrl(listing.icon, imgBase);
+                   });
+                 }
+                 return r;
+               }
              } catch { return null; }
             return null;
           }));
@@ -845,7 +842,14 @@ export function createProxyRouter() {
             const cl = new XtreamClient(sDoc as any);
             try {
               const r = await cl.getSimpleDataTable(tableStreamId);
-              if (r && (r.epg_listings?.length || r.length)) return r;
+              if (r && (r.epg_listings?.length || r.length)) {
+                if (Array.isArray(r.epg_listings)) {
+                  r.epg_listings.forEach((listing: any) => {
+                    if (listing.icon) listing.icon = proxyImageUrl(listing.icon, imgBase);
+                  });
+                }
+                return r;
+              }
             } catch { return null; }
             return null;
           }));
@@ -876,6 +880,15 @@ export function createProxyRouter() {
             return null;
           }));
           data = allVodResults.find(r => r !== null) || { error: "VOD not found" };
+          if (data && !data.error) {
+            if (data.info?.movie_image) data.info.movie_image = proxyImageUrl(data.info.movie_image, imgBase);
+            if (data.movie_data?.stream_icon) data.movie_data.stream_icon = proxyImageUrl(data.movie_data.stream_icon, imgBase);
+            if (Array.isArray(data.info?.backdrop_path)) {
+              data.info.backdrop_path = data.info.backdrop_path.map((u: string) => proxyImageUrl(u, imgBase));
+            } else if (data.info?.backdrop_path) {
+              data.info.backdrop_path = proxyImageUrl(data.info.backdrop_path, imgBase);
+            }
+          }
           break;
         }
 
@@ -909,19 +922,7 @@ export function createProxyRouter() {
           data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
           // Proxy image URLs in series info
           if (data && !data.error) {
-            if (data.info?.cover) data.info.cover = proxyImageUrl(data.info.cover, imgBase);
-            if (Array.isArray(data.info?.backdrop_path)) {
-              data.info.backdrop_path = data.info.backdrop_path.map((u: string) => proxyImageUrl(u, imgBase));
-            } else if (data.info?.backdrop_path) {
-              data.info.backdrop_path = proxyImageUrl(data.info.backdrop_path, imgBase);
-            }
-            if (data.episodes && typeof data.episodes === 'object') {
-              for (const season of Object.values(data.episodes) as any[][]) {
-                for (const ep of season) {
-                  if (ep.info?.movie_image) ep.info.movie_image = proxyImageUrl(ep.info.movie_image, imgBase);
-                }
-              }
-            }
+            data = proxySeriesInfoImages(data, imgBase);
           }
           break;
         }
@@ -1062,11 +1063,7 @@ export function createProxyRouter() {
        }) : streams;
 
       // Build base URL for proxied streams
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-      const hostHeader = req.headers['x-forwarded-host'] || req.get('host') || `localhost:${DEFAULT_PORT}`;
-      const hostname = hostHeader.toString().split(':')[0];
-      const port = hostHeader.toString().split(':')[1] || (protocol === 'https' ? '443' : '80');
-      const proxyBaseUrl = process.env.APP_URL || `${protocol}://${hostname}${port && port !== '80' && port !== '443' ? `:${port}` : ''}`;
+      const proxyBaseUrl = getBaseUrl(req);
 
       for (const stream of streamsWithIds) {
         const mapping = stream._mapping;
@@ -1112,6 +1109,7 @@ export function createProxyRouter() {
     if (!playlist) return res.status(401).send("Invalid credentials");
 
     const db = getDb();
+    const imgBase = getBaseUrl(req);
 
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -1164,7 +1162,7 @@ export function createProxyRouter() {
       }
 
       if (xmlParts.length === 1) {
-        return res.send(xmlParts[0]);
+        return res.send(proxyXmlIcons(xmlParts[0], imgBase));
       }
 
       // Merge: extract inner content from each XMLTV doc and wrap in a single <tv>
@@ -1174,7 +1172,11 @@ export function createProxyRouter() {
         if (startTag === -1) return '';
         const start = xml.indexOf('>', startTag) + 1;
         const end = xml.lastIndexOf('</tv>');
-        return (start > 0 && end > start) ? xml.slice(start, end) : '';
+        if (start > 0 && end > start) {
+          const inner = xml.slice(start, end);
+          return proxyXmlIcons(inner, imgBase);
+        }
+        return '';
       };
 
       res.write(`<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n`);
