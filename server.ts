@@ -21,6 +21,12 @@ const __dirname = path.dirname(__filename);
 
 const LOG_PATH = path.join(process.cwd(), 'data', 'server.log');
 
+const getClientInfo = (req: express.Request) => {
+  const ip = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress || 'unknown';
+  const ua = req.headers['user-agent'] || 'no-ua';
+  return `[${ip}] ${ua}`;
+};
+
 // Ensure log file exists on start
 function initLogFile() {
   const dir = path.dirname(LOG_PATH);
@@ -420,7 +426,7 @@ async function startServer() {
         // Skip logging the logs endpoint itself to avoid feedback loop
         if (req.path !== '/api/system/logs') {
           const duration = Date.now() - start;
-          log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms`);
+          log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms - ${getClientInfo(req)}`);
         }
       });
       next();
@@ -1766,11 +1772,11 @@ async function startServer() {
           if (response.status >= 400) {
             lastError = `upstream returned ${response.status}`;
             if (response.data?.destroy) response.data.destroy();
-            log(`[Proxy] Source ${sourceId} failed (${response.status}) for ${type}/${streamId}, trying next...`);
+            log(`[Proxy] Source ${sourceId} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
             continue;
           }
 
-          log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId}`);
+          log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} - ${getClientInfo(req)}`);
 
           // Forward status code (206 for range requests) and headers
           res.status(response.status);
@@ -1822,11 +1828,11 @@ async function startServer() {
           return; // success — stop trying sources
         } catch (err: any) {
           lastError = err.message;
-          log(`[Proxy] Source ${sourceId} error for ${type}/${streamId}: ${err.message}, trying next...`);
+          log(`[Proxy] Source ${sourceId} error for ${type}/${streamId}: ${err.message}, trying next... - ${getClientInfo(req)}`);
         }
       }
 
-      log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError}`);
+      log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} - ${getClientInfo(req)}`);
       res.status(502).send("All upstream sources failed");
     };
 
@@ -1854,7 +1860,7 @@ async function startServer() {
       if (!sourceDoc) return res.status(404).send("Source not found");
 
       const upstreamUrl = `${sourceDoc.url}/timeshift/${sourceDoc.username}/${sourceDoc.password}/${duration}/${start}/${streamId}.${ext}`;
-      log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m`);
+      log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
 
       try {
         const response = await axios({
@@ -1871,7 +1877,7 @@ async function startServer() {
         response.data.pipe(res);
         res.on('close', () => { if (response.data?.destroy) response.data.destroy(); });
       } catch (err: any) {
-        log(`[Timeshift] Error: ${err.message}`);
+        log(`[Timeshift] Error: ${err.message} - ${getClientInfo(req)}`);
         res.status(502).send("Upstream timeshift error");
       }
     });
@@ -2754,7 +2760,7 @@ async function startServer() {
         });
         res.send(`<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n${inners.join('\n')}\n</tv>`);
       } catch (err: any) {
-        log(`[EPG] Export error: ${err.message}`);
+        log(`[EPG] Export error: ${err.message} - ${getClientInfo(req)}`);
         res.status(502).send("Failed to fetch EPG data");
       }
     });
