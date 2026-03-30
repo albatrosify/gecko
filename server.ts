@@ -1594,6 +1594,18 @@ async function startServer() {
         tag(seriesCats);
       }
 
+      // Base URL for proxying image URLs through this server
+      const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
+      const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString();
+      const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+
+      const proxyCats = (cats: any[]) => cats?.forEach((c: any) => {
+        if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase);
+      });
+      proxyCats(liveCats);
+      proxyCats(vodCats);
+      proxyCats(seriesCats);
+
       res.json({ ...data, liveCats, vodCats, seriesCats });
     });
 
@@ -1631,13 +1643,20 @@ async function startServer() {
       // Deep clone cached data to avoid modifying global cache in-place
       const streams = data.streams ? JSON.parse(JSON.stringify(data.streams)) : null;
 
+      // Base URL for proxying image URLs through this server
+      const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
+      const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString();
+      const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+
       // Tag streams with their source index for UI deduplication — do NOT mutate stream_id or category_id
-      if (sourceIndex !== undefined && sourceIndex !== null) {
-        if (streams) {
-          streams.forEach((s: any) => {
+      if (streams) {
+        streams.forEach((s: any) => {
+          if (sourceIndex !== undefined && sourceIndex !== null) {
             s._sourceIdx = sourceIndex;
-          });
-        }
+          }
+          if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase);
+          if (s.cover) s.cover = proxyImageUrl(s.cover, imgBase);
+        });
       }
 
       res.json({ ...data, streams });
@@ -2034,6 +2053,7 @@ async function startServer() {
               }
             });
             data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
+            data.forEach((c: any) => { if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
             break;
           }
            case 'get_live_streams': {
@@ -2099,15 +2119,16 @@ async function startServer() {
                if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
                // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
                const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
-               if (resolvedIcon) s.stream_icon = resolvedIcon;
+               if (resolvedIcon) s.stream_icon = proxyImageUrl(resolvedIcon, imgBase);
                if (mapping?.epgMapping) s.epg_channel_id = mapping.epgMapping;
 
+
+               s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
+               s._streamOrder = mapping?.order ?? idx;
                if (playlist.directStreams && s._client) {
                  s.direct_source = s._client.getLiveStreamUrl(originalId);
                }
 
-               s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
-               s._streamOrder = mapping?.order ?? idx;
                s.sourceIdx = mapping?.sourceIdx ?? -1;
 
                // Keep raw upstream stream_id so the proxy can fetch the correct stream from upstream.
@@ -2168,6 +2189,7 @@ async function startServer() {
                 }
               });
               data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
+              data.forEach((c: any) => { if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
               break;
             }
             case 'get_vod_streams': {
@@ -2292,6 +2314,7 @@ async function startServer() {
                 }
               });
               data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
+              data.forEach((c: any) => { if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
               break;
             }
             case 'get_series': {
@@ -2390,6 +2413,7 @@ async function startServer() {
                try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
              }));
              data = liveResults.find(r => r !== null) || {};
+             if (data.info?.stream_icon) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
              break;
            }
 
@@ -2455,6 +2479,9 @@ async function startServer() {
               return null;
             }));
             data = allVodResults.find(r => r !== null) || { error: "VOD not found" };
+            if (data && !data.error) {
+              if (data.info?.movie_image) data.info.movie_image = proxyImageUrl(data.info.movie_image, imgBase);
+            }
             break;
           }
 
@@ -2745,7 +2772,18 @@ async function startServer() {
         const innerRegex = /<tv[^>]*>([\s\S]*?)<\/tv>/i;
         const inners = xmlParts.map(xml => {
           const m = innerRegex.exec(xml);
-          return m ? m[1] : '';
+          let content = m ? m[1] : '';
+
+          // Proxy icon URLs in the EPG content
+          const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+          const hostHeader = req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`;
+          const imgBase = (process.env.APP_URL || `${protocol}://${hostHeader}`).replace(/\/$/, '');
+
+          content = content.replace(/<icon\s+src="([^"]+)"/gi, (match, url) => {
+            return `<icon src="${imgBase}/img?url=${encodeURIComponent(url)}"`;
+          });
+
+          return content;
         });
         res.send(`<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n${inners.join('\n')}\n</tv>`);
       } catch (err: any) {
