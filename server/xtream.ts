@@ -45,12 +45,14 @@ export class XtreamClient {
       console.log(`[Xtream]   Payload type: ${typeof response.data}`);
       if (typeof response.data === 'string') {
         console.log(`[Xtream]   String preview: ${response.data.substring(0, 500)}`);
-      } else {
-        console.log(`[Xtream]   Object preview: ${JSON.stringify(response.data).substring(0, 500)}`);
-      }
-      
-      if (Array.isArray(response.data)) {
-        console.log(`[Xtream]   Successfully parsed array with ${response.data.length} items`);
+      } else if (Array.isArray(response.data)) {
+        console.log(`[Xtream]   Array size: ${response.data.length} items`);
+        if (response.data.length > 0) {
+          console.log(`[Xtream]   First item preview: ${JSON.stringify(response.data[0]).substring(0, 200)}`);
+        }
+      } else if (response.data && typeof response.data === 'object') {
+        const keys = Object.keys(response.data);
+        console.log(`[Xtream]   Object keys: ${keys.slice(0, 10).join(', ')}${keys.length > 10 ? '...' : ''} (${keys.length} total)`);
       }
       
       return response.data;
