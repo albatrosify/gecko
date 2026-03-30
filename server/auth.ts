@@ -6,7 +6,7 @@ import { getDb, docWithId } from './db.ts';
 const JWT_SECRET = () => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
-    throw new Error('JWT_SECRET environment variable is not set. Security risk: cannot start without a secret.');
+    throw new Error('JWT_SECRET environment variable is not set. Security risk: cannot start without a secret. Please check your .env file or Docker environment configuration.');
   }
   return secret;
 };
