@@ -40,7 +40,7 @@ async function startServer() {
   try {
     // Environment validation
     if (!process.env.JWT_SECRET) {
-      throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons.');
+      throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons. Please check your .env file or Docker environment configuration.');
     }
 
     // Connect to MongoDB
