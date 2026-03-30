@@ -7,6 +7,7 @@ import cron from "node-cron";
 import { connectDb, getDb, toId, docWithId, docsWithId } from "./server/db.ts";
 import { createAuthRouter, requireAuth, requireAuthOrQuery, AuthRequest } from "./server/auth.ts";
 import { getCached, setCache, duplicateCache } from "./server/cache.ts";
+import { log, LOG_PATH } from "./server/logger.ts";
 import { XtreamClient } from "./server/xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "./src/types.ts";
 import axios from "axios";
@@ -19,7 +20,6 @@ const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'),
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const LOG_PATH = path.join(process.cwd(), 'data', 'server.log');
 
 const getClientInfo = (req: express.Request) => {
   const ip = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress || 'unknown';
@@ -42,18 +42,6 @@ function proxyImageUrl(url: string | null | undefined, base: string): string {
   if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return url || '';
   return `${base}/img?url=${encodeURIComponent(url)}`;
 }
-
-function log(msg: string) {
-  const time = new Date().toLocaleTimeString();
-  const entry = `[${time}] ${msg}\n`;
-  console.log(entry.trim());
-  try {
-    // Ensure parent dir exists
-    const dir = path.dirname(LOG_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(LOG_PATH, entry);
-  } catch (e) {}
-};
 
 // Helper to apply regex
 const applyRegex = (name: string, rules: { pattern: string; replacement: string }[]) => {
@@ -353,15 +341,16 @@ async function initCronManager() {
   (async () => {
     try {
       const allSources = await db.collection('sources').find({}).toArray();
-      for (const source of allSources) {
+      const warmTasks = allSources.flatMap(source => {
         const sid = source._id.toString();
-        for (const type of ['live', 'vod', 'series'] as const) {
-          if (!getCached(`${sid}_streams_${type}`)) {
+        return (['live', 'vod', 'series'] as const)
+          .filter(type => !getCached(`${sid}_streams_${type}`))
+          .map(type => {
             log(`[Startup] Warming cold cache: ${source.name} (${type})`);
-            await refreshSource(sid, type, false).catch(() => {});
-          }
-        }
-      }
+            return refreshSource(sid, type, false).catch(() => {});
+          });
+      });
+      await Promise.all(warmTasks);
     } catch (e: any) {
       log(`[Startup] Cache warm-up error: ${e.message}`);
     }

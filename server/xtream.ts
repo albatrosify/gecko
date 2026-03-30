@@ -1,20 +1,6 @@
 import axios from 'axios';
 import { UpstreamSource } from '../src/types';
-import fs from 'fs';
-import path from 'path';
-
-const LOG_PATH = path.join(process.cwd(), 'data', 'server.log');
-
-function log(msg: string) {
-  const time = new Date().toLocaleTimeString();
-  const entry = `[${time}] ${msg}\n`;
-  console.log(entry.trim());
-  try {
-    const dir = path.dirname(LOG_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(LOG_PATH, entry);
-  } catch (e) {}
-}
+import { log } from './logger.ts';
 
 export class XtreamClient {
   private source: UpstreamSource;
