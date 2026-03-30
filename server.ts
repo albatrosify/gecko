@@ -389,6 +389,11 @@ function scheduleSourceCron(source: any) {
 async function startServer() {
   log("Starting server...");
   try {
+    // Environment validation
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons.');
+    }
+
     // Connect to MongoDB
     await connectDb();
     log("Connected to MongoDB");
