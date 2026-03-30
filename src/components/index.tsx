@@ -696,7 +696,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 {availableEpgs.length === 0 ? (
                   <p className="text-xs text-zinc-600 italic">No EPG sources configured. Add them in the EPG Manager.</p>
                 ) : (
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                  <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
                     {availableEpgs.map(epg => (
                       <label key={epg.id} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
                         <input
@@ -2815,7 +2815,7 @@ export function PlaylistEditor({ user }: { user: User }) {
               )}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
             <DndContext 
               sensors={sensors} 
               collisionDetection={closestCenter} 
@@ -3439,7 +3439,7 @@ function CategoryPane({
       </div>
 
       {/* Batch actions for streams in selected categories */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
         {scopedStreamIds.length > 0 ? (
           <BatchActionsSection
@@ -3772,6 +3772,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             const content = (
               <List
                 ref={listRef}
+                className="custom-scrollbar"
                 height={height || 0}
                 itemCount={filteredStreams.length}
                 itemSize={58}
@@ -4237,7 +4238,7 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
         </div>
 
         {/* Results */}
-        <div className="max-h-[420px] overflow-y-auto">
+        <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
           {query.trim().length < 2 && (
             <p className="px-4 py-10 text-center text-zinc-500 text-sm">Type at least 2 characters…</p>
           )}
@@ -4580,7 +4581,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
 
           {/* Name + Logo — hidden in multi-select */}
@@ -4813,7 +4814,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       onClick={e => e.stopPropagation()}
                     />
                   </div>
-                  <div className="max-h-64 overflow-y-auto">
+                  <div className="max-h-64 overflow-y-auto custom-scrollbar">
                     {epgChannels.length === 0 ? (
                       <div className="px-4 py-6 text-center text-xs text-zinc-600">
                         No EPG sources configured. Enable "Use Upstream EPG" on a source or add custom EPG sources.
