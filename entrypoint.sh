@@ -3,7 +3,7 @@ set -e
 
 # Start MongoDB
 echo "Starting MongoDB..."
-mongod --bind_ip_all --fork --logpath /var/log/mongodb.log
+mongod --bind_ip_all --fork --logpath /var/log/mongodb/mongodb.log
 
 # Wait for MongoDB to start
 echo "Waiting for MongoDB to be ready..."

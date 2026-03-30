@@ -19,13 +19,14 @@ RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | apt-key add -
     mongodb-org \
     && rm -rf /var/lib/apt/lists/*
 
-# Create MongoDB data directory
-RUN mkdir -p /data/db && chown -R node:node /data/db
+# Create MongoDB data and log directories
+RUN mkdir -p /data/db /var/log/mongodb && \
+    chown -R node:node /data/db /var/log/mongodb
 
-COPY package.json package-lock.json* ./
+COPY --chown=node:node package.json package-lock.json* ./
 RUN npm install --legacy-peer-deps
 
-COPY . .
+COPY --chown=node:node . .
 ARG VITE_APP_VERSION=${VITE_APP_VERSION:-unknown}
 ARG VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
 ENV VITE_APP_VERSION=$VITE_APP_VERSION
@@ -37,8 +38,11 @@ COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV CACHE_DIR=/app/data/cache
+RUN mkdir -p $CACHE_DIR && chown -R node:node /app/data
 
 EXPOSE 3000
+
+USER node
 
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["npx", "tsx", "server.ts"]
