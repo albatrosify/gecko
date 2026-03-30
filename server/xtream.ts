@@ -1,5 +1,20 @@
 import axios from 'axios';
 import { UpstreamSource } from '../src/types';
+import fs from 'fs';
+import path from 'path';
+
+const LOG_PATH = path.join(process.cwd(), 'data', 'server.log');
+
+function log(msg: string) {
+  const time = new Date().toLocaleTimeString();
+  const entry = `[${time}] ${msg}\n`;
+  console.log(entry.trim());
+  try {
+    const dir = path.dirname(LOG_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(LOG_PATH, entry);
+  } catch (e) {}
+}
 
 export class XtreamClient {
   private source: UpstreamSource;
@@ -41,24 +56,24 @@ export class XtreamClient {
         }
       });
       const duration = Date.now() - start;
-      console.log(`[Xtream] GET ${action || 'authenticate'} - ${response.status} (${duration}ms)`);
-      console.log(`[Xtream]   Payload type: ${typeof response.data}`);
+      log(`[Xtream] GET ${action || 'authenticate'} - ${response.status} (${duration}ms)`);
+      log(`[Xtream]   Payload type: ${typeof response.data}`);
       if (typeof response.data === 'string') {
-        console.log(`[Xtream]   String preview: ${response.data.substring(0, 500)}`);
+        log(`[Xtream]   String preview: ${response.data.substring(0, 500)}`);
       } else if (Array.isArray(response.data)) {
-        console.log(`[Xtream]   Array size: ${response.data.length} items`);
+        log(`[Xtream]   Array size: ${response.data.length} items`);
         if (response.data.length > 0) {
-          console.log(`[Xtream]   First item preview: ${JSON.stringify(response.data[0]).substring(0, 200)}`);
+          log(`[Xtream]   First item preview: ${JSON.stringify(response.data[0]).substring(0, 200)}`);
         }
       } else if (response.data && typeof response.data === 'object') {
         const keys = Object.keys(response.data);
-        console.log(`[Xtream]   Object keys: ${keys.slice(0, 10).join(', ')}${keys.length > 10 ? '...' : ''} (${keys.length} total)`);
+        log(`[Xtream]   Object keys: ${keys.slice(0, 10).join(', ')}${keys.length > 10 ? '...' : ''} (${keys.length} total)`);
       }
       
       return response.data;
     } catch (error: any) {
       const duration = Date.now() - start;
-      console.error(`[Xtream] ERROR ${action || 'authenticate'} after ${duration}ms: ${error.message}`);
+      log(`[Xtream] ERROR ${action || 'authenticate'} after ${duration}ms: ${error.message}`);
       if (error.code === 'ECONNABORTED') {
         throw new Error(`Connection timed out after 10s to ${url}`);
       }
