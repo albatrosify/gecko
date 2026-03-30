@@ -42,7 +42,5 @@ RUN mkdir -p $CACHE_DIR && chown -R node:node /app/data
 
 EXPOSE 3000
 
-USER node
-
 ENTRYPOINT ["entrypoint.sh"]
 CMD ["npx", "tsx", "server.ts"]
