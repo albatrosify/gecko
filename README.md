@@ -1,3 +1,5 @@
+![Logo](src/assets/logo.png)
+
 # GECKO
 
 > **AI Disclosure:** This project was almost entirely written by AI (Claude by Anthropic and Gemini by Google).
