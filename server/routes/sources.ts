@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, toId, docsWithId } from "../db.ts";
 import { log } from "../logger.ts";
-import { scheduleSourceCron, refreshSource } from "../sync.ts";
+import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 
@@ -81,11 +81,6 @@ export function createSourcesRouter() {
     const sourceId = req.params.id;
     await db.collection('sources').deleteOne({ _id: toId(sourceId), userId: req.user!.id });
 
-    // We handle activeCrons in scheduleSourceCron(source) when autoSyncEnabled is false
-    // or when we just want to stop it.
-    // But since it's extracted, we should probably have a way to stop it here.
-    // In sync.ts we have activeCrons export.
-    const { activeCrons } = await import("../sync.ts");
     if (activeCrons.has(sourceId)) {
       activeCrons.get(sourceId).stop();
       activeCrons.delete(sourceId);

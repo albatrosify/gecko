@@ -75,6 +75,9 @@ async function startServer() {
       next();
     });
 
+    // Health check — used by Docker healthcheck and monitoring
+    app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
     // Register Routers
     const epgsRouter = createEpgsRouter();
     app.use('/api/auth', createAuthRouter());
@@ -89,9 +92,6 @@ async function startServer() {
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)
     app.use('/', createProxyRouter());
-
-    // Health check — used by Docker healthcheck and monitoring
-    app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
     // Frontend serving
     const distPath = path.join(process.cwd(), "dist");
