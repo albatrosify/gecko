@@ -396,6 +396,28 @@ async function startServer() {
     // Initialize cron jobs
     await initCronManager().catch(err => log(`[Cron] Initialization failed: ${err.message}`));
 
+    // Migration: Convert directStreams to proxyEnabled
+    try {
+      const db = getDb();
+      const needsMigration = await db.collection('playlists').find({ proxyEnabled: { $exists: false } }).toArray();
+      if (needsMigration.length > 0) {
+        log(`[Migration] Migrating ${needsMigration.length} playlists to proxyEnabled...`);
+        for (const p of needsMigration) {
+          const proxyEnabled = p.directStreams === true ? false : true;
+          await db.collection('playlists').updateOne(
+            { _id: p._id },
+            {
+              $set: { proxyEnabled },
+              $unset: { directStreams: "" }
+            }
+          );
+        }
+        log(`[Migration] Completed conversion to proxyEnabled.`);
+      }
+    } catch (err: any) {
+      log(`[Migration] FAILED: ${err.message}`);
+    }
+
     const app = express();
     const PORT = parseInt(process.env.PORT || "3000");
 
@@ -455,10 +477,10 @@ async function startServer() {
     app.get("/api/proxy/stats", requireAuth, async (req, res) => {
       try {
         const db = getDb();
-        const [playlistsCount, usersCount, directStreamsCount] = await Promise.all([
+        const [playlistsCount, usersCount, unproxiedCount] = await Promise.all([
           db.collection('playlists').countDocuments(),
           db.collection('users').countDocuments(),
-          db.collection('playlists').countDocuments({ directStreams: true }),
+          db.collection('playlists').countDocuments({ proxyEnabled: false }),
         ]);
 
         res.json({
@@ -468,7 +490,7 @@ async function startServer() {
           history: proxyStats.history,
           totalPlaylists: playlistsCount,
           totalUsers: usersCount,
-          directStreamsCount,
+          unproxiedCount,
           connections: Array.from(proxyStats.connections.values()),
         });
       } catch (err: any) {
@@ -2119,13 +2141,13 @@ async function startServer() {
                if (mapping) s.name = applyRegex(computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat), mapping.regexRenames || []);
                // Icon priority: customIcon > epgIcon (from EPG source) > upstream icon
                const resolvedIcon = mapping?.customIcon || mapping?.epgIcon || null;
-               if (resolvedIcon) s.stream_icon = proxyImageUrl(resolvedIcon, imgBase);
+               if (resolvedIcon) s.stream_icon = playlist.proxyEnabled !== false ? proxyImageUrl(resolvedIcon, imgBase) : resolvedIcon;
                if (mapping?.epgMapping) s.epg_channel_id = mapping.epgMapping;
 
 
                s._catOrder = catOrderMap.get(prefixedCatId) ?? 2000000000;
                s._streamOrder = mapping?.order ?? idx;
-               if (playlist.directStreams && s._client) {
+               if (playlist.proxyEnabled === false && s._client) {
                  s.direct_source = s._client.getLiveStreamUrl(originalId);
                }
 
@@ -2149,7 +2171,7 @@ async function startServer() {
                }
              });
              data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
-             data.forEach((s: any) => { if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
+             data.forEach((s: any) => { if (s.stream_icon && playlist.proxyEnabled !== false) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
              break;
           }
             case 'get_vod_categories': {
@@ -2189,7 +2211,7 @@ async function startServer() {
                 }
               });
               data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
-              data.forEach((c: any) => { if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
+            data.forEach((c: any) => { if (c.category_icon && playlist.proxyEnabled !== false) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
               break;
             }
             case 'get_vod_streams': {
@@ -2274,7 +2296,7 @@ async function startServer() {
                 }
               });
               data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
-              data.forEach((s: any) => { if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
+              data.forEach((s: any) => { if (s.stream_icon && playlist.proxyEnabled !== false) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase); });
               break;
             }
             case 'get_series_categories': {
@@ -2314,7 +2336,7 @@ async function startServer() {
                 }
               });
               data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
-              data.forEach((c: any) => { if (c.category_icon) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
+              data.forEach((c: any) => { if (c.category_icon && playlist.proxyEnabled !== false) c.category_icon = proxyImageUrl(c.category_icon, imgBase); });
               break;
             }
             case 'get_series': {
@@ -2398,7 +2420,7 @@ async function startServer() {
                 }
               });
               data.forEach((s: any) => { delete s._catOrder; delete s._streamOrder; delete s._client; });
-              data.forEach((s: any) => { if (s.cover) s.cover = proxyImageUrl(s.cover, imgBase); });
+              data.forEach((s: any) => { if (s.cover && playlist.proxyEnabled !== false) s.cover = proxyImageUrl(s.cover, imgBase); });
               break;
             }
         case 'get_live_info': {
@@ -2413,7 +2435,7 @@ async function startServer() {
                try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
              }));
              data = liveResults.find(r => r !== null) || {};
-             if (data.info?.stream_icon) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
+             if (data.info?.stream_icon && playlist.proxyEnabled !== false) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
              break;
            }
 
@@ -2479,7 +2501,7 @@ async function startServer() {
               return null;
             }));
             data = allVodResults.find(r => r !== null) || { error: "VOD not found" };
-            if (data && !data.error) {
+            if (data && !data.error && playlist.proxyEnabled !== false) {
               if (data.info?.movie_image) data.info.movie_image = proxyImageUrl(data.info.movie_image, imgBase);
             }
             break;
@@ -2514,7 +2536,7 @@ async function startServer() {
             // Return first one that has actual data
             data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
             // Proxy image URLs in series info
-            if (data && !data.error) {
+            if (data && !data.error && playlist.proxyEnabled !== false) {
               if (data.info?.cover) data.info.cover = proxyImageUrl(data.info.cover, imgBase);
               if (Array.isArray(data.info?.backdrop_path)) {
                 data.info.backdrop_path = data.info.backdrop_path.map((u: string) => proxyImageUrl(u, imgBase));
@@ -2678,12 +2700,12 @@ async function startServer() {
             : (stream.name || stream.title);
           const name = mapping ? applyRegex(baseName, mapping.regexRenames || []) : baseName;
           const rawLogo = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
-          const logo = rawLogo ? proxyImageUrl(rawLogo, proxyBaseUrl) : '';
+          const logo = (rawLogo && playlist.proxyEnabled !== false) ? proxyImageUrl(rawLogo, proxyBaseUrl) : (rawLogo || '');
           const epgId = mapping?.epgMapping || stream.epg_channel_id;
           const categoryName = stream._displayCategoryName;
           
           let url;
-          if (playlist.directStreams && stream._client) {
+          if (playlist.proxyEnabled === false && stream._client) {
             const originalStreamId = String(stream.stream_id || stream.series_id);
             if (m3uType === 'vod') url = stream._client.getVodStreamUrl(originalStreamId, stream.container_extension);
             else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(originalStreamId, stream.container_extension);
@@ -2779,9 +2801,11 @@ async function startServer() {
           const hostHeader = req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`;
           const imgBase = (process.env.APP_URL || `${protocol}://${hostHeader}`).replace(/\/$/, '');
 
-          content = content.replace(/<icon\s+src="([^"]+)"/gi, (match, url) => {
-            return `<icon src="${imgBase}/img?url=${encodeURIComponent(url)}"`;
-          });
+          if (playlist.proxyEnabled !== false) {
+            content = content.replace(/<icon\s+src="([^"]+)"/gi, (match, url) => {
+              return `<icon src="${imgBase}/img?url=${encodeURIComponent(url)}"`;
+            });
+          }
 
           return content;
         });

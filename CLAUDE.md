@@ -56,7 +56,7 @@ Requires a `.env` file (copy from `.env.example`) with `MONGODB_URI`, `MONGODB_D
 - `users` — email/password/role (`admin`|`user`)
 - `sources` — upstream Xtream/M3U providers (per-user); supports `autoSyncEnabled` + `syncCron` (crontab) for scheduled refresh
 - `epgs` — XMLTV EPG URLs (per-user)
-- `playlists` — aggregation configs with custom `username`/`password` for downstream access; `directStreams: true` bypasses the stream proxy
+- `playlists` — aggregation configs with custom `username`/`password` for downstream access; `proxyEnabled: false` bypasses the stream and image proxy
 - `mappings` — per-playlist stream overrides (hide, rename, reorder, regex rules, EPG mapping)
 - `categoryMappings` — per-playlist category overrides (hide, rename, reorder)
 - `source_sync_meta` — cooldown tracking for upstream syncs (5-min minimum between syncs)

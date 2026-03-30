@@ -49,7 +49,7 @@ export interface Playlist {
   epgIds: string[];
   autoUpdateInterval: string; // Crontab format
   enabled: boolean;
-  directStreams?: boolean;
+  proxyEnabled?: boolean;
   lastSync?: string; // ISO timestamp
   qualityLabelFormat?: string;  // e.g. "[{label}]" — per-playlist template
   isSynced?: boolean;

@@ -318,9 +318,9 @@ export function Dashboard() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-bold">Now Playing</h3>
-            {stats.directStreamsCount > 0 && (
-              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
-                {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'} not shown
+            {stats.unproxiedCount > 0 && (
+              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg uppercase tracking-wider" title="Playlists with Proxying disabled bypass the stream proxy and won't appear here">
+                {stats.unproxiedCount} unproxied {stats.unproxiedCount === 1 ? 'playlist' : 'playlists'} not shown
               </span>
             )}
           </div>
@@ -394,7 +394,7 @@ export function Dashboard() {
 export function PlaylistManager({ user }: { user: User }) {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newPlaylist, setNewPlaylist] = useState({ name: '', username: '', password: '', directStreams: false });
+  const [newPlaylist, setNewPlaylist] = useState({ name: '', username: '', password: '', proxyEnabled: true });
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [cloningPlaylist, setCloningPlaylist] = useState<Playlist | null>(null);
   const [cloneData, setCloneData] = useState({ 
@@ -430,7 +430,7 @@ export function PlaylistManager({ user }: { user: User }) {
     try {
       await api.playlists.create(newPlaylist);
       setShowAddModal(false);
-      setNewPlaylist({ name: '', username: '', password: '', directStreams: false });
+      setNewPlaylist({ name: '', username: '', password: '', proxyEnabled: true });
       loadPlaylists();
     } catch (error) {
       console.error('Failed to create playlist:', error);
@@ -471,9 +471,9 @@ export function PlaylistManager({ user }: { user: User }) {
     }
   };
 
-  const handleToggleDirectStreams = async (playlist: Playlist) => {
+  const handleToggleProxy = async (playlist: Playlist) => {
     try {
-      await api.playlists.update(playlist.id, { directStreams: !playlist.directStreams });
+      await api.playlists.update(playlist.id, { proxyEnabled: !playlist.proxyEnabled });
       loadPlaylists();
     } catch (error) {
       console.error('Failed to update playlist:', error);
@@ -532,13 +532,13 @@ export function PlaylistManager({ user }: { user: User }) {
                 <input 
                   type="checkbox"
                   className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-900"
-                  checked={newPlaylist.directStreams}
-                  onChange={e => setNewPlaylist({ ...newPlaylist, directStreams: e.target.checked })}
+                  checked={newPlaylist.proxyEnabled}
+                  onChange={e => setNewPlaylist({ ...newPlaylist, proxyEnabled: e.target.checked })}
                 />
                 <div className="flex-1">
-                  <div className="font-bold text-sm">Direct Streams</div>
+                  <div className="font-bold text-sm">Proxy All Traffic (Privacy Mode)</div>
                   <div className="text-[10px] text-zinc-500 leading-tight mt-1">
-                    Return the original source stream URLs instead of proxying through this server. Bypasses the proxy completely.
+                    Tunnel all streams and images through this server to hide your public IP from the provider.
                   </div>
                 </div>
               </label>
@@ -824,12 +824,12 @@ export function PlaylistManager({ user }: { user: User }) {
             </div>
 
             <div className="flex items-center justify-between px-2">
-              <span className="text-xs font-bold text-zinc-400">Direct Streams</span>
+              <span className="text-xs font-bold text-zinc-400">Proxy All Traffic</span>
               <button
-                onClick={() => handleToggleDirectStreams(playlist)}
-                className={`w-10 h-5 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                onClick={() => handleToggleProxy(playlist)}
+                className={`w-10 h-5 rounded-full relative transition-colors ${playlist.proxyEnabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
               >
-                <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${playlist.directStreams ? 'left-6' : 'left-1'}`} />
+                <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${playlist.proxyEnabled ? 'left-6' : 'left-1'}`} />
               </button>
             </div>
 
