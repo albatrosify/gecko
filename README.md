@@ -25,8 +25,11 @@ cd gecko
 cp .env.example .env
 # Edit .env — set JWT_SECRET, APP_URL, and VPN credentials
 
-# Start the app + MongoDB
+# Start the app (includes MongoDB integrated)
 docker compose up -d
+
+# OR run with separate services (original behavior)
+# docker compose -f docker-compose.separate.yml up -d
 
 # Open in browser
 open http://localhost:3000
@@ -40,7 +43,7 @@ Edit `.env` (or `docker-compose.yml` environment variables):
 
 | Variable | Default | Description |
 |---|---|---|
-| `MONGODB_URI` | `mongodb://mongo:27017` | MongoDB connection string |
+| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
 | `MONGODB_DB` | `open_iptv` | Database name |
 | `JWT_SECRET` | — | **Required.** Secret for JWT tokens (`openssl rand -hex 32`) |
 | `APP_URL` | `http://YOUR_LAN_IP:3000` | Public URL for Xtream proxy rewrites |
