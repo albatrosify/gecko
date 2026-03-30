@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install MongoDB 4.4
-RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | apt-key add - && \
-    echo "deb http://repo.mongodb.org/apt/debian buster/mongodb-org/4.4 main" | \
+RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] http://repo.mongodb.org/apt/debian buster/mongodb-org/4.4 main" | \
     tee /etc/apt/sources.list.d/mongodb-org-4.4.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \

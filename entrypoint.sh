@@ -2,7 +2,7 @@
 set -e
 
 # Clean up any stale lock files
-rm -f /data/db/mongod.lock
+rm -f /data/db/mongod.lock /data/db/WiredTiger.lock
 
 # Ensure correct permissions (in case of volume mounts)
 chown -R node:node /data/db /var/log/mongodb
