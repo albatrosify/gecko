@@ -737,7 +737,13 @@ async function startServer() {
           const nameMatch = /<display-name[^>]*>([^<]+)<\/display-name>/i.exec(m[2]);
           const iconMatch = /<icon\s+src="([^"]+)"/i.exec(m[2]);
           if (nameMatch) {
-            channels.push({ id, name: nameMatch[1].trim(), icon: iconMatch?.[1], source: sourceName });
+            // Base URL for proxying image URLs through this server
+            const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
+            const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString();
+            const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+
+            const icon = iconMatch?.[1] ? proxyImageUrl(iconMatch[1], imgBase) : undefined;
+            channels.push({ id, name: nameMatch[1].trim(), icon, source: sourceName });
           }
         }
         log(`[EPG] "${sourceName}": ${channels.length - before} channels parsed`);
@@ -1036,6 +1042,24 @@ async function startServer() {
             const client = new XtreamClient(sDoc as any);
             const info = await client.getSeriesInfo(rawSeriesId);
             if (info && (info.seasons || info.episodes || info.info)) {
+              // Base URL for proxying image URLs through this server
+              const _imgProtocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
+              const _imgHost = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${PORT}`).toString();
+              const imgBase = (process.env.APP_URL || `${_imgProtocol}://${_imgHost}`).replace(/\/$/, '');
+
+              if (info.info?.cover) info.info.cover = proxyImageUrl(info.info.cover, imgBase);
+              if (Array.isArray(info.info?.backdrop_path)) {
+                info.info.backdrop_path = info.info.backdrop_path.map((u: string) => proxyImageUrl(u, imgBase));
+              } else if (info.info?.backdrop_path) {
+                info.info.backdrop_path = proxyImageUrl(info.info.backdrop_path, imgBase);
+              }
+              if (info.episodes && typeof info.episodes === 'object') {
+                for (const season of Object.values(info.episodes) as any[][]) {
+                  for (const ep of season) {
+                    if (ep.info?.movie_image) ep.info.movie_image = proxyImageUrl(ep.info.movie_image, imgBase);
+                  }
+                }
+              }
               return res.json(info);
             }
           } catch { continue; }
