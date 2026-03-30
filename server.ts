@@ -63,7 +63,7 @@ const applyRegex = (name: string, rules: { pattern: string; replacement: string 
       const regex = new RegExp(rule.pattern, 'g');
       result = result.replace(regex, rule.replacement);
     } catch (e) {
-      console.error("Invalid regex:", rule.pattern);
+      log(`Invalid regex: ${rule.pattern}`);
     }
   }
   return result;
@@ -192,7 +192,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
   const source = await db.collection('sources').findOne({ _id: toId(sourceId) });
   if (!source) return { error: "Source not found" };
 
-  console.log(`[Sync] Starting ${type} sync for: ${source.name}`);
+  log(`[Sync] Starting ${type} sync for: ${source.name}`);
   const client = new XtreamClient(source as any);
   
   try {
@@ -201,7 +201,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
     else if (type === 'vod') upstreamStreams = await client.getMovies();
     else if (type === 'series') upstreamStreams = await client.getSeries();
 
-    console.log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
+    log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
 
     const playlistIds = (await db.collection('playlists').find({ sourceIds: sourceId.toString() }).toArray()).map(p => p._id.toString());
     const mappings = await db.collection('mappings').find({ 
@@ -256,7 +256,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
       { upsert: true }
     );
 
-    console.log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
+    log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
 
     // Update disk cache for the UI
     const cacheKey = `${sourceId}_streams_${type}`;
@@ -299,7 +299,7 @@ async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'series' =
 
     return { success: true, updatedCount, totalExamined, lastUpdated };
   } catch (err: any) {
-    console.log(`[Sync] Error for ${source.name} (${type}): ${err.message}`);
+    log(`[Sync] Error for ${source.name} (${type}): ${err.message}`);
     return { error: err.message };
   }
 }
@@ -401,6 +401,11 @@ function scheduleSourceCron(source: any) {
 async function startServer() {
   log("Starting server...");
   try {
+    // Environment validation
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons.');
+    }
+
     // Connect to MongoDB
     await connectDb();
     log("Connected to MongoDB");
@@ -760,11 +765,11 @@ async function startServer() {
 
         let newSourceIds = [...sourcePlaylist.sourceIds];
         const originalPlaylistIdStr = playlistId.toString();
-        console.log(`[Clone] Duplicating: ${sourcePlaylist.name} (${originalPlaylistIdStr}). Original Source IDs: ${newSourceIds.join(', ')}`);
+        log(`[Clone] Duplicating: ${sourcePlaylist.name} (${originalPlaylistIdStr}). Original Source IDs: ${newSourceIds.join(', ')}`);
 
         // 0. Optionally create a new source if new credentials are provided
         if (sourceUsername && sourcePassword && sourcePlaylist.sourceIds.length > 0) {
-          console.log(`[Clone] Creating new source override for: ${sourceUsername}`);
+          log(`[Clone] Creating new source override for: ${sourceUsername}`);
           const originalSourceId = sourcePlaylist.sourceIds[0]; 
           const originalSource = await db.collection('sources').findOne({ _id: toId(originalSourceId) });
           
@@ -781,7 +786,7 @@ async function startServer() {
             delete (newSourceDoc as any)._id;
             const sourceResult = await db.collection('sources').insertOne(newSourceDoc);
             newSourceIds = [sourceResult.insertedId.toString()];
-            console.log(`[Clone] Source cloned successfully: ${newSourceIds[0]}`);
+            log(`[Clone] Source cloned successfully: ${newSourceIds[0]}`);
             
             // Re-schedule cron for the new source IF enabled
             const ns = newSourceDoc as any;
@@ -802,10 +807,10 @@ async function startServer() {
             // We do this in the background to not block the clone response too long, 
             // but we start it now.
             refreshSource(sourceResult.insertedId.toString(), 'live', true).catch(err => {
-              console.error(`[Clone] Background refresh failed for new source ${sourceResult.insertedId}:`, err);
+              log(`[Clone] Background refresh failed for new source ${sourceResult.insertedId}: ${err?.message || err}`);
             });
           } else {
-            console.warn(`[Clone] WARNING: Original source ${originalSourceId} not found in DB.`);
+            log(`[Clone] WARNING: Original source ${originalSourceId} not found in DB.`);
           }
         }
 
@@ -831,7 +836,7 @@ async function startServer() {
         // 2. Clone Category Mappings
         const catMappings = await db.collection('categoryMappings').find(playlistFilter).toArray();
         if (catMappings.length > 0) {
-          console.log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
+          log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
           const newCatMappings = catMappings.map(m => {
             const newM = { ...m, _id: undefined, playlistId: newPlaylistId };
             delete (newM as any)._id;
@@ -839,7 +844,7 @@ async function startServer() {
           });
           await db.collection('categoryMappings').insertMany(newCatMappings);
         } else {
-          console.log(`[Clone] No category mappings found for source ${originalPlaylistIdStr}`);
+          log(`[Clone] No category mappings found for source ${originalPlaylistIdStr}`);
         }
 
         // Helper to replace credentials in URLs
@@ -852,7 +857,7 @@ async function startServer() {
         // 3. Clone Stream Mappings
         const streamMappings = await db.collection('mappings').find(playlistFilter).toArray();
         if (streamMappings.length > 0) {
-          console.log(`[Clone] Found ${streamMappings.length} stream mappings to duplicate.`);
+          log(`[Clone] Found ${streamMappings.length} stream mappings to duplicate.`);
           
           let oldUser = '', oldPass = '';
           if (sourceUsername && sourcePassword) {
@@ -882,12 +887,12 @@ async function startServer() {
             });
             await db.collection('mappings').insertMany(batch);
           }
-          console.log(`[Clone] Stream mappings duplicated successfully.`);
+          log(`[Clone] Stream mappings duplicated successfully.`);
         } else {
-          console.warn(`[Clone] No stream mappings found for source playlist ${originalPlaylistIdStr}`);
+          log(`[Clone] No stream mappings found for source playlist ${originalPlaylistIdStr}`);
         }
 
-        console.log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
+        log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
         res.json({ id: newPlaylistId });
       } catch (err: any) {
         log(`Error cloning playlist ${playlistId}: ${err.message}`);
@@ -2647,6 +2652,7 @@ async function startServer() {
 
       try {
         let m3u = "#EXTM3U\n";
+
 
         const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });

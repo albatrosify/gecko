@@ -3,7 +3,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getDb, docWithId } from './db.ts';
 
-const JWT_SECRET = () => process.env.JWT_SECRET || 'change-me-in-production';
+const JWT_SECRET = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is not set. Security risk: cannot start without a secret.');
+  }
+  return secret;
+};
 const TOKEN_EXPIRY = '7d';
 
 export interface AuthRequest extends Request {
