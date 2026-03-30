@@ -52,6 +52,8 @@ export interface Playlist {
   directStreams?: boolean;
   lastSync?: string; // ISO timestamp
   qualityLabelFormat?: string;  // e.g. "[{label}]" — per-playlist template
+  isSynced?: boolean;
+  nextStreamId?: number;
 }
 
 export interface CategoryMapping {
@@ -83,5 +85,6 @@ export interface StreamMapping {
   regexRenames?: { pattern: string; replacement: string }[];
   detectedMeta?: DetectedStreamMeta;
   useDetectedQuality?: boolean;
+  sourceIdx?: number;
 }
 

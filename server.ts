@@ -1911,12 +1911,10 @@ async function startServer() {
       }
 
       const db = getDb();
-      const [mappingDocs, catMappingDocs] = await Promise.all([
-        db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
-        db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
-      ]);
-      const mappings = docsWithId(mappingDocs) as StreamMapping[];
+      // Load all category mappings (usually small) but defer stream mappings (can be huge)
+      const catMappingDocs = await db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray();
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+      let mappings: StreamMapping[] = [];
       const globalFormat = await getGlobalQualityFormat();
 
       const sourceId = playlist.sourceIds?.[0];
@@ -2038,6 +2036,8 @@ async function startServer() {
           }
            case 'get_live_streams': {
              const categoryId = req.query.category_id as string;
+             const mappingDocs = await db.collection('mappings').find({ playlistId: playlist.id, type: 'live' }).toArray();
+             mappings = docsWithId(mappingDocs) as StreamMapping[];
              const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                if (!sDoc) return [];
@@ -2172,6 +2172,8 @@ async function startServer() {
             }
             case 'get_vod_streams': {
               const categoryId = req.query.category_id as string;
+              const mappingDocs = await db.collection('mappings').find({ playlistId: playlist.id, type: 'vod' }).toArray();
+              mappings = docsWithId(mappingDocs) as StreamMapping[];
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
@@ -2296,6 +2298,8 @@ async function startServer() {
             }
             case 'get_series': {
               const categoryId = req.query.category_id as string;
+              const mappingDocs = await db.collection('mappings').find({ playlistId: playlist.id, type: 'series' }).toArray();
+              mappings = docsWithId(mappingDocs) as StreamMapping[];
               const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                 const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
                 if (!sDoc) return [];
@@ -2527,9 +2531,12 @@ async function startServer() {
       if (!playlist) return res.status(401).send("Invalid credentials");
 
       const db = getDb();
+      const m3uType = (type as string) || 'live';
+      const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
+
       const [mappingDocs, catMappingDocs] = await Promise.all([
-        db.collection('mappings').find({ playlistId: playlist.id }).toArray(),
-        db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray(),
+        db.collection('mappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
+        db.collection('categoryMappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
       ]);
       const mappings = docsWithId(mappingDocs) as StreamMapping[];
       const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
@@ -2537,8 +2544,6 @@ async function startServer() {
 
       try {
         let m3u = "#EXTM3U\n";
-        const m3uType = (type as string) || 'live';
-        const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
 
         const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
           const sDoc = await db.collection('sources').findOne({ _id: toId(sid) });
