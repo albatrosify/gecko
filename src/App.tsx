@@ -104,7 +104,7 @@ export default function App() {
           </aside>
 
           {/* Main Content */}
-          <main className="flex-1 overflow-auto pl-16">
+          <main className="flex-1 overflow-auto pl-16 custom-scrollbar">
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/playlists" element={<PlaylistManager user={user} />} />
