@@ -130,7 +130,9 @@ function ProxyBandwidthSidebar() {
       try {
         const data = await api.proxy.stats();
         setStats(data);
-      } catch (err) {}
+      } catch (err) {
+        // Silently ignore: stats are periodically refreshed
+      }
     };
     fetchStats();
     const interval = setInterval(fetchStats, 3000);

@@ -258,7 +258,9 @@ export function Dashboard() {
       try {
         const data = await api.proxy.stats();
         setStats(data);
-      } catch (err) {}
+      } catch (err) {
+        // Silently ignore: stats are periodically refreshed
+      }
     };
     fetchStats();
     const interval = setInterval(fetchStats, 2000);
@@ -421,7 +423,9 @@ export function PlaylistManager({ user }: { user: User }) {
 
   useEffect(() => {
     loadPlaylists();
-    api.epgs.list().then(setAvailableEpgs).catch(() => {});
+    api.epgs.list().then(setAvailableEpgs).catch(() => {
+      // Ignore EPG load errors: non-critical for initial render
+    });
   }, [loadPlaylists]);
 
   const handleAdd = async () => {
@@ -1525,7 +1529,9 @@ export function Settings({ user }: { user: User }) {
   useEffect(() => {
     api.settings.get()
       .then(s => setQualityFormat(s.qualityLabelFormat ?? '[{label}]'))
-      .catch(() => {});
+      .catch(() => {
+        // Silently ignore settings load error: using defaults
+      });
   }, []);
 
   useEffect(() => {
@@ -1715,7 +1721,9 @@ export function PlaylistEditor({ user }: { user: User }) {
   const pendingNavRef = useRef<{ categoryId: string; streamId: string } | null>(null);
 
   useEffect(() => {
-    api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {});
+    api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {
+      // Ignore: fallback to default if settings fetch fails
+    });
   }, []);
 
   const loadPlaylistData = useCallback(async () => {
@@ -2234,7 +2242,9 @@ export function PlaylistEditor({ user }: { user: User }) {
           if (!rule.pattern) return;
           const re = new RegExp(rule.pattern, 'g');
           newName = newName.replace(re, rule.replacement);
-        } catch(e) {}
+        } catch(e) {
+          // Ignore invalid regex patterns
+        }
       });
 
       if (newName === initialName) return null;
@@ -4409,7 +4419,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   const epgRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.epgs.channels(playlistId).then(r => setEpgChannels(r.channels)).catch(() => {});
+    api.epgs.channels(playlistId).then(r => setEpgChannels(r.channels)).catch(() => {
+      // Background fetch: silently ignore if fails
+    });
   }, [playlistId]);
 
   // Close dropdown on outside click
