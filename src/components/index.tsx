@@ -3323,9 +3323,9 @@ function CategoryPane({
 
   // Sync nameVal when selection changes
   useEffect(() => {
-    setNameVal(mapping?.customName || category?.name || '');
+    setNameVal(mapping?.customName || category?.category_name || category?.name || '');
     setEditingName(false);
-  }, [catId, mapping?.customName, category?.name]);
+  }, [catId, mapping?.customName, category?.category_name, category?.name]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -3339,7 +3339,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { customName: trimmed });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: trimmed, order: 0, hidden: false });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: trimmed, order: 0, hidden: false });
     }
     setEditingName(false);
     onMappingChange();
@@ -3351,7 +3351,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { hidden: newHidden });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: newHidden });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: newHidden });
     }
     onMappingChange();
   };
@@ -3362,7 +3362,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
     }
     onMappingChange();
   };
@@ -3375,7 +3375,7 @@ function CategoryPane({
 
   const isHidden = mapping?.hidden ?? false;
   const isSynced = mapping?.syncOnDemand ?? false;
-  const displayName = mapping?.customName || category?.name || '(unknown)';
+  const displayName = mapping?.customName || category?.category_name || category?.name || '(unknown)';
 
   return (
     <div className="w-96 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
