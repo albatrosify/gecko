@@ -657,10 +657,10 @@ export function PlaylistManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full flex flex-col max-h-[90vh]"
           >
-            <h3 className="text-2xl font-bold">Edit Playlist Settings</h3>
-            <div className="space-y-4">
+            <h3 className="text-2xl font-bold shrink-0 mb-6">Edit Playlist Settings</h3>
+            <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-2">
               <div className="space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Playlist Name</label>
                 <input 
@@ -737,7 +737,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 </p>
               </div>
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-4 shrink-0 mt-6">
               <button 
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
