@@ -58,6 +58,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 function ProxyBandwidthCard() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
@@ -76,7 +77,7 @@ function ProxyBandwidthCard() {
 
   if (!stats) return (
     <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-3xl p-6 flex items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-950">
-      <div className="text-zinc-500 animate-pulse font-bold tracking-widest text-[10px] uppercase italic">Init Bandwidth Monitor...</div>
+      <div className="text-zinc-500 animate-pulse font-bold tracking-widest text-[10px] uppercase italic">{t('ui.init_bandwidth_monitor')}</div>
     </div>
   );
 
@@ -90,8 +91,8 @@ function ProxyBandwidthCard() {
           <Activity size={24} />
         </div>
         <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Proxy Speed</div>
-          <div className="text-2xl font-black text-zinc-100 tabular-nums">{mbps} <span className="text-[10px] font-medium text-emerald-500 uppercase tracking-widest">Mbps</span></div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{t('ui.proxy_speed')}</div>
+          <div className="text-2xl font-black text-zinc-100 tabular-nums">{mbps} <span className="text-[10px] font-medium text-emerald-500 uppercase tracking-widest">{t('ui.mbps')}</span></div>
         </div>
       </div>
 
@@ -102,7 +103,7 @@ function ProxyBandwidthCard() {
           <Wifi size={24} />
         </div>
         <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Active Streams</div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{t('ui.active_streams')}</div>
           <div className="text-2xl font-black text-zinc-100 tabular-nums">{stats.activeStreams}</div>
         </div>
       </div>
@@ -114,7 +115,7 @@ function ProxyBandwidthCard() {
           <Database size={24} />
         </div>
         <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Data Proxied</div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{t('ui.data_proxied')}</div>
           <div className="text-2xl font-black text-zinc-100 tabular-nums">{totalGB} <span className="text-[10px] font-medium text-purple-500 uppercase tracking-widest">GB</span></div>
         </div>
       </div>
@@ -189,6 +190,7 @@ function countryToFlag(code: string): string {
 }
 
 function VpnStatusBar() {
+  const { t } = useTranslation();
   const [ipInfo, setIpInfo] = useState<{ ip: string; country: string; city: string; org: string } | null>(null);
   const [error, setError] = useState(false);
 
@@ -211,17 +213,17 @@ function VpnStatusBar() {
     <div className="bg-zinc-900 border border-zinc-800 rounded-3xl px-6 py-4 flex items-center gap-4">
       <div className="flex items-center gap-2 shrink-0">
         {error ? (
-          <span className="w-2 h-2 rounded-full bg-amber-500" title="IP lookup unavailable" />
+          <span className="w-2 h-2 rounded-full bg-amber-500" title={t('ui.ip_lookup_unavailable')} />
         ) : ipInfo ? (
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         ) : (
           <span className="w-2 h-2 rounded-full bg-zinc-600 animate-pulse" />
         )}
-        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Egress IP</span>
+        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('ui.egress_ip')}</span>
       </div>
 
       {error && (
-        <span className="text-xs text-amber-400 font-mono">IP lookup unavailable</span>
+        <span className="text-xs text-amber-400 font-mono">{t('ui.ip_lookup_unavailable')}</span>
       )}
 
       {!error && !ipInfo && (
@@ -278,7 +280,7 @@ export function Dashboard() {
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
       <header>
         <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('overview')}</h2>
-        <p className="text-zinc-500">Real-time system performance and activity</p>
+        <p className="text-zinc-500">{t('ui.real_time_system_performance_a')}</p>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -306,8 +308,8 @@ export function Dashboard() {
         <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col">
           <div className="flex justify-between items-center mb-8">
             <div>
-              <h3 className="text-xl font-bold">Bandwidth Usage</h3>
-              <p className="text-sm text-zinc-500">Real-time throughput (last 2 minutes)</p>
+              <h3 className="text-xl font-bold">{t('ui.bandwidth_usage')}</h3>
+              <p className="text-sm text-zinc-500">{t('ui.real_time_throughput__last_2_m')}</p>
             </div>
             <div className="text-right">
               <div className="text-2xl font-black text-emerald-500 tabular-nums">{mbps} Mbps</div>
@@ -321,9 +323,9 @@ export function Dashboard() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-bold">Now Playing</h3>
+            <h3 className="text-xl font-bold">{t('ui.now_playing')}</h3>
             {stats.directStreamsCount > 0 && (
-              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
+              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg uppercase tracking-wider" title={t('ui.playlists_with_direct_streams')}>
                 {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'} not shown
               </span>
             )}
@@ -349,7 +351,7 @@ export function Dashboard() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm text-zinc-100 truncate leading-tight">{conn.streamName || conn.streamId}</div>
-                        <div className="text-xs text-zinc-500 truncate mt-0.5">via <span className="text-zinc-400">{conn.playlistName || conn.username}</span></div>
+                        <div className="text-xs text-zinc-500 truncate mt-0.5">{t('ui.via')} <span className="text-zinc-400">{conn.playlistName || conn.username}</span></div>
                       </div>
                       <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
                         {conn.type === 'movie' ? 'VOD' : conn.type}
@@ -376,7 +378,7 @@ export function Dashboard() {
                         <span className="font-mono text-zinc-400">{conn.ip}</span>
                       </div>
                       {conn.proxied && (
-                        <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">VPN proxied</span>
+                        <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">{t('ui.vpn_proxied')}</span>
                       )}
                     </div>
                   </div>
@@ -384,8 +386,8 @@ export function Dashboard() {
               })
             ) : (
               <div className="text-center py-12">
-                <div className="text-zinc-600 mb-2 font-medium italic">Quiet on the wire...</div>
-                <div className="text-[10px] text-zinc-700 uppercase font-bold tracking-widest">No active streams</div>
+                <div className="text-zinc-600 mb-2 font-medium italic">{t('ui.quiet_on_the_wire')}</div>
+                <div className="text-[10px] text-zinc-700 uppercase font-bold tracking-widest">{t('ui.no_active_streams')}</div>
               </div>
             )}
           </div>
@@ -492,14 +494,14 @@ export function PlaylistManager({ user }: { user: User }) {
       <header className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-bold tracking-tight text-white">{t('custom_playlists')}</h2>
-          <p className="text-zinc-500">Manage and configure your IPTV playlists</p>
+          <p className="text-zinc-500">{t('ui.manage_and_configure_your_iptv')}</p>
         </div>
         <button 
           onClick={() => setShowAddModal(true)}
           className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
         >
           <Plus size={20} />
-          New Playlist
+          {t('ui.new_playlist')}
         </button>
       </header>
 
@@ -512,23 +514,23 @@ export function PlaylistManager({ user }: { user: User }) {
             animate={{ scale: 1, opacity: 1 }}
             className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
           >
-            <h3 className="text-2xl font-bold">New Playlist</h3>
+            <h3 className="text-2xl font-bold">{t('ui.new_playlist')}</h3>
             <div className="space-y-4">
               <input 
-                placeholder="Playlist Name" 
+                placeholder={t('ui.playlist_name')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={newPlaylist.name}
                 onChange={e => setNewPlaylist({ ...newPlaylist, name: e.target.value })}
               />
               <div className="grid grid-cols-2 gap-4">
                 <input 
-                  placeholder="API Username" 
+                  placeholder={t('ui.api_username')}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                   value={newPlaylist.username}
                   onChange={e => setNewPlaylist({ ...newPlaylist, username: e.target.value })}
                 />
                 <input 
-                  placeholder="API Password" 
+                  placeholder={t('ui.api_password')}
                   type="password"
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                   value={newPlaylist.password}
@@ -543,9 +545,9 @@ export function PlaylistManager({ user }: { user: User }) {
                   onChange={e => setNewPlaylist({ ...newPlaylist, directStreams: e.target.checked })}
                 />
                 <div className="flex-1">
-                  <div className="font-bold text-sm">Direct Streams</div>
+                  <div className="font-bold text-sm">{t('ui.direct_streams')}</div>
                   <div className="text-[10px] text-zinc-500 leading-tight mt-1">
-                    Return the original source stream URLs instead of proxying through this server. Bypasses the proxy completely.
+                    {t('ui.return_the_original_source_str')}
                   </div>
                 </div>
               </label>
@@ -561,7 +563,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={handleAdd}
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
               >
-                Create
+                {t('ui.create')}
               </button>
             </div>
           </motion.div>
@@ -576,15 +578,15 @@ export function PlaylistManager({ user }: { user: User }) {
             className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
           >
             <div>
-              <h3 className="text-2xl font-bold">Duplicate Playlist</h3>
-              <p className="text-xs text-zinc-500 mt-1">Copies all categories and mappings. Enter new credentials below.</p>
+              <h3 className="text-2xl font-bold">{t('ui.duplicate_playlist')}</h3>
+              <p className="text-xs text-zinc-500 mt-1">{t('ui.copies_all_categories_and_mapp')}</p>
             </div>
             
             <div className="space-y-6">
               <div className="space-y-4">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">New Playlist Details</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.new_playlist_details')}</label>
                 <input 
-                  placeholder="New Playlist Name" 
+                  placeholder={t('ui.new_playlist_name')}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                   value={cloneData.name}
                   onChange={e => setCloneData({ ...cloneData, name: e.target.value })}
@@ -593,18 +595,18 @@ export function PlaylistManager({ user }: { user: User }) {
 
               <div className="pt-4 border-t border-zinc-800 space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Proxy API Credentials</label>
-                  <span className="text-[9px] text-zinc-600 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">End-user Login</span>
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.proxy_api_credentials')}</label>
+                  <span className="text-[9px] text-zinc-600 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">{t('ui.end_user_login')}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <input 
-                    placeholder="Proxy Username" 
+                    placeholder={t('ui.proxy_username')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
                     value={cloneData.username}
                     onChange={e => setCloneData({ ...cloneData, username: e.target.value })}
                   />
                   <input 
-                    placeholder="Proxy Password" 
+                    placeholder={t('ui.proxy_password')}
                     type="password"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
                     value={cloneData.password}
@@ -615,25 +617,25 @@ export function PlaylistManager({ user }: { user: User }) {
 
               <div className="pt-4 border-t border-zinc-800 space-y-4">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] uppercase font-bold text-emerald-500/70 tracking-wider">Upstream Provider Credentials</label>
-                  <span className="text-[9px] text-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 text-emerald-500/50 italic">Optional Override</span>
+                  <label className="text-[10px] uppercase font-bold text-emerald-500/70 tracking-wider">{t('ui.upstream_provider_credentials')}</label>
+                  <span className="text-[9px] text-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 text-emerald-500/50 italic">{t('ui.optional_override')}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <input 
-                    placeholder="Provider Username" 
+                    placeholder={t('ui.provider_username')}
                     className="w-full bg-emerald-500/5 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
                     value={cloneData.sourceUsername}
                     onChange={e => setCloneData({ ...cloneData, sourceUsername: e.target.value })}
                   />
                   <input 
-                    placeholder="Provider Password" 
+                    placeholder={t('ui.provider_password')}
                     type="password"
                     className="w-full bg-emerald-500/5 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
                     value={cloneData.sourcePassword}
                     onChange={e => setCloneData({ ...cloneData, sourcePassword: e.target.value })}
                   />
                 </div>
-                <p className="text-[10px] text-zinc-600 italic">Leave Provider empty to use original credentials.</p>
+                <p className="text-[10px] text-zinc-600 italic">{t('ui.leave_provider_empty_to_use_or')}</p>
               </div>
             </div>
 
@@ -648,7 +650,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={handleClone}
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
               >
-                Duplicate
+                {t('ui.duplicate')}
               </button>
             </div>
           </motion.div>
@@ -662,10 +664,10 @@ export function PlaylistManager({ user }: { user: User }) {
             animate={{ scale: 1, opacity: 1 }}
             className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
           >
-            <h3 className="text-2xl font-bold">Edit Playlist Settings</h3>
+            <h3 className="text-2xl font-bold">{t('ui.edit_playlist_settings')}</h3>
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Playlist Name</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.playlist_name')}</label>
                 <input 
                   placeholder="name" 
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
@@ -674,16 +676,16 @@ export function PlaylistManager({ user }: { user: User }) {
                 />
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-4">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Proxy API Credentials</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.proxy_api_credentials')}</label>
                 <div className="grid grid-cols-2 gap-4">
                   <input
-                    placeholder="API Username"
+                    placeholder={t('ui.api_username')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                     value={editData.username}
                     onChange={e => setEditData({ ...editData, username: e.target.value })}
                   />
                   <input
-                    placeholder="API Password"
+                    placeholder={t('ui.api_password')}
                     type="text"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                     value={editData.password}
@@ -693,11 +695,11 @@ export function PlaylistManager({ user }: { user: User }) {
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <div>
-                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Sources</label>
-                  <p className="text-[10px] text-zinc-600 mt-1">Used for the <code className="text-zinc-500">/xmltv.php</code> endpoint. If none selected, falls back to the upstream provider's EPG.</p>
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.epg_sources')}</label>
+                  <p className="text-[10px] text-zinc-600 mt-1">{t('ui.used_for_the')} <code className="text-zinc-500">{t('ui._xmltv_php')}</code> {t('ui.endpoint__if_none_selected__fa')}</p>
                 </div>
                 {availableEpgs.length === 0 ? (
-                  <p className="text-xs text-zinc-600 italic">No EPG sources configured. Add them in the EPG Manager.</p>
+                  <p className="text-xs text-zinc-600 italic">{t('ui.no_epg_sources_configured__add')}</p>
                 ) : (
                   <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
                     {availableEpgs.map(epg => (
@@ -723,7 +725,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 )}
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.quality_label_format')}</label>
                 <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
                 <textarea
                   rows={2}
@@ -733,10 +735,10 @@ export function PlaylistManager({ user }: { user: User }) {
                   onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
                 />
                 <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
-                  Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
-                  Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
-                  More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
-                  Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
+                  {t('ui.simple')} <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                  {t('ui.smart__empty_when_normal')} <span className="font-mono">{'{surround}'}</span> {t('ui._5_1_mono')} <span className="font-mono">{'{premium}'}</span> {t('ui._dd__truehd')} <span className="font-mono">{'{hdr}'}</span> {t('ui._empty_if_sdr')}<br/>
+                  {t('ui.more')} <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                  {t('ui.conditional')} <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
                 </p>
               </div>
             </div>
@@ -751,7 +753,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={handleUpdate}
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
               >
-                Update
+                {t('ui.update')}
               </button>
             </div>
           </motion.div>
@@ -787,7 +789,7 @@ export function PlaylistManager({ user }: { user: User }) {
                     setShowCloneModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-500"
-                  title="Duplicate Playlist"
+                  title={t('ui.duplicate_playlist')}
                 >
                   <Copy size={18} />
                 </button>
@@ -798,14 +800,14 @@ export function PlaylistManager({ user }: { user: User }) {
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 
-                  title="Edit Settings"
+                  title={t('ui.edit_settings')}
                 >
                   <Edit3 size={18} />
                 </button>
                 <button 
                   onClick={() => handleDelete(playlist.id)}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-500"
-                  title="Delete"
+                  title={t('ui.delete')}
                 >
                   <Trash2 size={18} />
                 </button>
@@ -814,7 +816,7 @@ export function PlaylistManager({ user }: { user: User }) {
 
             <div className="bg-zinc-950 rounded-2xl p-4 border border-zinc-800/50 space-y-3">
               <div className="flex justify-between items-center text-xs">
-                <span className="text-zinc-500 uppercase font-bold tracking-tighter">API Endpoint</span>
+                <span className="text-zinc-500 uppercase font-bold tracking-tighter">{t('ui.api_endpoint')}</span>
                 <button 
                   onClick={() => {
                     const url = `${window.location.origin}/player_api.php?username=${playlist.username}&password=${playlist.password}`;
@@ -822,7 +824,7 @@ export function PlaylistManager({ user }: { user: User }) {
                   }}
                   className="text-emerald-500 hover:underline flex items-center gap-1"
                 >
-                  Copy <ExternalLink size={12} />
+                  {t('ui.copy')} <ExternalLink size={12} />
                 </button>
               </div>
               <code className="block text-[10px] text-zinc-400 break-all font-mono">
@@ -831,7 +833,7 @@ export function PlaylistManager({ user }: { user: User }) {
             </div>
 
             <div className="flex items-center justify-between px-2">
-              <span className="text-xs font-bold text-zinc-400">Direct Streams</span>
+              <span className="text-xs font-bold text-zinc-400">{t('ui.direct_streams')}</span>
               <button
                 onClick={() => handleToggleDirectStreams(playlist)}
                 className={`w-10 h-5 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-zinc-700'}`}
@@ -845,7 +847,7 @@ export function PlaylistManager({ user }: { user: User }) {
               className="flex items-center justify-center gap-2 w-full py-3 bg-zinc-800 text-zinc-100 rounded-xl font-bold hover:bg-zinc-700 transition-all"
             >
               <Play size={16} />
-              Open Editor
+              {t('ui.open_editor')}
             </Link>
           </motion.div>
         ))}
@@ -857,8 +859,8 @@ export function PlaylistManager({ user }: { user: User }) {
             <Tv size={48} />
           </div>
           <div className="space-y-1">
-            <h3 className="text-xl font-bold">No playlists yet</h3>
-            <p className="text-zinc-500 max-w-xs">Create your first aggregated playlist to start editing channels.</p>
+            <h3 className="text-xl font-bold">{t('ui.no_playlists_yet')}</h3>
+            <p className="text-zinc-500 max-w-xs">{t('ui.create_your_first_aggregated_p')}</p>
           </div>
         </div>
       )}
@@ -986,14 +988,14 @@ export function SourceManager({ user }: { user: User }) {
       <header className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">{t('upstream_sources')}</h2>
-          <p className="text-zinc-500">Connect your IPTV providers</p>
+          <p className="text-zinc-500">{t('ui.connect_your_iptv_providers')}</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
           className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all"
         >
           <Plus size={20} />
-          Add Source
+          {t('ui.add_source')}
         </button>
       </header>
 
@@ -1011,12 +1013,12 @@ export function SourceManager({ user }: { user: User }) {
                     {source.autoSyncEnabled && (
                       <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
                         <RefreshCw size={8} />
-                        Auto-Sync
+                        {t('ui.auto_sync')}
                       </span>
                     )}
                     {source.useUpstreamEpg && (
                       <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[8px] font-black uppercase tracking-tighter">
-                        EPG
+                        {t('ui.epg')}
                       </span>
                     )}
                   </div>
@@ -1027,7 +1029,7 @@ export function SourceManager({ user }: { user: User }) {
                 <button 
                   onClick={() => handleShowChangelog(source)}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-blue-500 transition-colors"
-                  title="View Sync History"
+                  title={t('ui.view_sync_history')}
                 >
                   <History size={20} />
                 </button>
@@ -1051,7 +1053,7 @@ export function SourceManager({ user }: { user: User }) {
 
             <div className="bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800 flex items-center justify-between">
               <div className="space-y-1">
-                <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Last Synced</p>
+                <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">{t('ui.last_synced')}</p>
                 <p className="text-xs text-zinc-400 font-medium italic">
                   {source.lastUpdated ? new Date(source.lastUpdated).toLocaleString() : 'Never'}
                 </p>
@@ -1085,7 +1087,7 @@ export function SourceManager({ user }: { user: User }) {
             <h3 className="text-2xl font-bold">{showEdit ? 'Edit Upstream Source' : 'Add Upstream Source'}</h3>
             <div className="space-y-4">
               <input 
-                placeholder="Source Name" 
+                placeholder={t('ui.source_name')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={(showEdit ? editingSource! : newSource).name}
                 onChange={e => showEdit ? setEditingSource({...editingSource!, name: e.target.value}) : setNewSource({...newSource, name: e.target.value})}
@@ -1095,11 +1097,11 @@ export function SourceManager({ user }: { user: User }) {
                 value={(showEdit ? editingSource! : newSource).type}
                 onChange={e => showEdit ? setEditingSource({...editingSource!, type: e.target.value as any}) : setNewSource({...newSource, type: e.target.value as any})}
               >
-                <option value="xtream">Xtream Codes</option>
-                <option value="m3u">M3U Playlist URL</option>
+                <option value="xtream">{t('ui.xtream_codes')}</option>
+                <option value="m3u">{t('ui.m3u_playlist_url')}</option>
               </select>
               <input 
-                placeholder="Server URL" 
+                placeholder={t('ui.server_url')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={(showEdit ? editingSource! : newSource).url}
                 onChange={e => showEdit ? setEditingSource({...editingSource!, url: e.target.value}) : setNewSource({...newSource, url: e.target.value})}
@@ -1132,8 +1134,8 @@ export function SourceManager({ user }: { user: User }) {
                     onChange={e => showEdit ? setEditingSource({...editingSource!, autoSyncEnabled: e.target.checked}) : setNewSource({...newSource, autoSyncEnabled: e.target.checked})}
                   />
                   <div className="flex-1">
-                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">Enable Auto-Sync</div>
-                    <div className="text-[10px] text-zinc-500">Periodically refresh channel names from upstream</div>
+                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">{t('ui.enable_auto_sync')}</div>
+                    <div className="text-[10px] text-zinc-500">{t('ui.periodically_refresh_channel_n')}</div>
                   </div>
                 </label>
 
@@ -1145,16 +1147,16 @@ export function SourceManager({ user }: { user: User }) {
                     onChange={e => showEdit ? setEditingSource({...editingSource!, useUpstreamEpg: e.target.checked}) : setNewSource({...newSource, useUpstreamEpg: e.target.checked})}
                   />
                   <div className="flex-1">
-                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">Use Upstream EPG</div>
-                    <div className="text-[10px] text-zinc-500">Include this source's EPG guide (<code className="text-zinc-400">/xmltv.php</code>) in the playlist EPG export</div>
+                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">{t('ui.use_upstream_epg')}</div>
+                    <div className="text-[10px] text-zinc-500">{t('ui.include_this_source_s_epg_guid')}<code className="text-zinc-400">{t('ui._xmltv_php')}</code>{t('ui.__in_the_playlist_epg_export')}</div>
                   </div>
                 </label>
 
                 {(showEdit ? editingSource! : newSource).autoSyncEnabled && (
                   <div className="space-y-2 pl-8 animate-in slide-in-from-top-2 duration-200">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Update Schedule (Cron Format)</label>
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.update_schedule__cron_format')}</label>
                     <input 
-                      placeholder="e.g. 0 2 * * * (Every day at 2:00 AM)" 
+                      placeholder={t('ui.e_g__0_2________every_day_at_2')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
                       value={(showEdit ? editingSource! : newSource).syncCron || ""}
                       onChange={e => showEdit ? setEditingSource({...editingSource!, syncCron: e.target.value}) : setNewSource({...newSource, syncCron: e.target.value})}
@@ -1212,7 +1214,7 @@ export function SourceManager({ user }: { user: User }) {
                   <History size={24} />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold">Sync History</h3>
+                  <h3 className="text-2xl font-bold">{t('ui.sync_history')}</h3>
                   <p className="text-sm text-zinc-500 font-medium italic">{selectedLogSource.name}</p>
                 </div>
               </div>
@@ -1229,7 +1231,7 @@ export function SourceManager({ user }: { user: User }) {
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Filter by channel name..."
+                  placeholder={t('ui.filter_by_channel_name')}
                   value={changelogSearch}
                   onChange={e => setChangelogSearch(e.target.value)}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-8 pr-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
@@ -1241,12 +1243,12 @@ export function SourceManager({ user }: { user: User }) {
               {loadingLogs ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-4">
                   <RefreshCw size={32} className="text-zinc-700 animate-spin" />
-                  <p className="text-sm text-zinc-500 font-bold uppercase tracking-tighter">Loading History...</p>
+                  <p className="text-sm text-zinc-500 font-bold uppercase tracking-tighter">{t('ui.loading_history')}</p>
                 </div>
               ) : changelogs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50 grayscale">
                   <Clock size={32} className="text-zinc-700" />
-                  <p className="text-sm text-zinc-500 font-bold tracking-tighter uppercase">No history found for this source</p>
+                  <p className="text-sm text-zinc-500 font-bold tracking-tighter uppercase">{t('ui.no_history_found_for_this_sour')}</p>
                 </div>
               ) : (
                 changelogs.map((log: any, idx: number) => {
@@ -1300,7 +1302,7 @@ export function SourceManager({ user }: { user: User }) {
                       )}
                       {filteredRemoved.length > 0 && (
                         <div className="space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Removed Items</p>
+                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">{t('ui.removed_items')}</p>
                           <div className="space-y-1">
                             {(showAllRemoved ? filteredRemoved : filteredRemoved.slice(0, 5)).map((item: any, i: number) => (
                               <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate line-through opacity-50">
@@ -1321,7 +1323,7 @@ export function SourceManager({ user }: { user: User }) {
                       )}
                       {(!log.added?.length && !log.removed?.length && log.renamed?.length > 0) && (
                         <div className="col-span-2 space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Renamed Items</p>
+                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">{t('ui.renamed_items')}</p>
                           <div className="text-[11px] text-zinc-500 italic">
                             {log.renamed.length} items were renamed upstream
                           </div>
@@ -1338,7 +1340,7 @@ export function SourceManager({ user }: { user: User }) {
               onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
               className="w-full py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm"
             >
-              Close History
+              {t('ui.close_history')}
             </button>
           </motion.div>
         </div>
@@ -1392,14 +1394,14 @@ export function EPGManager
       <header className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">{t('epg_providers')}</h2>
-          <p className="text-zinc-500">Manage your XMLTV guides</p>
+          <p className="text-zinc-500">{t('ui.manage_your_xmltv_guides')}</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
           className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all"
         >
           <Plus size={20} />
-          Add EPG
+          {t('ui.add_epg')}
         </button>
       </header>
 
@@ -1432,16 +1434,16 @@ export function EPGManager
             animate={{ scale: 1, opacity: 1 }}
             className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
           >
-            <h3 className="text-2xl font-bold">Add EPG Provider</h3>
+            <h3 className="text-2xl font-bold">{t('ui.add_epg_provider')}</h3>
             <div className="space-y-4">
               <input 
-                placeholder="EPG Name" 
+                placeholder={t('ui.epg_name')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={newEpg.name}
                 onChange={e => setNewEpg({...newEpg, name: e.target.value})}
               />
               <input 
-                placeholder="XMLTV URL (supports .gz)" 
+                placeholder={t('ui.xmltv_url__supports__gz')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={newEpg.url}
                 onChange={e => setNewEpg({...newEpg, url: e.target.value})}
@@ -1547,6 +1549,7 @@ export function Settings({ user }: { user: User }) {
   }, [logs]);
 
   async function saveQualityFormat() {
+  const { t } = useTranslation();
     setQualityFormatSaving(true);
     try {
       await api.settings.update({ qualityLabelFormat: qualityFormat });
@@ -1561,23 +1564,23 @@ export function Settings({ user }: { user: User }) {
     <div className="p-8 space-y-8 max-w-6xl mx-auto">
       <header>
         <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('settings_title')}</h2>
-        <p className="text-zinc-500">Global application configuration and monitoring</p>
+        <p className="text-zinc-500">{t('ui.global_application_configurati')}</p>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
             <div className="space-y-2">
-              <h3 className="text-xl font-bold">User Profile</h3>
-              <p className="text-sm text-zinc-500">Logged in as <span className="text-zinc-100 font-mono">{user.email}</span></p>
-              <p className="text-xs text-zinc-600">Role: <span className="text-zinc-400 font-mono uppercase tracking-tighter">{user.role}</span></p>
+              <h3 className="text-xl font-bold">{t('ui.user_profile')}</h3>
+              <p className="text-sm text-zinc-500">{t('ui.logged_in_as')} <span className="text-zinc-100 font-mono">{user.email}</span></p>
+              <p className="text-xs text-zinc-600">{t('ui.role')} <span className="text-zinc-400 font-mono uppercase tracking-tighter">{user.role}</span></p>
             </div>
             
             <div className="pt-6 border-t border-zinc-800 space-y-4">
               <div className="flex justify-between items-center opacity-50 grayscale cursor-not-allowed">
                 <div>
-                  <h4 className="font-bold text-sm">Advanced Analytics</h4>
-                  <p className="text-[10px] text-zinc-500">Coming soon</p>
+                  <h4 className="font-bold text-sm">{t('ui.advanced_analytics')}</h4>
+                  <p className="text-[10px] text-zinc-500">{t('ui.coming_soon')}</p>
                 </div>
                 <div className="w-10 h-5 bg-zinc-800 rounded-full relative">
                   <div className="absolute left-1 top-1 w-3 h-3 bg-zinc-600 rounded-full"></div>
@@ -1588,12 +1591,12 @@ export function Settings({ user }: { user: User }) {
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
             <div className="space-y-2">
-              <h3 className="text-xl font-bold">Quality Labels</h3>
-              <p className="text-sm text-zinc-500">Default format for quality labels in channel names</p>
+              <h3 className="text-xl font-bold">{t('ui.quality_labels')}</h3>
+              <p className="text-sm text-zinc-500">{t('ui.default_format_for_quality_lab')}</p>
             </div>
 
             <div className="space-y-3">
-              <label className="block text-sm font-medium text-zinc-400">Label Format</label>
+              <label className="block text-sm font-medium text-zinc-400">{t('ui.label_format')}</label>
               <div className="space-y-2">
                 <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
                 <textarea
@@ -1612,10 +1615,10 @@ export function Settings({ user }: { user: User }) {
                 </button>
               </div>
               <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
-                Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
-                Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
-                More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
-                Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
+                {t('ui.simple')} <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
+                {t('ui.smart__empty_when_normal')} <span className="font-mono">{'{surround}'}</span> {t('ui._5_1_mono')} <span className="font-mono">{'{premium}'}</span> {t('ui._dd__truehd')} <span className="font-mono">{'{hdr}'}</span> {t('ui._empty_if_sdr')}<br/>
+                {t('ui.more')} <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
+                {t('ui.conditional')} <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
               </p>
             </div>
           </div>
@@ -1623,11 +1626,11 @@ export function Settings({ user }: { user: User }) {
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-4 shadow-2xl shadow-red-500/5">
             <div className="flex items-center gap-2 text-red-500 mb-2">
               <Trash2 size={18} />
-              <h3 className="text-lg font-bold">Danger Zone</h3>
+              <h3 className="text-lg font-bold">{t('ui.danger_zone')}</h3>
             </div>
-            <p className="text-xs text-zinc-500 leading-relaxed">Careful: These actions permanently delete data and cannot be recovered.</p>
+            <p className="text-xs text-zinc-500 leading-relaxed">{t('ui.careful__these_actions_permane')}</p>
             <button className="w-full py-3 border border-red-500/30 text-red-500 rounded-xl font-bold hover:bg-red-500 hover:text-white transition-all text-sm">
-              Delete All Cache
+              {t('ui.delete_all_cache')}
             </button>
           </div>
         </div>
@@ -1636,11 +1639,11 @@ export function Settings({ user }: { user: User }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-zinc-400">
                <Activity size={18} className="text-emerald-500" />
-               <h3 className="font-bold">System Logs</h3>
+               <h3 className="font-bold">{t('ui.system_logs')}</h3>
             </div>
             <div className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Live Monitoring
+              {t('ui.live_monitoring')}
             </div>
           </div>
           
@@ -1653,7 +1656,7 @@ export function Settings({ user }: { user: User }) {
               {logs}
             </pre>
           </div>
-          <p className="text-[10px] text-zinc-600 italic">Showing last 200 activity lines</p>
+          <p className="text-[10px] text-zinc-600 italic">{t('ui.showing_last_200_activity_line')}</p>
         </div>
       </div>
     </div>
@@ -1689,7 +1692,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
             onClick={() => window.location.reload()}
             className="px-8 py-3 bg-zinc-100 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-500 hover:text-zinc-100 transition-all"
           >
-            Reload Application
+            Reload application
           </button>
         </div>
       );
@@ -2565,7 +2568,7 @@ export function PlaylistEditor({ user }: { user: User }) {
         <div className="p-8 flex items-center justify-center h-full">
           <div className="flex items-center gap-2 text-zinc-500 animate-pulse">
             <RefreshCw size={20} className="animate-spin" />
-            Loading playlist...
+            {t('ui.loading_playlist')}
           </div>
         </div>
       ) : (
@@ -2579,7 +2582,7 @@ export function PlaylistEditor({ user }: { user: User }) {
             animate={{ scale: 1, opacity: 1 }}
             className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
           >
-            <h3 className="text-2xl font-bold">Select Upstream Sources</h3>
+            <h3 className="text-2xl font-bold">{t('ui.select_upstream_sources')}</h3>
             <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
               {allSources.map(source => (
                 <label key={source.id} className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all">
@@ -2605,7 +2608,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                       <X size={12} className="text-zinc-950" />
                     </div>
                     <div>
-                      <span className="font-medium text-red-400">Deleted Source</span>
+                      <span className="font-medium text-red-400">{t('ui.deleted_source')}</span>
                       <p className="text-[10px] text-zinc-600 font-mono tracking-tighter truncate w-32">{missingId}</p>
                     </div>
                   </div>
@@ -2613,7 +2616,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onClick={() => toggleSource(missingId)}
                     className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
                   >
-                    Unlink
+                    {t('ui.unlink')}
                   </button>
                 </label>
               ))}
@@ -2621,7 +2624,7 @@ export function PlaylistEditor({ user }: { user: User }) {
 
             {playlist.sourceIds.length > 1 && (
               <div className="space-y-2 pt-4 border-t border-zinc-800">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">Processing Order</span>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">{t('ui.processing_order')}</span>
                 <div className="space-y-1.5">
                   {playlist.sourceIds.map((sid, idx) => {
                     const s = allSources.find(as => as.id === sid);
@@ -2674,12 +2677,12 @@ export function PlaylistEditor({ user }: { user: User }) {
               className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full space-y-6"
             >
               <div>
-                <h3 className="text-xl font-bold">Auto-match EPG</h3>
-                <p className="text-xs text-zinc-500 mt-1">Match channel names against selected EPG sources</p>
+                <h3 className="text-xl font-bold">{t('ui.auto_match_epg')}</h3>
+                <p className="text-xs text-zinc-500 mt-1">{t('ui.match_channel_names_against_se')}</p>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Sources</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.epg_sources')}</label>
                 {uniqueSources.map(source => (
                   <label key={source} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
                     <input
@@ -2706,8 +2709,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onChange={e => setAutoMatchRematch(e.target.checked)}
                   />
                   <div>
-                    <div className="text-sm font-medium">Re-match already matched channels</div>
-                    <div className="text-[10px] text-zinc-500">Overwrites existing EPG assignments</div>
+                    <div className="text-sm font-medium">{t('ui.re_match_already_matched_chann')}</div>
+                    <div className="text-[10px] text-zinc-500">{t('ui.overwrites_existing_epg_assign')}</div>
                   </div>
                 </label>
               </div>
@@ -2724,7 +2727,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   disabled={autoMatchEnabledSources.size === 0}
                   className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  Run
+                  {t('ui.run')}
                 </button>
               </div>
             </motion.div>
@@ -2773,10 +2776,10 @@ export function PlaylistEditor({ user }: { user: User }) {
           <button
             onClick={() => setShowGlobalSearch(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
-            title="Search (⌘K)"
+            title={t('ui.search___k')}
           >
             <Search size={14} />
-            Search
+            {t('ui.search')}
           </button>
           <button
             onClick={() => setShowSourceSelector(true)}
@@ -2791,7 +2794,7 @@ export function PlaylistEditor({ user }: { user: User }) {
             title={lastUpdated ? `Last updated: ${new Date(lastUpdated).toLocaleString()}` : 'Refresh'}
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {isCached && !loading && <span className="ml-[2px] text-[9px] uppercase font-bold text-zinc-500">Cached</span>}
+            {isCached && !loading && <span className="ml-[2px] text-[9px] uppercase font-bold text-zinc-500">{t('ui.cached')}</span>}
           </button>
         </div>
       </div>
@@ -2807,7 +2810,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                 <input
                   value={categorySearch}
                   onChange={e => setCategorySearch(e.target.value)}
-                  placeholder="Search categories..."
+                  placeholder={t('ui.search_categories')}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
                 />
               </div>
@@ -2815,7 +2818,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                 <button 
                   onClick={() => handleBatchMoveToTop('categories')}
                   className="px-3 py-2 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl text-[10px] font-bold hover:bg-emerald-500/20 transition-all shrink-0"
-                  title="Move selected to top"
+                  title={t('ui.move_selected_to_top')}
                 >
                   <ChevronRight className="-rotate-90" size={14} />
                 </button>
@@ -2875,15 +2878,15 @@ export function PlaylistEditor({ user }: { user: User }) {
                 <Database size={48} />
               </div>
               <div className="space-y-1">
-                <h3 className="text-xl font-bold">No sources linked</h3>
-                <p className="text-zinc-500 max-w-xs">Click the "Sources" button above to link an upstream provider to this playlist.</p>
+                <h3 className="text-xl font-bold">{t('ui.no_sources_linked')}</h3>
+                <p className="text-zinc-500 max-w-xs">{t('ui.click_the__sources__button_abo')}</p>
               </div>
               <button
                 onClick={() => setShowSourceSelector(true)}
                 className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all"
               >
                 <Database size={18} />
-                Link a Source
+                {t('ui.link_a_source')}
               </button>
             </div>
           ) : (
@@ -2902,10 +2905,10 @@ export function PlaylistEditor({ user }: { user: User }) {
                 <button
                   onClick={openAutoMatchModal}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors whitespace-nowrap"
-                  title="Auto-match EPG channels by name"
+                  title={t('ui.auto_match_epg_channels_by_nam')}
                 >
                   <Tv size={12} />
-                  Auto-match EPG
+                  {t('ui.auto_match_epg')}
                 </button>
                 <div className="text-xs text-zinc-500 font-mono italic">
                   {`${filteredStreams.length.toLocaleString()} of ${streams.length.toLocaleString()} items`}
@@ -2917,8 +2920,8 @@ export function PlaylistEditor({ user }: { user: User }) {
             <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-900/30 text-[10px] uppercase tracking-wider text-zinc-500 font-bold">
               <div className="w-8 shrink-0"></div>
               <div className="w-10 shrink-0 text-center">#</div>
-              <div className="flex-1 min-w-0">Name</div>
-              <div className="w-20 shrink-0 text-center">Actions</div>
+              <div className="flex-1 min-w-0">{t('ui.name')}</div>
+              <div className="w-20 shrink-0 text-center">{t('ui.actions')}</div>
             </div>
 
             {/* Stream list + Editor pane side by side */}
@@ -3114,10 +3117,10 @@ function BatchActionsSection({
       {/* Quality Label Toggle Section */}
       <div className="space-y-3 border-b border-zinc-800 pb-4">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
-          Quality Label
+          {t('ui.quality_label')}
         </div>
         {withMeta.length === 0 ? (
-          <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>
+          <p className="text-[10px] text-zinc-600 italic">{t('ui.no_scanned_channels_in_selecti')}</p>
         ) : (
           <div className="space-y-2">
             <p className="text-[10px] text-zinc-500">{withMeta.length} scanned channel{withMeta.length !== 1 ? 's' : ''}</p>
@@ -3134,7 +3137,7 @@ function BatchActionsSection({
                 disabled={allOff}
                 className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                Disable all
+                {t('ui.disable_all')}
               </button>
             </div>
           </div>
@@ -3144,7 +3147,7 @@ function BatchActionsSection({
       {/* Regex Rename Section */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Edit3 size={12} /> Regex Rename
+          <Edit3 size={12} /> {t('ui.regex_rename')}
         </div>
         <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
           {rules.map((rule, idx) => (
@@ -3153,18 +3156,18 @@ function BatchActionsSection({
                 value={rule.pattern}
                 onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
                 className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Pattern"
+                placeholder={t('ui.pattern')}
               />
               <input
                 value={rule.replacement}
                 onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
                 className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Replacement"
+                placeholder={t('ui.replacement')}
               />
               <button
                 onClick={() => setRules(rules.filter((_, i) => i !== idx))}
                 className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
-                title="Remove Rule"
+                title={t('ui.remove_rule')}
               >
                 <Trash2 size={14} />
               </button>
@@ -3175,13 +3178,13 @@ function BatchActionsSection({
               onClick={() => setRules([...rules, { pattern: '', replacement: '' }])}
               className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
             >
-              + Add Rule
+              {t('ui.__add_rule')}
             </button>
             <button
               onClick={() => onBatchApply(rules)}
               className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
             >
-              Apply Regex rename
+              {t('ui.apply_regex_rename')}
             </button>
           </div>
         </div>
@@ -3192,11 +3195,11 @@ function BatchActionsSection({
       {/* Quality Scan Section */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Search size={12} /> Quality Scan
+          <Search size={12} /> {t('ui.quality_scan')}
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-zinc-400">Concurrency</span>
+            <span className="text-xs text-zinc-400">{t('ui.concurrency')}</span>
             <select
               value={scanConcurrency}
               onChange={e => setScanConcurrency(Number(e.target.value))}
@@ -3214,7 +3217,7 @@ function BatchActionsSection({
               disabled={scanPolling}
               className="accent-emerald-500"
             />
-            Skip already scanned
+            {t('ui.skip_already_scanned')}
           </label>
           {scanJob && (
             <div className="space-y-1.5">
@@ -3256,7 +3259,7 @@ function BatchActionsSection({
       {/* Visibility Actions */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Eye size={12} /> Visibility
+          <Eye size={12} /> {t('ui.visibility')}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -3281,7 +3284,7 @@ function BatchActionsSection({
       {/* Move to Top */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <ArrowLeft className="rotate-90" size={12} /> Order
+          <ArrowLeft className="rotate-90" size={12} /> {t('ui.order')}
         </div>
         <button
           onClick={onBatchMoveToTop}
@@ -3319,6 +3322,7 @@ function CategoryPane({
   sortedStreams, mappings, playlist, onClose, onMappingChange,
   onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
 }: CategoryPaneProps) {
+  const { t } = useTranslation();
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
 
@@ -3405,7 +3409,7 @@ function CategoryPane({
               <span
                 className="text-sm text-white font-medium truncate cursor-pointer hover:text-zinc-300"
                 onClick={() => setEditingName(true)}
-                title="Click to rename"
+                title={t('ui.click_to_rename')}
               >
                 {displayName}
               </span>
@@ -3435,9 +3439,9 @@ function CategoryPane({
           )}
           {!isSingle && (
             <>
-              <button onClick={() => onBatchVisibility(false)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Show all</button>
-              <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
-              <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
+              <button onClick={() => onBatchVisibility(false)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">{t('ui.show_all')}</button>
+              <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">{t('ui.hide_all')}</button>
+              <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">{t('ui.move_to_top')}</button>
             </>
           )}
           <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1">
@@ -3462,7 +3466,7 @@ function CategoryPane({
             onBatchMoveToTop={onMoveStreamsToTop}
           />
         ) : (
-          <div className="py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
+          <div className="py-6 text-zinc-600 text-sm text-center">{t('ui.no_streams_in_selected_categor')}</div>
         )}
         </div>
       </div>
@@ -3471,7 +3475,6 @@ function CategoryPane({
 }
 
 function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle, allSources, playlistSourceIds }: { 
-
   cat: any; 
   mapping?: CategoryMapping;
   playlistId: string;
@@ -3483,6 +3486,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
   allSources: any[];
   playlistSourceIds: string[];
 }) {
+  const { t } = useTranslation();
   const catId = String(cat.category_id || cat.id);
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: catId });
   const [isEditing, setIsEditing] = useState(false);
@@ -3613,7 +3617,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
             </div>
             {mapping?.syncOnDemand && (
               <span className="text-[8px] text-emerald-500/60 uppercase font-black flex items-center gap-0.5 mt-0.5">
-                <Activity size={8} /> Dynamic Sync
+                <Activity size={8} /> {t('ui.dynamic_sync')}
               </span>
             )}
           </div>
@@ -3637,7 +3641,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         <button 
           onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
           className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-300"
-          title="Rename"
+          title={t('ui.rename')}
         >
           <Edit2 size={12} />
         </button>
@@ -3756,24 +3760,24 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
         </div>
       ) : selectedCategoryIds.size === 0 ? (
         <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm italic">
-          Please select a category to view streams
+          {t('ui.please_select_a_category_to_vi')}
         </div>
       ) : !filteredStreams.length ? (
         <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm italic">
-          No items found in this category
+          {t('ui.no_items_found_in_this_categor')}
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col bg-zinc-900/10">
           {/* Column headers */}
           <div className="flex items-center gap-2 px-2 py-1 border-b border-zinc-800 bg-zinc-950/60 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-zinc-600 select-none">
             <div className="w-6 shrink-0" />{/* drag handle */}
-            <div className="w-8 shrink-0 text-center">Logo</div>
+            <div className="w-8 shrink-0 text-center">{t('ui.logo')}</div>
             <div className="w-10 shrink-0 text-center">ID</div>
             <div className="flex-1 min-w-0">{t('common.name')}</div>
-            <div className="w-16 shrink-0 text-center">HDR</div>
-            <div className="w-20 shrink-0 text-center">Audio</div>
-            <div className="w-12 shrink-0 text-center">Res</div>
-            <div className="w-8 shrink-0 text-center">Vis</div>
+            <div className="w-16 shrink-0 text-center">{t('ui.hdr')}</div>
+            <div className="w-20 shrink-0 text-center">{t('ui.audio')}</div>
+            <div className="w-12 shrink-0 text-center">{t('ui.res')}</div>
+            <div className="w-8 shrink-0 text-center">{t('ui.vis')}</div>
           </div>
           <div className="flex-1 min-h-0">
           <AutoSizer renderProp={({ height, width }) => {
@@ -3955,6 +3959,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   allSources,
   playlistSourceIds
 }, ref) => {
+  const { t } = useTranslation();
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
 
@@ -4063,7 +4068,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
             ); })()}
           </div>
         ) : (
-          <span className="text-[10px] text-zinc-700 italic">no epg</span>
+          <span className="text-[10px] text-zinc-700 italic">{t('ui.no_epg')}</span>
         )}
       </div>
 
@@ -4168,6 +4173,7 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
   onNavigate: (type: 'live' | 'vod' | 'series', categoryId: string, streamId: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<{ streamId: string; name: string; type: 'live'|'vod'|'series'; categoryId: string; categoryName: string }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -4236,19 +4242,19 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
             value={query}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="Search channels, movies, series…"
+            placeholder={t('ui.search_channels__movies__serie')}
             className="flex-1 bg-transparent text-white placeholder-zinc-500 outline-none text-sm"
           />
           {loading && (
             <div className="w-3.5 h-3.5 border-2 border-zinc-600 border-t-zinc-300 rounded-full animate-spin shrink-0" />
           )}
-          <kbd className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5 shrink-0">Esc</kbd>
+          <kbd className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1.5 py-0.5 shrink-0">{t('ui.esc')}</kbd>
         </div>
 
         {/* Results */}
         <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
           {query.trim().length < 2 && (
-            <p className="px-4 py-10 text-center text-zinc-500 text-sm">Type at least 2 characters…</p>
+            <p className="px-4 py-10 text-center text-zinc-500 text-sm">{t('ui.type_at_least_2_characters')}</p>
           )}
           {query.trim().length >= 2 && !loading && !error && results.length === 0 && (
             <p className="px-4 py-10 text-center text-zinc-500 text-sm">No results for &ldquo;{query}&rdquo;</p>
@@ -4285,6 +4291,7 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
 }
 
 function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; seriesId: string }) {
+  const { t } = useTranslation();
   const [info, setInfo] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -4326,7 +4333,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
         className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-400 hover:text-zinc-100 transition-all"
       >
         <LayoutList size={13} />
-        Show Seasons & Episodes
+        {t('ui.show_seasons___episodes')}
       </button>
     );
   }
@@ -4334,7 +4341,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 py-4 text-xs text-zinc-600">
-        <RefreshCw size={13} className="animate-spin" /> Loading seasons…
+        <RefreshCw size={13} className="animate-spin" /> {t('ui.loading_seasons')}
       </div>
     );
   }
@@ -4343,7 +4350,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
     return (
       <div className="flex items-center justify-between py-2 text-xs text-red-400">
         <span>{error}</span>
-        <button onClick={load} className="underline">Retry</button>
+        <button onClick={load} className="underline">{t('ui.retry')}</button>
       </div>
     );
   }
@@ -4352,7 +4359,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
   const seasonKeys = Object.keys(episodes).sort((a, b) => parseInt(a) - parseInt(b));
 
   if (!seasonKeys.length) {
-    return <p className="text-[10px] text-zinc-600 italic">No episode data available.</p>;
+    return <p className="text-[10px] text-zinc-600 italic">{t('ui.no_episode_data_available')}</p>;
   }
 
   return (
@@ -4597,7 +4604,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           {!isMulti && (
             <>
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Display Name</label>
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.display_name')}</label>
                 <input
                   value={customName}
                   onChange={e => setCustomName(e.target.value)}
@@ -4614,14 +4621,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
                 >
                   <Download size={13} />
-                  Download
+                  {t('ui.download')}
                 </a>
               )}
 
               {/* Detected Quality */}
               <div className="space-y-2 border border-zinc-800 rounded-xl p-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.detected_quality')}</label>
                   <button
                     onClick={async () => {
                       const streamId = stream._rawId || stream.stream_id || mapping?.originalId || String(stream.series_id || stream._uniqueId);
@@ -4684,7 +4691,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     )}
                   </div>
                 ) : (
-                  <p className="text-[10px] text-zinc-600 italic">Not scanned yet</p>
+                  <p className="text-[10px] text-zinc-600 italic">{t('ui.not_scanned_yet')}</p>
                 )}
 
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -4699,7 +4706,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     disabled={!mapping?.detectedMeta?.resolution}
                     className="rounded accent-emerald-500"
                   />
-                  <span className="text-xs text-zinc-400">Show quality in name</span>
+                  <span className="text-xs text-zinc-400">{t('ui.show_quality_in_name')}</span>
                 </label>
 
                 {mapping?.useDetectedQuality && detectedMeta?.resolution && (
@@ -4721,7 +4728,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               <input
                 value={customIcon}
                 onChange={e => setCustomIcon(e.target.value)}
-                placeholder="https://..."
+                placeholder={t('ui.https')}
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
               />
               <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
@@ -4734,7 +4741,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             </div>
             {!isMulti && originalIcon && customIcon && (
               <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
-                Reset to default
+                {t('ui.reset_to_default')}
               </button>
             )}
           </div>}
@@ -4742,14 +4749,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           {/* Quality label toggle — multi-select only */}
           {isMulti && allMappings && selectedStreamIds && (
             <div className="space-y-2">
-              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label</label>
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.quality_label')}</label>
               {(() => {
                 const scanned = Array.from(selectedStreamIds).filter(id => {
                   const s = allStreams?.find(s => s._uniqueId === id);
                   const rawId = s?._rawId || id;
                   return allMappings.find(m => m.originalId === rawId && m.type === type)?.detectedMeta?.resolution;
                 });
-                if (!scanned.length) return <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>;
+                if (!scanned.length) return <p className="text-[10px] text-zinc-600 italic">{t('ui.no_scanned_channels_in_selecti')}</p>;
                 return (
                   <div className="flex gap-2">
                     <button
@@ -4768,7 +4775,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       }}
                       className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all"
                     >
-                      Disable
+                      {t('ui.disable')}
                     </button>
                   </div>
                 );
@@ -4779,16 +4786,16 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           {/* EPG Channel — live only */}
           {type === 'live' && <div className="space-y-1.5" ref={epgRef}>
             <div className="flex items-center justify-between">
-              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Channel</label>
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.epg_channel')}</label>
               <div className="flex items-center gap-2">
                 {epgChannels.length > 0 && (
-                  <button onClick={autoMatch} className="text-[10px] text-emerald-500 hover:underline font-bold" title="Auto-match by name">
-                    Auto-match
+                  <button onClick={autoMatch} className="text-[10px] text-emerald-500 hover:underline font-bold" title={t('ui.auto_match_by_name')}>
+                    {t('ui.auto_match')}
                   </button>
                 )}
                 {epgMapping && (
                   <button onClick={() => { setEpgMapping(''); setEpgSearch(''); }} className="text-[10px] text-zinc-500 hover:text-red-400">
-                    Clear
+                    {t('ui.clear')}
                   </button>
                 )}
               </div>
@@ -4818,7 +4825,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       autoFocus
                       value={epgSearch}
                       onChange={e => setEpgSearch(e.target.value)}
-                      placeholder="Search channels..."
+                      placeholder={t('ui.search_channels')}
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:border-emerald-500 outline-none"
                       onClick={e => e.stopPropagation()}
                     />
@@ -4826,10 +4833,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   <div className="max-h-64 overflow-y-auto custom-scrollbar">
                     {epgChannels.length === 0 ? (
                       <div className="px-4 py-6 text-center text-xs text-zinc-600">
-                        No EPG sources configured. Enable "Use Upstream EPG" on a source or add custom EPG sources.
+                        {t('ui.no_epg_sources_configured__ena')}
                       </div>
                     ) : filteredEpg.length === 0 ? (
-                      <div className="px-4 py-3 text-xs text-zinc-600">No channels match</div>
+                      <div className="px-4 py-3 text-xs text-zinc-600">{t('ui.no_channels_match')}</div>
                     ) : filteredEpg.map(ch => (
                       <button
                         key={ch.id}
@@ -4858,14 +4865,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               <p className="text-[10px] text-zinc-600 font-mono truncate">ID: {epgMapping}</p>
             )}
             {!epgMapping && originalEpg && (
-              <p className="text-[10px] text-zinc-600">Original: <span className="italic font-mono">{originalEpg}</span></p>
+              <p className="text-[10px] text-zinc-600">{t('ui.original')} <span className="italic font-mono">{originalEpg}</span></p>
             )}
           </div>}
 
           {/* Seasons & Episodes — series only */}
           {type === 'series' && !isMulti && (
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Seasons & Episodes</label>
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">{t('ui.seasons___episodes')}</label>
               <SeriesSeasonsBrowser
                 playlistId={playlistId}
                 seriesId={stream._rawId || String(stream.series_id || stream._uniqueId)}
@@ -4879,7 +4886,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               className="w-full flex items-center justify-between px-3 py-2 text-[10px] uppercase font-bold text-zinc-600 tracking-wider hover:bg-zinc-800/50 transition-colors"
               onClick={() => setShowTechInfo(v => !v)}
             >
-              <span>Technical Info</span>
+              <span>{t('ui.technical_info')}</span>
               <ChevronDown size={12} className={`transition-transform ${showTechInfo ? 'rotate-180' : ''}`} />
             </button>
             {showTechInfo && (
@@ -4895,7 +4902,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 {source && (
                   <div className="space-y-2">
                     <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
+                      <label className="text-[9px] uppercase font-bold text-zinc-600">{t('ui.upstream_url')}</label>
                       <div className="flex gap-1.5">
                         <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
                           {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{source.username}/{source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
@@ -4907,7 +4914,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                     </div>
                     {playlist && (
                       <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-zinc-600">Proxy URL</label>
+                        <label className="text-[9px] uppercase font-bold text-zinc-600">{t('ui.proxy_url')}</label>
                         <div className="flex gap-1.5">
                           <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-emerald-500/70 break-all font-mono border border-emerald-500/10">
                             {window.location.origin}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{playlist.username}/{playlist.password}/{stream.stream_id || stream.series_id}{type === 'live' ? '.ts' : '.mp4'}
@@ -5005,7 +5012,7 @@ export function UserManager({ user }: { user: User }) {
     <div className="p-8 space-y-8 max-w-5xl mx-auto">
       <header>
         <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('user_management')}</h2>
-        <p className="text-zinc-500">Manage system accounts and their associated data</p>
+        <p className="text-zinc-500">{t('ui.manage_system_accounts_and_the')}</p>
       </header>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
@@ -5046,13 +5053,13 @@ export function UserManager({ user }: { user: User }) {
                     <button 
                       onClick={() => handleDelete(u.id, u.email)}
                       className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
-                      title="Delete User"
+                      title={t('ui.delete_user')}
                     >
                       <Trash2 size={18} />
                     </button>
                   )}
                   {u.id === user.id && (
-                    <span className="text-[10px] text-zinc-600 uppercase font-black italic">Current User</span>
+                    <span className="text-[10px] text-zinc-600 uppercase font-black italic">{t('ui.current_user')}</span>
                   )}
                 </td>
               </tr>

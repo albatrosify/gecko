@@ -34,17 +34,17 @@ export default function LanguageSelector() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 p-2 w-full text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 rounded-xl transition-all"
+        className="flex items-center justify-center gap-2 p-2 w-full text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl transition-all"
         title="Language"
       >
         <Globe size={18} className="shrink-0" />
-        <span className="text-sm font-medium opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300">
+        <span className="text-sm font-medium transition-opacity duration-300">
           {currentLang.label}
         </span>
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden z-50">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden z-50">
           <div className="py-1">
             {LANGUAGES.map((lang) => (
               <button
