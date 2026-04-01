@@ -4485,6 +4485,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   const originalIcon = stream.stream_icon || stream.cover || "";
   const originalEpg = stream.epg_channel_id || "";
 
+  const effectiveIcon = customIcon || selectedChannel?.icon || mapping?.epgIcon || originalIcon;
+
   const handleSave = async () => {
     setLoading(true);
     try {
@@ -4561,8 +4563,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           </div>
         ) : (
           <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-            {(customIcon || originalIcon) ? (
-              <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
+            {effectiveIcon ? (
+              <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
             ) : (
               <Tv size={16} className="text-zinc-700" />
             )}
@@ -4716,14 +4718,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
               />
               <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-                {(customIcon || originalIcon) ? (
-                  <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
+                {effectiveIcon ? (
+                  <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
                 ) : (
                   <Tv size={14} className="text-zinc-700" />
                 )}
               </div>
             </div>
-            {!isMulti && originalIcon && customIcon && (
+            {!isMulti && customIcon && (
               <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
                 Reset to default
               </button>
