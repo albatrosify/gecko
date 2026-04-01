@@ -1,0 +1,64 @@
+{
+  "translation": {
+    "loading": "OPEN IPTV EDITOR",
+    "sidebar": {
+      "title": "GECKO",
+      "dashboard": "Panel de control",
+      "custom_playlists": "Listas personalizadas",
+      "upstream_sources": "Fuentes originales",
+      "epg_providers": "Proveedores EPG",
+      "settings": "Ajustes",
+      "user_management": "Gestión de usuarios",
+      "sign_out": "Cerrar sesión"
+    },
+    "network_info": {
+      "title": "Info de red",
+      "proxy_speed": "Velocidad Proxy",
+      "mbps": "Mbps",
+      "streams": "Transmisiones",
+      "usage": "Uso",
+      "gb": "GB"
+    },
+    "auth": {
+      "subtitle": "Agregador de listas multipropósito",
+      "email": "Correo electrónico",
+      "password": "Contraseña",
+      "please_wait": "Por favor espera...",
+      "create_account": "Crear cuenta",
+      "sign_in": "Iniciar sesión",
+      "switch_to_signin": "¿Ya tienes una cuenta? Iniciar sesión",
+      "switch_to_register": "¿No tienes cuenta? Regístrate",
+      "footer_text": "Gestiona tus listas IPTV con facilidad.",
+      "auth_failed": "Error de autenticación"
+    },
+    "language": "Idioma",
+    "overview": "Resumen",
+    "custom_playlists": "Listas personalizadas",
+    "upstream_sources": "Fuentes originales",
+    "epg_providers": "Proveedores EPG",
+    "user_management": "Gestión de usuarios",
+    "settings_title": "Ajustes",
+    "loading_dashboard": "Cargando Panel...",
+    "loading_users": "Cargando usuarios..."
+  },
+  "common": {
+    "save": "Guardar",
+    "saveChanges": "Guardar Cambios",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "name": "Nombre",
+    "actions": "Acciones",
+    "settings": "Ajustes",
+    "role": "Rol",
+    "username": "Nombre de usuario",
+    "password": "Contraseña",
+    "saving": "Guardando...",
+    "refresh": "Actualizar",
+    "yes": "Sí",
+    "no": "No"
+  },
+  "userEmail": "Correo de usuario",
+  "playlists": "Listas",
+  "current": "Actual",
+  "addedItems": "Elementos añadidos"
+}

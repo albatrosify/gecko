@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
 import { 
@@ -251,6 +252,7 @@ function VpnStatusBar() {
 }
 
 export function Dashboard() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
@@ -267,7 +269,7 @@ export function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!stats) return <div className="p-8"><div className="animate-pulse text-zinc-500">Loading Dashboard...</div></div>;
+  if (!stats) return <div className="p-8"><div className="animate-pulse text-zinc-500">{t('loading_dashboard')}</div></div>;
 
   const mbps = (stats.currentBps / 1000000).toFixed(2);
   const historyMbps = (stats.history || []).map((h: any) => h.bps / 1000000);
@@ -275,7 +277,7 @@ export function Dashboard() {
   return (
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">Overview</h2>
+        <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('overview')}</h2>
         <p className="text-zinc-500">Real-time system performance and activity</p>
       </header>
 
@@ -309,7 +311,7 @@ export function Dashboard() {
             </div>
             <div className="text-right">
               <div className="text-2xl font-black text-emerald-500 tabular-nums">{mbps} Mbps</div>
-              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Current</div>
+              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">{t('current')}</div>
             </div>
           </div>
           <div className="flex-1 min-h-[200px] flex items-end text-emerald-500/50">
@@ -394,6 +396,7 @@ export function Dashboard() {
 }
 
 export function PlaylistManager({ user }: { user: User }) {
+  const { t } = useTranslation();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newPlaylist, setNewPlaylist] = useState({ name: '', username: '', password: '', directStreams: false });
@@ -488,7 +491,7 @@ export function PlaylistManager({ user }: { user: User }) {
     <div className="p-8 space-y-8">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-white">Custom Playlists</h2>
+          <h2 className="text-3xl font-bold tracking-tight text-white">{t('custom_playlists')}</h2>
           <p className="text-zinc-500">Manage and configure your IPTV playlists</p>
         </div>
         <button 
@@ -552,7 +555,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={() => setShowAddModal(false)}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={handleAdd}
@@ -639,7 +642,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={() => setShowCloneModal(false)}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={handleClone}
@@ -742,7 +745,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={handleUpdate}
@@ -864,6 +867,7 @@ export function PlaylistManager({ user }: { user: User }) {
 }
 
 export function SourceManager({ user }: { user: User }) {
+  const { t } = useTranslation();
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -981,7 +985,7 @@ export function SourceManager({ user }: { user: User }) {
     <div className="p-8 space-y-8">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Upstream Sources</h2>
+          <h2 className="text-3xl font-bold tracking-tight">{t('upstream_sources')}</h2>
           <p className="text-zinc-500">Connect your IPTV providers</p>
         </div>
         <button 
@@ -1103,13 +1107,13 @@ export function SourceManager({ user }: { user: User }) {
               {(showEdit ? editingSource! : newSource).type === 'xtream' && (
                 <div className="grid grid-cols-2 gap-4">
                   <input 
-                    placeholder="Username" 
+                    placeholder={t('common.username')}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                     value={(showEdit ? editingSource! : newSource).username}
                     onChange={e => showEdit ? setEditingSource({...editingSource!, username: e.target.value}) : setNewSource({...newSource, username: e.target.value})}
                   />
                   <input 
-                    placeholder="Password" 
+                    placeholder={t('common.password')}
                     type="password"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                     value={(showEdit ? editingSource! : newSource).password}
@@ -1183,13 +1187,13 @@ export function SourceManager({ user }: { user: User }) {
                 }}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={showEdit ? handleUpdate : handleAdd}
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
               >
-                {showEdit ? 'Save Changes' : 'Add Source'}
+                {showEdit ? t('common.save') : t('common.save')}
               </button>
             </div>
           </motion.div>
@@ -1275,7 +1279,7 @@ export function SourceManager({ user }: { user: User }) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {filteredAdded.length > 0 && (
                         <div className="space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Added Items</p>
+                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">{t('addedItems')}</p>
                           <div className="space-y-1">
                             {(showAllAdded ? filteredAdded : filteredAdded.slice(0, 5)).map((item: any, i: number) => (
                               <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate">
@@ -1345,6 +1349,7 @@ export function SourceManager({ user }: { user: User }) {
 
 export function EPGManager
 ({ user }: { user: User }) {
+  const { t } = useTranslation();
   const [epgs, setEpgs] = useState<EPGSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [newEpg, setNewEpg] = useState({ name: '', url: '' });
@@ -1386,7 +1391,7 @@ export function EPGManager
     <div className="p-8 space-y-8">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">EPG Providers</h2>
+          <h2 className="text-3xl font-bold tracking-tight">{t('epg_providers')}</h2>
           <p className="text-zinc-500">Manage your XMLTV guides</p>
         </div>
         <button 
@@ -1447,13 +1452,13 @@ export function EPGManager
                 onClick={() => setShowAdd(false)}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={handleAdd}
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
               >
-                Save EPG
+                {t('common.save')}
               </button>
             </div>
           </motion.div>
@@ -1505,6 +1510,7 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
 }
 
 export function Settings({ user }: { user: User }) {
+  const { t } = useTranslation();
   const [logs, setLogs] = useState<string>('Loading logs...');
   const logRef = useRef<HTMLPreElement>(null);
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
@@ -1554,7 +1560,7 @@ export function Settings({ user }: { user: User }) {
   return (
     <div className="p-8 space-y-8 max-w-6xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">Settings</h2>
+        <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('settings_title')}</h2>
         <p className="text-zinc-500">Global application configuration and monitoring</p>
       </header>
 
@@ -1602,7 +1608,7 @@ export function Settings({ user }: { user: User }) {
                   disabled={qualityFormatSaving}
                   className="px-6 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {qualityFormatSaving ? 'Saving...' : 'Save'}
+                  {qualityFormatSaving ? t('common.loading') : t('common.save')}
                 </button>
               </div>
               <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
@@ -1693,6 +1699,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 }
 
 export function PlaylistEditor({ user }: { user: User }) {
+  const { t } = useTranslation();
   const { id } = useParams();
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [sources, setSources] = useState<UpstreamSource[]>([]);
@@ -2710,7 +2717,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onClick={() => setShowAutoMatchModal(false)}
                   className="flex-1 py-2.5 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all"
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleAutoMatchEpg}
@@ -3022,6 +3029,7 @@ function BatchActionsSection({
   onBatchVisibility,
   onBatchMoveToTop,
 }: BatchActionsSectionProps) {
+  const { t } = useTranslation();
   const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
 
   // Quality scan state
@@ -3237,7 +3245,7 @@ function BatchActionsSection({
               onClick={cancelScan}
               className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           )}
         </div>
@@ -3680,7 +3688,6 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
 }
 
 function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
-
   streams: any[];
   selectedCategoryIds: Set<string>;
   activeTab: string;
@@ -3701,6 +3708,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onScrolled?: () => void;
 
 }) {
+  const { t } = useTranslation();
   const filteredStreams = streams;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -3761,7 +3769,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             <div className="w-6 shrink-0" />{/* drag handle */}
             <div className="w-8 shrink-0 text-center">Logo</div>
             <div className="w-10 shrink-0 text-center">ID</div>
-            <div className="flex-1 min-w-0">Name</div>
+            <div className="flex-1 min-w-0">{t('common.name')}</div>
             <div className="w-16 shrink-0 text-center">HDR</div>
             <div className="w-20 shrink-0 text-center">Audio</div>
             <div className="w-12 shrink-0 text-center">Res</div>
@@ -4404,6 +4412,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   onBatchVisibility?: (hidden: boolean) => void;
   onBatchMoveToTop?: () => void;
 }) {
+  const { t } = useTranslation();
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
   const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || "");
@@ -4940,14 +4949,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           onClick={onClose}
           className="flex-1 py-2.5 bg-zinc-800 text-zinc-400 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           onClick={handleSave}
           disabled={loading}
           className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm disabled:opacity-50"
         >
-          {loading ? "Saving..." : "Save"}
+          {loading ? t('common.loading') : t('common.save')}
         </button>
       </div>
     </motion.aside>
@@ -4955,6 +4964,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 }
 
 export function UserManager({ user }: { user: User }) {
+  const { t } = useTranslation();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -4988,13 +4998,13 @@ export function UserManager({ user }: { user: User }) {
   };
 
   if (loading && users.length === 0) {
-    return <div className="p-8 animate-pulse text-zinc-500">Loading users...</div>;
+    return <div className="p-8 animate-pulse text-zinc-500">{t('loading_users')}</div>;
   }
 
   return (
     <div className="p-8 space-y-8 max-w-5xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">User Management</h2>
+        <h2 className="text-3xl font-black tracking-tight text-zinc-100">{t('user_management')}</h2>
         <p className="text-zinc-500">Manage system accounts and their associated data</p>
       </header>
 
@@ -5002,10 +5012,10 @@ export function UserManager({ user }: { user: User }) {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-zinc-800 bg-zinc-900/50">
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">User Email</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Playlists</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Role</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Actions</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">{t('userEmail')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">{t('playlists')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">{t('common.role')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">{t('common.actions')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800">

@@ -4,14 +4,17 @@ import api, { isLoggedIn, clearToken } from './api';
 import { User as AppUser } from './types';
 import { Layout, Dashboard, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
 import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Wifi } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import Logo from './assets/logo.png';
 
 import pkg from '../package.json';
+import LanguageSelector from './components/LanguageSelector';
 
 // Get commit hash from environment variable or fallback to 'unknown'
 const COMMIT_HASH = import.meta.env.VITE_APP_COMMIT_HASH || 'unknown';
 
 export default function App() {
+  const { t } = useTranslation();
   const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +40,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-zinc-950 text-zinc-100">
-        <div className="animate-pulse text-2xl font-light tracking-widest">OPEN IPTV EDITOR</div>
+        <div className="animate-pulse text-2xl font-light tracking-widest">{t('loading')}</div>
       </div>
     );
   }
@@ -70,18 +73,18 @@ export default function App() {
               </div>
               
               <nav className="flex-1 p-3 space-y-2 mt-2">
-                <NavLink to="/" icon={<LayoutGrid size={20} />} label="Dashboard" />
-                <NavLink to="/playlists" icon={<Library size={20} />} label="Custom Playlists" />
-                <NavLink to="/sources" icon={<Database size={20} />} label="Upstream Sources" />
-                <NavLink to="/epgs" icon={<Tv size={20} />} label="EPG Providers" />
-                <NavLink to="/settings" icon={<SettingsIcon size={20} />} label="Settings" />
+                <NavLink to="/" icon={<LayoutGrid size={20} />} label={t('sidebar.dashboard')} />
+                <NavLink to="/playlists" icon={<Library size={20} />} label={t('sidebar.custom_playlists')} />
+                <NavLink to="/sources" icon={<Database size={20} />} label={t('sidebar.upstream_sources')} />
+                <NavLink to="/epgs" icon={<Tv size={20} />} label={t('sidebar.epg_providers')} />
+                <NavLink to="/settings" icon={<SettingsIcon size={20} />} label={t('sidebar.settings')} />
                 
                 {user.role === 'admin' && (
                   <>
                     <div className="pt-4 pb-2 px-3">
                       <div className="h-px bg-zinc-800 w-full group-hover/sidebar:opacity-100 opacity-0 transition-opacity" />
                     </div>
-                    <NavLink to="/users" icon={<Users size={20} />} label="User Management" />
+                    <NavLink to="/users" icon={<Users size={20} />} label={t('sidebar.user_management')} />
                   </>
                 )}
               </nav>
@@ -91,13 +94,14 @@ export default function App() {
               </div>
 
               <div className="p-3 border-t border-zinc-800">
-                <div className="px-2 mb-2 text-xs text-zinc-500 truncate opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300">{user.email}</div>
+                <LanguageSelector />
+                <div className="px-2 mb-2 mt-2 text-xs text-zinc-500 truncate opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300">{user.email}</div>
                 <button 
                   onClick={handleLogout}
                   className="flex items-center gap-3 w-full p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 rounded-xl transition-all overflow-hidden"
                 >
                   <LogOut size={20} className="shrink-0" />
-                  <span className="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300 whitespace-nowrap text-sm font-medium">Sign Out</span>
+                  <span className="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-300 whitespace-nowrap text-sm font-medium">{t('sidebar.sign_out')}</span>
                 </button>
               </div>
             </div>
@@ -123,6 +127,7 @@ export default function App() {
 }
 
 function ProxyBandwidthSidebar() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
@@ -153,23 +158,23 @@ function ProxyBandwidthSidebar() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Activity size={14} className="text-emerald-500" />
-        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Network Info</span>
+        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('network_info.title')}</span>
       </div>
       
       <div className="space-y-3">
         <div>
-          <div className="text-[10px] text-zinc-600 font-bold uppercase tracking-tight">Proxy Speed</div>
-          <div className="text-lg font-black text-zinc-100 tabular-nums">{mbps} <span className="text-[10px] text-emerald-500">Mbps</span></div>
+          <div className="text-[10px] text-zinc-600 font-bold uppercase tracking-tight">{t('network_info.proxy_speed')}</div>
+          <div className="text-lg font-black text-zinc-100 tabular-nums">{mbps} <span className="text-[10px] text-emerald-500">{t('network_info.mbps')}</span></div>
         </div>
         
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">Streams</div>
+            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">{t('network_info.streams')}</div>
             <div className="text-sm font-bold text-zinc-200">{stats.activeStreams}</div>
           </div>
           <div>
-            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">Usage</div>
-            <div className="text-sm font-bold text-zinc-200">{totalGB} <span className="text-[8px] text-zinc-500">GB</span></div>
+            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">{t('network_info.usage')}</div>
+            <div className="text-sm font-bold text-zinc-200">{totalGB} <span className="text-[8px] text-zinc-500">{t('network_info.gb')}</span></div>
           </div>
         </div>
       </div>
@@ -190,6 +195,7 @@ function NavLink({ to, icon, label }: { to: string; icon: React.ReactNode; label
 }
 
 function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
+  const { t } = useTranslation();
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -219,7 +225,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           <img src={Logo} alt="Gecko" className="w-24 h-24" />
           <div className="space-y-1">
             <h1 className="text-5xl font-black tracking-tighter">GECKO</h1>
-            <p className="text-zinc-500 text-sm italic">Multi-Source Playlist Aggregator</p>
+            <p className="text-zinc-500 text-sm italic">{t('auth.subtitle')}</p>
           </div>
         </div>
 
@@ -227,7 +233,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           <div>
             <input
               type="email"
-              placeholder="Email"
+              placeholder={t('auth.email')}
               value={email}
               onChange={e => setEmail(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
@@ -237,7 +243,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           <div>
             <input
               type="password"
-              placeholder="Password"
+              placeholder={t('auth.password')}
               value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
@@ -247,7 +253,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           </div>
 
           {error && (
-            <p className="text-red-500 text-sm text-center">{error}</p>
+            <p className="text-red-500 text-sm text-center">{t('auth.auth_failed')}</p>
           )}
 
           <button
@@ -256,11 +262,11 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
             className="w-full flex items-center justify-center gap-3 p-4 bg-zinc-100 text-zinc-950 rounded-2xl font-bold hover:bg-emerald-500 hover:text-zinc-100 transition-all disabled:opacity-50"
           >
             {loading ? (
-              <span className="animate-pulse">Please wait...</span>
+              <span className="animate-pulse">{t('auth.please_wait')}</span>
             ) : (
               <>
                 {isRegistering ? <UserPlus size={20} /> : <LogIn size={20} />}
-                {isRegistering ? 'Create Account' : 'Sign In'}
+                {isRegistering ? t('auth.create_account') : t('auth.sign_in')}
               </>
             )}
           </button>
@@ -270,12 +276,16 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           onClick={() => { setIsRegistering(!isRegistering); setError(''); }}
           className="text-sm text-zinc-500 hover:text-emerald-500 transition-colors"
         >
-          {isRegistering ? 'Already have an account? Sign in' : "Don't have an account? Register"}
+          {isRegistering ? t('auth.switch_to_signin') : t('auth.switch_to_register')}
         </button>
 
         <p className="text-xs text-zinc-600">
-          Manage your IPTV playlists with ease.
+          {t('auth.footer_text')}
         </p>
+
+        <div className="pt-4 flex justify-center">
+          <LanguageSelector />
+        </div>
       </div>
     </div>
   );
