@@ -44,9 +44,12 @@ export function createQualityScanRouter() {
     if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
     const sourceIds: string[] = playlistDoc.sourceIds || [];
-    const sourceDocs = await Promise.all(
-      sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-    );
+
+    const sourceIdsObj = sourceIds.map(toId);
+    const fetchedDocs = await db.collection('sources').find({ _id: { $in: sourceIdsObj } }).toArray();
+    const docsMap = new Map(fetchedDocs.map((doc: any) => [doc._id.toString(), doc]));
+    const sourceDocs = sourceIds.map(sid => docsMap.get(sid) || null);
+
     const validSources = sourceDocs.filter(Boolean);
     if (!validSources.length) return res.status(400).json({ error: 'No sources found for playlist' });
 
