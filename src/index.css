@@ -4,3 +4,31 @@ body { @apply select-none; }
 input, textarea {
   @apply select-text;
 }
+
+@utility custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    background: #09090b; /* zinc-950 */
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #27272a; /* zinc-800 */
+    border-radius: 10px;
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: #3f3f46; /* zinc-700 */
+  }
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: #27272a #09090b;
+}
+
+@utility scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

@@ -657,10 +657,10 @@ export function PlaylistManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full flex flex-col max-h-[90vh]"
           >
-            <h3 className="text-2xl font-bold">Edit Playlist Settings</h3>
-            <div className="space-y-4">
+            <h3 className="text-2xl font-bold shrink-0 mb-6">Edit Playlist Settings</h3>
+            <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-2">
               <div className="space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Playlist Name</label>
                 <input 
@@ -696,7 +696,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 {availableEpgs.length === 0 ? (
                   <p className="text-xs text-zinc-600 italic">No EPG sources configured. Add them in the EPG Manager.</p>
                 ) : (
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                  <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
                     {availableEpgs.map(epg => (
                       <label key={epg.id} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
                         <input
@@ -737,7 +737,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 </p>
               </div>
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-4 shrink-0 mt-6">
               <button 
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
                 className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
@@ -2815,7 +2815,7 @@ export function PlaylistEditor({ user }: { user: User }) {
               )}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
             <DndContext 
               sensors={sensors} 
               collisionDetection={closestCenter} 
@@ -3323,9 +3323,9 @@ function CategoryPane({
 
   // Sync nameVal when selection changes
   useEffect(() => {
-    setNameVal(mapping?.customName || category?.name || '');
+    setNameVal(mapping?.customName || category?.category_name || category?.name || '');
     setEditingName(false);
-  }, [catId, mapping?.customName, category?.name]);
+  }, [catId, mapping?.customName, category?.category_name, category?.name]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -3339,7 +3339,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { customName: trimmed });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: trimmed, order: 0, hidden: false });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: trimmed, order: 0, hidden: false });
     }
     setEditingName(false);
     onMappingChange();
@@ -3351,7 +3351,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { hidden: newHidden });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: newHidden });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: newHidden });
     }
     onMappingChange();
   };
@@ -3362,7 +3362,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.name || '', customName: category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
     }
     onMappingChange();
   };
@@ -3375,7 +3375,7 @@ function CategoryPane({
 
   const isHidden = mapping?.hidden ?? false;
   const isSynced = mapping?.syncOnDemand ?? false;
-  const displayName = mapping?.customName || category?.name || '(unknown)';
+  const displayName = mapping?.customName || category?.category_name || category?.name || '(unknown)';
 
   return (
     <div className="w-96 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
@@ -3439,7 +3439,7 @@ function CategoryPane({
       </div>
 
       {/* Batch actions for streams in selected categories */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
         {scopedStreamIds.length > 0 ? (
           <BatchActionsSection
@@ -3772,6 +3772,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             const content = (
               <List
                 ref={listRef}
+                className="custom-scrollbar"
                 height={height || 0}
                 itemCount={filteredStreams.length}
                 itemSize={58}
@@ -4237,7 +4238,7 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
         </div>
 
         {/* Results */}
-        <div className="max-h-[420px] overflow-y-auto">
+        <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
           {query.trim().length < 2 && (
             <p className="px-4 py-10 text-center text-zinc-500 text-sm">Type at least 2 characters…</p>
           )}
@@ -4484,6 +4485,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   const originalIcon = stream.stream_icon || stream.cover || "";
   const originalEpg = stream.epg_channel_id || "";
 
+  const effectiveIcon = customIcon || selectedChannel?.icon || mapping?.epgIcon || originalIcon;
+
   const handleSave = async () => {
     setLoading(true);
     try {
@@ -4560,8 +4563,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           </div>
         ) : (
           <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-            {(customIcon || originalIcon) ? (
-              <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
+            {effectiveIcon ? (
+              <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
             ) : (
               <Tv size={16} className="text-zinc-700" />
             )}
@@ -4580,7 +4583,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
 
           {/* Name + Logo — hidden in multi-select */}
@@ -4715,14 +4718,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
               />
               <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-                {(customIcon || originalIcon) ? (
-                  <img src={customIcon || originalIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
+                {effectiveIcon ? (
+                  <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
                 ) : (
                   <Tv size={14} className="text-zinc-700" />
                 )}
               </div>
             </div>
-            {!isMulti && originalIcon && customIcon && (
+            {!isMulti && customIcon && (
               <button onClick={() => setCustomIcon("")} className="text-[10px] text-emerald-500 hover:underline">
                 Reset to default
               </button>
@@ -4813,7 +4816,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       onClick={e => e.stopPropagation()}
                     />
                   </div>
-                  <div className="max-h-64 overflow-y-auto">
+                  <div className="max-h-64 overflow-y-auto custom-scrollbar">
                     {epgChannels.length === 0 ? (
                       <div className="px-4 py-6 text-center text-xs text-zinc-600">
                         No EPG sources configured. Enable "Use Upstream EPG" on a source or add custom EPG sources.
