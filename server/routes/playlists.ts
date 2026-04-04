@@ -295,9 +295,13 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
       const imgBase = getBaseUrl(req);
       const sourceIds: string[] = playlistDoc.sourceIds || [];
+
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: sourceIds.map(toId) } }).toArray();
+      const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+
       for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
         if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
-        const sDoc = await db.collection('sources').findOne({ _id: toId(sourceIds[sourceIdx]) });
+        const sDoc = sourcesMap.get(sourceIds[sourceIdx]);
         if (!sDoc) continue;
         try {
           const client = new XtreamClient(sDoc as any);

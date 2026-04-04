@@ -59,10 +59,13 @@ export function createProxyRouter() {
       ? [sourceIds[sourceIdx]]
       : sourceIds;
 
+    const sourceDocs = await db.collection('sources').find({ _id: { $in: targetSourceIds.map(toId) } }).toArray();
+    const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     for (const sourceId of targetSourceIds) {
-      const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+      const sourceDoc = sourcesMap.get(sourceId);
       if (!sourceDoc) continue;
 
       const upstreamUrl = ext
