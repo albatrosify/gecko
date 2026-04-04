@@ -866,20 +866,23 @@ export function createProxyRouter() {
             vodId = parts.slice(1).join('_');
           }
 
-          const allVodResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-            if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
+          data = { error: "VOD not found" };
+          for (let sourceIdx = 0; sourceIdx < playlist.sourceIds.length; sourceIdx++) {
+            if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
+            const sid = playlist.sourceIds[sourceIdx];
             const sDoc = sourcesMap.get(sid);
-            if (!sDoc) return null;
+            if (!sDoc) continue;
             const cl = new XtreamClient(sDoc as any);
             try {
               const info = await cl.getVodInfo(vodId);
-              if (info && (info.info || info.movie_data)) return info;
+              if (info && (info.info || info.movie_data)) {
+                data = info;
+                break; // Stop querying other sources once we found the VOD
+              }
             } catch (e) {
-              return null;
+              continue;
             }
-            return null;
-          }));
-          data = allVodResults.find(r => r !== null) || { error: "VOD not found" };
+          }
           if (data && !data.error) {
             if (data.info?.movie_image) data.info.movie_image = proxyImageUrl(data.info.movie_image, imgBase);
             if (data.movie_data?.stream_icon) data.movie_data.stream_icon = proxyImageUrl(data.movie_data.stream_icon, imgBase);
@@ -901,25 +904,24 @@ export function createProxyRouter() {
             seriesId = parts.slice(1).join('_');
           }
 
-          const allSourceResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
-            if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
+          data = { error: "Series not found" };
+          for (let sourceIdx = 0; sourceIdx < playlist.sourceIds.length; sourceIdx++) {
+            if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
+            const sid = playlist.sourceIds[sourceIdx];
             const sDoc = sourcesMap.get(sid);
-            if (!sDoc) return null;
+            if (!sDoc) continue;
             const cl = new XtreamClient(sDoc as any);
             try {
               const info = await cl.getSeriesInfo(seriesId);
               // Xtream API returns an object with "seasons" and "info" if found
               if (info && (info.seasons || info.episodes || info.info)) {
-                return info;
+                data = info;
+                break;
               }
             } catch (e) {
-              return null;
+              continue;
             }
-            return null;
-          }));
-
-          // Return first one that has actual data
-          data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
+          }
           // Proxy image URLs in series info
           if (data && !data.error) {
             data = proxySeriesInfoImages(data, imgBase);
