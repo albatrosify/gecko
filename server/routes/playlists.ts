@@ -295,9 +295,12 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
       const imgBase = getBaseUrl(req);
       const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: sourceIds.map(toId) } }).toArray();
+      const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+
       for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
         if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
-        const sDoc = await db.collection('sources').findOne({ _id: toId(sourceIds[sourceIdx]) });
+        const sDoc = sourcesMap.get(String(sourceIds[sourceIdx]));
         if (!sDoc) continue;
         try {
           const client = new XtreamClient(sDoc as any);
@@ -332,10 +335,10 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
       const sourceIds: string[] = playlistDoc.sourceIds || [];
-      const sourceDocs = await Promise.all(
-        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-      );
-      const validSources = sourceDocs.filter(Boolean);
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: sourceIds.map(toId) } }).toArray();
+      const validSources = sourceIds
+        .map(sid => sourceDocs.find(doc => String(doc._id) === String(sid)))
+        .filter(Boolean);
 
       const qLower = q.trim().toLowerCase();
       const seen = new Set<string>();
@@ -407,10 +410,10 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
       const sourceIds: string[] = playlistDoc.sourceIds || [];
-      const sourceDocs = await Promise.all(
-        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-      );
-      const validSources = sourceDocs.filter(Boolean);
+      const sourceDocs = await db.collection('sources').find({ _id: { $in: sourceIds.map(toId) } }).toArray();
+      const validSources = sourceIds
+        .map(sid => sourceDocs.find(doc => String(doc._id) === String(sid)))
+        .filter(Boolean);
       if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
 
       // Use first available source; get container_extension from stream cache
