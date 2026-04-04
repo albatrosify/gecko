@@ -16,12 +16,20 @@ export function createAdminRouter() {
     const db = getDb();
     const users = await db.collection('users').find({}, { projection: { password: 0 } }).toArray();
 
-    const userList = await Promise.all(users.map(async (u) => {
-      const playlistCount = await db.collection('playlists').countDocuments({ userId: u._id.toString() });
-      return {
-        ...docWithId(u),
-        playlistCount
-      };
+    const userIds = users.map((u) => u._id.toString());
+    const playlistCounts = await db.collection('playlists').aggregate([
+      { $match: { userId: { $in: userIds } } },
+      { $group: { _id: "$userId", count: { $sum: 1 } } }
+    ]).toArray();
+
+    const countMap = playlistCounts.reduce((acc, curr) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const userList = users.map((u) => ({
+      ...docWithId(u),
+      playlistCount: countMap[u._id.toString()] || 0
     }));
 
     res.json(userList);
