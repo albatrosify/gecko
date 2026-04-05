@@ -1204,7 +1204,10 @@ export function createProxyRouter() {
             const zlib = await import('zlib');
             data = zlib.gunzipSync(data);
           }
-          return data.toString('utf-8');
+          let xml = data.toString('utf-8');
+          // Fix unescaped & in attribute values from malformed upstream feeds
+          xml = xml.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/gi, '&amp;');
+          return xml;
         } catch (err: any) {
           log(`[EPG] Failed to fetch ${url}: ${err.message}`);
           return null;
