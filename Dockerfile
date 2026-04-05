@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 
 WORKDIR /app
 
@@ -9,6 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install libssl1.1 (required by MongoDB 4.4) manually since it is not in Bookworm
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fLO http://ports.ubuntu.com/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_$ARCH.deb || \
+    curl -fLO http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.24_$ARCH.deb && \
+    dpkg -i libssl1.1_1.1.1f-1ubuntu2.24_$ARCH.deb && \
+    rm libssl1.1_1.1.1f-1ubuntu2.24_$ARCH.deb
 
 # Install MongoDB 4.4
 RUN curl -fsSL https://www.mongodb.org/static/pgp/server-4.4.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg && \
