@@ -1757,6 +1757,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   
   const [selectedStreamIds, setSelectedStreamIds] = useState<Set<string>>(new Set());
   const [lastSelectedStreamId, setLastSelectedStreamId] = useState<string | null>(null);
+  const [showHiddenCategories, setShowHiddenCategories] = useState(false);
   const [globalFormat, setGlobalFormat] = useState<string>('[{label}]');
   const [showAutoMatchModal, setShowAutoMatchModal] = useState(false);
   const [autoMatchEnabledSources, setAutoMatchEnabledSources] = useState<Set<string>>(new Set());
@@ -2187,11 +2188,14 @@ export function PlaylistEditor({ user }: { user: User }) {
       };
     });
     
-    const sorted = categoriesWithMapping.sort((a, b) => a.order - b.order);
+    let sorted = categoriesWithMapping.sort((a, b) => a.order - b.order);
+    if (!showHiddenCategories) {
+      sorted = sorted.filter(c => !c.hidden);
+    }
     if (!categorySearch.trim()) return sorted;
     const q = categorySearch.toLowerCase();
     return sorted.filter(c => (c.customName || c.category_name || c.name || '').toLowerCase().includes(q));
-  }, [categories, categoryMappings, activeTab, categorySearch]);
+  }, [categories, categoryMappings, activeTab, categorySearch, showHiddenCategories]);
 
   const filteredStreams = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -2892,6 +2896,17 @@ export function PlaylistEditor({ user }: { user: User }) {
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
                 />
               </div>
+              <button
+                onClick={() => setShowHiddenCategories(v => !v)}
+                className={`p-2 rounded-xl border transition-all shrink-0 ${
+                  showHiddenCategories
+                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20'
+                    : 'bg-zinc-950 text-zinc-500 border-zinc-800 hover:bg-zinc-800'
+                }`}
+                title={showHiddenCategories ? 'Hide hidden categories' : 'Show hidden categories'}
+              >
+                {showHiddenCategories ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
               {selectedCategoryIds.size > 0 && (
                 <button 
                   onClick={() => handleBatchMoveToTop('categories')}
