@@ -117,9 +117,13 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
+      const pExtra = (playlist as any).extra || {};
+      const overrideUsername = pExtra.sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+      const overridePassword = pExtra.sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
       const upstreamUrl = ext
-        ? `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}.${ext}`
-        : `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}`;
+        ? `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
+        : `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
 
       try {
         const response = await axios({
@@ -225,7 +229,11 @@ export function createProxyRouter() {
     const sourceDoc = sourceRow ? { ...sourceRow, ...(sourceRow.extra as any || {}) } : null;
     if (!sourceDoc) return res.status(404).send("Source not found");
 
-    const upstreamUrl = `${sourceDoc.url}/timeshift/${sourceDoc.username}/${sourceDoc.password}/${duration}/${start}/${streamId}.${ext}`;
+    const pExtra = (playlist as any).extra || {};
+    const overrideUsername = pExtra.sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+    const overridePassword = pExtra.sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
+    const upstreamUrl = `${sourceDoc.url}/timeshift/${overrideUsername}/${overridePassword}/${duration}/${start}/${streamId}.${ext}`;
     log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
 
     try {
