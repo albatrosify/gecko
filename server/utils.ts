@@ -59,7 +59,7 @@ export function proxySeriesInfoImages(data: any, imgBase: string): any {
 export function proxyXmlIcons(xml: string, imgBase: string): string {
   // Matches <icon\b ... src="http..." ... /> or <icon>...</icon>
   // We use a more robust regex that handles arbitrary attribute order
-  return xml.replace(/<icon\b([^>]*)\bsrc=["'](https?:\/\/[^"']+)["']([^>]*)\/?>/gi, (match, before, url, after) => {
+  return xml.replace(/<icon\b([^>]*)\bsrc=["'](https?:\/\/[^"']+)["']([^>\/]*)\/?>/gi, (match, before, url, after) => {
     return `<icon${before}src="${proxyImageUrl(url, imgBase)}"${after}/>`;
   });
 }
