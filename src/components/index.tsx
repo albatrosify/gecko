@@ -2199,20 +2199,25 @@ export function PlaylistEditor({ user }: { user: User }) {
     loadPlaylistData();
   };
 
-  const applyRegex = (name: string, rules: { pattern: string; replacement: string }[] = []) => {
+  const applyRegex = (name: string, rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[] = []) => {
     let newName = name;
     rules.forEach(rule => {
-      try {
-        const re = new RegExp(rule.pattern, 'g');
-        newName = newName.replace(re, rule.replacement);
-      } catch (e) {
-        // Invalid regex
+      if (!rule.pattern) return;
+      if (rule.type === 'string') {
+        newName = newName.split(rule.pattern).join(rule.replacement);
+      } else {
+        try {
+          const re = new RegExp(rule.pattern, 'g');
+          newName = newName.replace(re, rule.replacement);
+        } catch (e) {
+          // Invalid regex
+        }
       }
     });
     return newName;
   };
 
-  const handleBatchApplyRegex = async (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
+  const handleBatchApplyRegex = async (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
     if (scope === 'all') {
@@ -2237,15 +2242,7 @@ export function PlaylistEditor({ user }: { user: User }) {
       let newName = existingMapping?.customName || originalName;
       const initialName = newName;
 
-      rules.forEach(rule => {
-        try {
-          if (!rule.pattern) return;
-          const re = new RegExp(rule.pattern, 'g');
-          newName = newName.replace(re, rule.replacement);
-        } catch(e) {
-          // Ignore invalid regex patterns
-        }
-      });
+      newName = applyRegex(newName, rules);
 
       if (newName === initialName) return null;
 
@@ -2266,6 +2263,53 @@ export function PlaylistEditor({ user }: { user: User }) {
       } catch (error) {
         console.error("Batch update failed:", error);
         alert("Failed to apply batch changes.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      alert("No changes to apply.");
+    }
+  };
+
+  const handleBatchCategoryApplyRegex = async (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => {
+    if (selectedCategoryIds.size === 0) {
+      alert("No categories selected.");
+      return;
+    }
+
+    const mappingLookup = new Map(categoryMappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+
+    const updates = Array.from(selectedCategoryIds).map(catId => {
+      const existingMapping = mappingLookup.get(catId);
+      const cat = categories.find(c => String(c.category_id || c.id) === catId);
+      const originalName = cat?.category_name || cat?.name || "";
+      let newName = existingMapping?.customName || originalName;
+      const initialName = newName;
+
+      newName = applyRegex(newName, rules);
+
+      if (newName === initialName) return null;
+
+      return {
+        id: existingMapping?.id,
+        originalId: catId,
+        playlistId: id,
+        type: activeTab,
+        customName: newName,
+        originalName: originalName,
+        order: existingMapping?.order || 0,
+        hidden: existingMapping?.hidden || false
+      };
+    }).filter(Boolean);
+
+    if (updates.length > 0) {
+      try {
+        setLoading(true);
+        await api.categoryMappings.batchUpdate(updates as any[]);
+        await refreshMappings();
+      } catch (error) {
+        console.error("Batch category rename failed:", error);
+        alert("Failed to apply batch changes to categories.");
       } finally {
         setLoading(false);
       }
@@ -2983,6 +3027,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onBatchVisibility={(hidden) => handleCategoryBatchVisibility(hidden)}
                   onMoveToTop={() => handleBatchMoveToTop('categories')}
                   onBatchApplyRegex={(rules) => handleBatchApplyRegex(rules, 'categories')}
+                  onBatchCategoryApplyRegex={(rules) => handleBatchCategoryApplyRegex(rules)}
                   onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
                   onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
                 />
@@ -3006,7 +3051,8 @@ interface BatchActionsSectionProps {
   mappings: StreamMapping[];
   playlist: Playlist | null;
   onRefresh: () => void;
-  onBatchApply: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApply: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchVisibility: (hidden: boolean) => void;
   onBatchMoveToTop: () => void;
 }
@@ -3019,10 +3065,11 @@ function BatchActionsSection({
   playlist,
   onRefresh,
   onBatchApply,
+  onBatchCategoryApply,
   onBatchVisibility,
   onBatchMoveToTop,
 }: BatchActionsSectionProps) {
-  const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
+  const [rules, setRules] = useState<{ type: 'regex' | 'string', pattern: string; replacement: string }[]>([{ type: 'regex', pattern: '', replacement: '' }]);
 
   // Quality scan state
   const [scanConcurrency, setScanConcurrency] = useState(1);
@@ -3136,45 +3183,65 @@ function BatchActionsSection({
       {/* Regex Rename Section */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Edit3 size={12} /> Regex Rename
+          <Edit3 size={12} /> Rename Options
         </div>
         <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
           {rules.map((rule, idx) => (
             <div key={idx} className="flex gap-2">
+              <select
+                value={rule.type}
+                onChange={e => { const r = [...rules]; r[idx].type = e.target.value as 'regex' | 'string'; setRules(r); }}
+                className="bg-zinc-900 border border-zinc-800/80 rounded-lg px-2 py-2 text-xs text-zinc-300 focus:border-emerald-500 outline-none transition-colors shrink-0"
+              >
+                <option value="regex">Regex</option>
+                <option value="string">String</option>
+              </select>
               <input
                 value={rule.pattern}
                 onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
-                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Pattern"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Find"
               />
               <input
                 value={rule.replacement}
                 onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
-                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Replacement"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Replace"
               />
               <button
                 onClick={() => setRules(rules.filter((_, i) => i !== idx))}
-                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all shrink-0"
                 title="Remove Rule"
               >
                 <Trash2 size={14} />
               </button>
             </div>
           ))}
-          <div className="pt-2 flex justify-between items-center">
-            <button
-              onClick={() => setRules([...rules, { pattern: '', replacement: '' }])}
-              className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
-            >
-              + Add Rule
-            </button>
-            <button
-              onClick={() => onBatchApply(rules)}
-              className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
-            >
-              Apply Regex rename
-            </button>
+          <div className="pt-2 flex flex-col gap-2">
+            <div className="flex justify-start">
+              <button
+                onClick={() => setRules([...rules, { type: 'regex', pattern: '', replacement: '' }])}
+                className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
+              >
+                + Add Rule
+              </button>
+            </div>
+            <div className="flex gap-2 justify-end">
+              {onBatchCategoryApply && (
+                <button
+                  onClick={() => onBatchCategoryApply(rules)}
+                  className="flex-1 px-4 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black rounded-lg text-[10px] hover:bg-purple-500/20 transition-all uppercase tracking-tighter"
+                >
+                  Apply to Categories
+                </button>
+              )}
+              <button
+                onClick={() => onBatchApply(rules)}
+                className="flex-1 px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
+              >
+                Apply to Channels
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3253,14 +3320,16 @@ function BatchActionsSection({
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onBatchVisibility(false)}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
+            disabled={streamIds.length === 0}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
           >
             <Eye size={14} />
             Show All
           </button>
           <button
             onClick={() => onBatchVisibility(true)}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+            disabled={streamIds.length === 0}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
           >
             <EyeOff size={14} />
             Hide All
@@ -3301,7 +3370,8 @@ interface CategoryPaneProps {
   onMappingChange: () => void;     // refresh after changes
   onBatchVisibility: (hidden: boolean) => void;   // for category-level hide/show
   onMoveToTop: () => void;                         // move selected categories to top
-  onBatchApplyRegex: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
   onMoveStreamsToTop: () => void;
 }
@@ -3309,7 +3379,7 @@ interface CategoryPaneProps {
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
-  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
+  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
@@ -3441,7 +3511,6 @@ function CategoryPane({
       {/* Batch actions for streams in selected categories */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
-        {scopedStreamIds.length > 0 ? (
           <BatchActionsSection
             streamIds={scopedStreamIds}
             playlistId={playlistId}
@@ -3450,12 +3519,10 @@ function CategoryPane({
             playlist={playlist}
             onRefresh={onMappingChange}
             onBatchApply={onBatchApplyRegex}
+            onBatchCategoryApply={onBatchCategoryApplyRegex}
             onBatchVisibility={onBatchStreamVisibility}
             onBatchMoveToTop={onMoveStreamsToTop}
           />
-        ) : (
-          <div className="py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
-        )}
         </div>
       </div>
     </div>
@@ -4400,7 +4467,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   selectedStreamIds?: Set<string>;
   allStreams?: any[];
   allMappings?: StreamMapping[];
-  onBatchApply?: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchVisibility?: (hidden: boolean) => void;
   onBatchMoveToTop?: () => void;
 }) {

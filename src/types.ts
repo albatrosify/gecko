@@ -82,7 +82,7 @@ export interface StreamMapping {
   order: number;
   hidden: boolean;
   categoryId: string; // Custom category ID
-  regexRenames?: { pattern: string; replacement: string }[];
+  regexRenames?: { type?: 'regex' | 'string'; pattern: string; replacement: string }[];
   detectedMeta?: DetectedStreamMeta;
   useDetectedQuality?: boolean;
   sourceIdx?: number;
