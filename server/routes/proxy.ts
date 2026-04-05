@@ -117,9 +117,8 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
-      const pExtra = (playlist as any).extra || {};
-      const overrideUsername = pExtra.sourceOverrides?.[sourceId]?.username || sourceDoc.username;
-      const overridePassword = pExtra.sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+      const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+      const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
 
       const upstreamUrl = ext
         ? `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
@@ -229,9 +228,8 @@ export function createProxyRouter() {
     const sourceDoc = sourceRow ? { ...sourceRow, ...(sourceRow.extra as any || {}) } : null;
     if (!sourceDoc) return res.status(404).send("Source not found");
 
-    const pExtra = (playlist as any).extra || {};
-    const overrideUsername = pExtra.sourceOverrides?.[sourceId]?.username || sourceDoc.username;
-    const overridePassword = pExtra.sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+    const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+    const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
 
     const upstreamUrl = `${sourceDoc.url}/timeshift/${overrideUsername}/${overridePassword}/${duration}/${start}/${streamId}.${ext}`;
     log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
@@ -327,7 +325,7 @@ export function createProxyRouter() {
       : [];
     const sourcesMap = new Map(sourceDocs.map(s => {
       const baseSource = { ...s, ...(s.extra as any || {}) };
-      const overrides = (playlist as any).extra?.sourceOverrides?.[s.id];
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
       if (overrides) {
         if (overrides.username) baseSource.username = overrides.username;
         if (overrides.password) baseSource.password = overrides.password;
@@ -1051,7 +1049,7 @@ export function createProxyRouter() {
       : [];
     const m3uSourcesMap = new Map(sourceDocs.map(s => {
       const baseSource = { ...s, ...(s.extra as any || {}) };
-      const overrides = (playlist as any).extra?.sourceOverrides?.[s.id];
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
       if (overrides) {
         if (overrides.username) baseSource.username = overrides.username;
         if (overrides.password) baseSource.password = overrides.password;
@@ -1262,7 +1260,7 @@ export function createProxyRouter() {
 
       for (const sourceRow of sourceDocs) {
         const sExtra = (sourceRow.extra as any) || {};
-        const overrides = (playlist as any).extra?.sourceOverrides?.[sourceRow.id];
+        const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
         const effectiveUsername = overrides?.username || sourceRow.username;
         const effectivePassword = overrides?.password || sourceRow.password;
 
