@@ -890,7 +890,7 @@ export function SourceManager({ user }: { user: User }) {
     try {
       const logs = await api.sources.changelog(source.id);
       setChangelogs(logs);
-    } catch (e) {
+    } catch (e: unknown) {
       console.error(e);
     } finally {
       setLoadingLogs(false);
@@ -930,8 +930,8 @@ export function SourceManager({ user }: { user: User }) {
       } else {
         setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${result.error || 'Unknown error'}` }));
       }
-    } catch (err: any) {
-      setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${err.message}` }));
+    } catch (err) {
+      setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${(err as Error).message}` }));
     } finally {
       setRefreshingSources(prev => ({ ...prev, [source.id]: false }));
       // Clear status after 10s
@@ -1514,9 +1514,9 @@ export function Settings({ user }: { user: User }) {
     try {
       const data = await api.system.logs();
       setLogs(data.logs || 'Waiting for system activity...');
-    } catch (err: any) {
+    } catch (err) {
       console.error("Log fetch error:", err);
-      setLogs(`Error: ${err.message || 'Failed to fetch'}`);
+      setLogs(`Error: ${(err as Error).message || 'Failed to fetch'}`);
     }
   }, []);
 
@@ -1544,7 +1544,7 @@ export function Settings({ user }: { user: User }) {
     setQualityFormatSaving(true);
     try {
       await api.settings.update({ qualityLabelFormat: qualityFormat });
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to save quality format:', err);
     } finally {
       setQualityFormatSaving(false);
@@ -4291,8 +4291,8 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
       // Auto-open first season
       const firstSeason = Object.keys(data.episodes || {})[0];
       if (firstSeason) setOpenSeasons(new Set([firstSeason]));
-    } catch (e: any) {
-      setError(e.message || 'Failed to load');
+    } catch (e) {
+      setError((e as Error).message || 'Failed to load');
     } finally {
       setLoading(false);
     }
@@ -4639,8 +4639,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         } else if (result?.error) {
                           setScanError(result.error);
                         }
-                      } catch (e: any) {
-                        setScanError(e.message || 'Scan failed');
+                      } catch (e) {
+                        setScanError((e as Error).message || 'Scan failed');
                       } finally {
                         setScanLoading(false);
                       }

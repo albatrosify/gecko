@@ -1,5 +1,8 @@
 import express, { Router } from "express";
 import axios from "axios";
+import http from "http";
+import https from "https";
+import dns from "dns";
 import { getDb, toId, docWithId, docsWithId } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
@@ -11,6 +14,47 @@ import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
+
+const isForbiddenIP = (ip: string): boolean => {
+  const normalizedIP = ip.toLowerCase();
+  if (
+    normalizedIP === 'localhost' ||
+    normalizedIP.endsWith('.local') ||
+    normalizedIP.includes('::ffff:')
+  ) {
+    return true;
+  }
+
+  return (
+    normalizedIP.startsWith('127.') ||
+    normalizedIP.startsWith('10.') ||
+    normalizedIP.startsWith('192.168.') ||
+    normalizedIP.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(normalizedIP) ||
+    normalizedIP === '::1' ||
+    normalizedIP === '0.0.0.0' || normalizedIP.startsWith('0.') ||
+    normalizedIP === '::' ||
+    /^[fF][cCdD]/.test(normalizedIP) || // fc00::/7
+    /^[fF][eE][89aAbB]/.test(normalizedIP) // fe80::/10
+  );
+};
+
+const safeLookup = (hostname: string, options: dns.LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void) => {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err, address as any, family);
+    const addrs = Array.isArray(address) ? address : [{ address, family }];
+
+    for (const addr of addrs) {
+      if (isForbiddenIP(addr.address)) {
+        return callback(new Error('Access to local network is forbidden'), '', 0);
+      }
+    }
+    callback(null, address as any, family);
+  });
+};
+
+const safeHttpAgent = new http.Agent({ lookup: safeLookup as any });
+const safeHttpsAgent = new https.Agent({ lookup: safeLookup as any });
 
 export function createProxyRouter() {
   const router = Router();
@@ -59,10 +103,16 @@ export function createProxyRouter() {
       ? [sourceIds[sourceIdx]]
       : sourceIds;
 
+    // Bulk fetch target sources to avoid N+1 queries
+    const targetSourceDocs = await db.collection('sources')
+      .find({ _id: { $in: targetSourceIds.map(id => toId(id)) } })
+      .toArray();
+    const sourceMap = new Map(targetSourceDocs.map(doc => [doc._id.toString(), doc]));
+
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     for (const sourceId of targetSourceIds) {
-      const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+      const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
       const upstreamUrl = ext
@@ -202,16 +252,37 @@ export function createProxyRouter() {
       return res.status(400).send('Missing or invalid url');
     }
     try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+      if (isForbiddenIP(hostname)) {
+        return res.status(403).send('Access to local network is forbidden');
+      }
+    } catch {
+      return res.status(400).send('Invalid url');
+    }
+
+    try {
       const upstream = await axios.get(url, {
         responseType: 'stream',
         timeout: 10000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
+        httpAgent: safeHttpAgent,
+        httpsAgent: safeHttpsAgent,
+        beforeRedirect: (options: any) => {
+          const redirectHostname = (options.hostname || options.host || '').replace(/^\[|\]$/g, '');
+          if (isForbiddenIP(redirectHostname)) {
+            throw new Error('Access to local network is forbidden');
+          }
+        }
       });
       const ct = upstream.headers['content-type'] || 'image/jpeg';
       res.set('Content-Type', ct);
       res.set('Cache-Control', 'public, max-age=86400');
       upstream.data.pipe(res);
-    } catch {
+    } catch (err: any) {
+      if (err.message === 'Access to local network is forbidden') {
+        return res.status(403).send('Access to local network is forbidden');
+      }
       res.status(502).send('Failed to fetch image');
     }
   });
