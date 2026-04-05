@@ -54,6 +54,7 @@ export interface Playlist {
   qualityLabelFormat?: string;  // e.g. "[{label}]" — per-playlist template
   isSynced?: boolean;
   nextStreamId?: number;
+  sourceOverrides?: Record<string, { username?: string; password?: string }>;
 }
 
 export interface CategoryMapping {

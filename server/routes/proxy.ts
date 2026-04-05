@@ -117,9 +117,12 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
+      const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+      const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
       const upstreamUrl = ext
-        ? `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}.${ext}`
-        : `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}`;
+        ? `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
+        : `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
 
       try {
         const response = await axios({
@@ -225,7 +228,10 @@ export function createProxyRouter() {
     const sourceDoc = sourceRow ? { ...sourceRow, ...(sourceRow.extra as any || {}) } : null;
     if (!sourceDoc) return res.status(404).send("Source not found");
 
-    const upstreamUrl = `${sourceDoc.url}/timeshift/${sourceDoc.username}/${sourceDoc.password}/${duration}/${start}/${streamId}.${ext}`;
+    const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+    const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
+    const upstreamUrl = `${sourceDoc.url}/timeshift/${overrideUsername}/${overridePassword}/${duration}/${start}/${streamId}.${ext}`;
     log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
 
     try {
@@ -317,7 +323,15 @@ export function createProxyRouter() {
     const sourceDocs = playlistSourceIds.length > 0
       ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
       : [];
-    const sourcesMap = new Map(sourceDocs.map(s => [s.id, { ...s, ...(s.extra as any || {}) }]));
+    const sourcesMap = new Map(sourceDocs.map(s => {
+      const baseSource = { ...s, ...(s.extra as any || {}) };
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
+      if (overrides) {
+        if (overrides.username) baseSource.username = overrides.username;
+        if (overrides.password) baseSource.password = overrides.password;
+      }
+      return [s.id, baseSource];
+    }));
 
     // Load all category mappings (usually small) but defer stream mappings (can be huge)
     const catMappingDocs = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlist.id)).all();
@@ -1033,7 +1047,15 @@ export function createProxyRouter() {
     const sourceDocs = playlistSourceIds.length > 0
       ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
       : [];
-    const m3uSourcesMap = new Map(sourceDocs.map(s => [s.id, { ...s, ...(s.extra as any || {}) }]));
+    const m3uSourcesMap = new Map(sourceDocs.map(s => {
+      const baseSource = { ...s, ...(s.extra as any || {}) };
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
+      if (overrides) {
+        if (overrides.username) baseSource.username = overrides.username;
+        if (overrides.password) baseSource.password = overrides.password;
+      }
+      return [s.id, baseSource];
+    }));
 
     const m3uType = (type as string) || 'live';
     const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
@@ -1238,8 +1260,12 @@ export function createProxyRouter() {
 
       for (const sourceRow of sourceDocs) {
         const sExtra = (sourceRow.extra as any) || {};
-        if (!sExtra.useUpstreamEpg || !sourceRow.url || !sourceRow.username) continue;
-        const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(sourceRow.username)}&password=${encodeURIComponent(sourceRow.password!)}`;
+        const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
+        const effectiveUsername = overrides?.username || sourceRow.username;
+        const effectivePassword = overrides?.password || sourceRow.password;
+
+        if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
+        const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
         log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
         const xml = await fetchXml(upstreamEpgUrl);
         if (xml) xmlParts.push(xml);
