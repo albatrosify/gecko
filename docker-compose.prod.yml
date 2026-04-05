@@ -24,13 +24,11 @@ services:
     depends_on:
       - gluetun
     environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
-      - MONGODB_DB=${MONGODB_DB:-open_iptv}
+      - SQLITE_PATH=/app/data/gecko.db
       - JWT_SECRET=${JWT_SECRET:-}
       - PORT=${PORT:-3000}
       - NODE_ENV=production
       - APP_URL=${APP_URL:-}
-      - CACHE_DIR=/app/data/cache
       - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
@@ -40,8 +38,6 @@ services:
       start_period: 15s
     volumes:
       - ./data/app:/app/data
-      - ./data/cache:/app/data/cache
-      - ./data/mongo:/data/db
     restart: unless-stopped
 
 networks:

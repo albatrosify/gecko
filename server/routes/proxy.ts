@@ -3,7 +3,7 @@ import axios from "axios";
 import http from "http";
 import https from "https";
 import dns from "dns";
-import { getDb, toId, docWithId, docsWithId } from "../db.ts";
+import { getDb } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
 import { proxyStats } from "../proxy-stats.ts";
@@ -61,8 +61,11 @@ export function createProxyRouter() {
 
   const findPlaylistByCredentials = async (username: string, password: string) => {
     const db = getDb();
-    const doc = await db.collection('playlists').findOne({ username, password });
-    return doc ? docWithId(doc) : null;
+    const { playlists: schemaPlaylists } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+    const doc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.username, username), eq(schemaPlaylists.password, password))).get();
+    if (!doc) return null;
+    return { id: doc.id, userId: doc.userId, name: doc.name, username: doc.username, password: doc.password, sourceIds: doc.sourceIds, directStreams: doc.directStreams, ...(doc.extra as any || {}) };
   };
 
   // Proxy handling helper
@@ -82,12 +85,11 @@ export function createProxyRouter() {
     let originalId = streamId;
 
     // Look up stream mapping by raw upstream stream ID.
+    const { mappings: schemaMappings, sources: schemaSources } = await import('../schema.ts');
+    const { eq, and, inArray } = await import('drizzle-orm');
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
-    const streamMapping = await db.collection('mappings').findOne({
-      playlistId: String(playlist.id),
-      originalId: streamId,
-      type: mappingTypeMap[type],
-    });
+    const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, streamId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
+    const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
     const streamName = streamMapping
       ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
       : `Stream ${streamId}`;
@@ -104,10 +106,10 @@ export function createProxyRouter() {
       : sourceIds;
 
     // Bulk fetch target sources to avoid N+1 queries
-    const targetSourceDocs = await db.collection('sources')
-      .find({ _id: { $in: targetSourceIds.map(id => toId(id)) } })
-      .toArray();
-    const sourceMap = new Map(targetSourceDocs.map(doc => [doc._id.toString(), doc]));
+    const targetSourceDocs = targetSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, targetSourceIds)).all()
+      : [];
+    const sourceMap = new Map(targetSourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
 
     // Try each source in order, fall back to the next on failure
     let lastError = '';
@@ -217,7 +219,10 @@ export function createProxyRouter() {
     const sourceId = playlist.sourceIds?.[0];
     if (!sourceId) return res.status(400).send("No source configured");
 
-    const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+    const sourceRow = db.select().from(schemaSources).where(eq(schemaSources.id, sourceId)).get();
+    const sourceDoc = sourceRow ? { ...sourceRow, ...(sourceRow.extra as any || {}) } : null;
     if (!sourceDoc) return res.status(404).send("Source not found");
 
     const upstreamUrl = `${sourceDoc.url}/timeshift/${sourceDoc.username}/${sourceDoc.password}/${duration}/${start}/${streamId}.${ext}`;
@@ -304,13 +309,19 @@ export function createProxyRouter() {
     }
 
     const db = getDb();
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+    const { eq, inArray, and } = await import('drizzle-orm');
+
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
-    const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
-    const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+    const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+    const sourceDocs = playlistSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+      : [];
+    const sourcesMap = new Map(sourceDocs.map(s => [s.id, { ...s, ...(s.extra as any || {}) }]));
 
     // Load all category mappings (usually small) but defer stream mappings (can be huge)
-    const catMappingDocs = await db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray();
-    const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+    const catMappingDocs = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlist.id)).all();
+    const catMappings = catMappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as CategoryMapping[];
     let mappings: StreamMapping[] = [];
     const globalFormat = await getGlobalQualityFormat();
 
@@ -418,19 +429,17 @@ export function createProxyRouter() {
         }
          case 'get_live_streams': {
            const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'live' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'live'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_live`);
                const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-           mappings = docsWithId(mappingDocs) as StreamMapping[];
+           mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
 
            const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
@@ -589,19 +598,17 @@ export function createProxyRouter() {
           }
           case 'get_vod_streams': {
             const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'vod' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'vod'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_vod`);
                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-            mappings = docsWithId(mappingDocs) as StreamMapping[];
+            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
@@ -746,19 +753,17 @@ export function createProxyRouter() {
           }
           case 'get_series': {
             const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'series' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'series'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_series`);
                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-            mappings = docsWithId(mappingDocs) as StreamMapping[];
+            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
             const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
@@ -1020,19 +1025,24 @@ export function createProxyRouter() {
     if (!playlist) return res.status(401).send("Invalid credentials");
 
     const db = getDb();
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+    const { eq, inArray, and } = await import('drizzle-orm');
+
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
-    const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
-    const m3uSourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+    const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+    const sourceDocs = playlistSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+      : [];
+    const m3uSourcesMap = new Map(sourceDocs.map(s => [s.id, { ...s, ...(s.extra as any || {}) }]));
 
     const m3uType = (type as string) || 'live';
     const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
 
-    const [mappingDocs, catMappingDocs] = await Promise.all([
-      db.collection('mappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
-      db.collection('categoryMappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
-    ]);
-    const mappings = docsWithId(mappingDocs) as StreamMapping[];
-    const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+    const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, activeTabStr))).all();
+    const catMappingDocs = db.select().from(schemaCategoryMappings).where(and(eq(schemaCategoryMappings.playlistId, playlist.id), eq(schemaCategoryMappings.type, activeTabStr))).all();
+
+    const mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
+    const catMappings = catMappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as CategoryMapping[];
     const m3uGlobalFormat = await getGlobalQualityFormat();
 
     try {
@@ -1203,10 +1213,13 @@ export function createProxyRouter() {
 
       const xmlParts: string[] = [];
 
+      const { epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
+      const { inArray } = await import('drizzle-orm');
+
       // 1. Custom EPG sources linked to this playlist
       const epgIds: string[] = playlist.epgIds || [];
       if (epgIds.length) {
-        const epgDocs = await db.collection('epgs').find({ _id: { $in: epgIds.map(toId) } }).toArray();
+        const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
         for (const epgDoc of epgDocs) {
           if (!epgDoc.url) continue;
           const xml = await fetchXml(epgDoc.url);
@@ -1215,15 +1228,16 @@ export function createProxyRouter() {
       }
 
       // 2. Upstream sources with useUpstreamEpg enabled
-      const sourceDocs = await db.collection('sources').find({
-        _id: { $in: (playlist.sourceIds || []).map(toId) },
-        useUpstreamEpg: true,
-      }).toArray();
+      const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+      const sourceDocs = playlistSourceIds.length > 0
+        ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+        : [];
 
-      for (const sourceDoc of sourceDocs) {
-        if (!sourceDoc.url || !sourceDoc.username) continue;
-        const upstreamEpgUrl = `${sourceDoc.url}/xmltv.php?username=${encodeURIComponent(sourceDoc.username)}&password=${encodeURIComponent(sourceDoc.password)}`;
-        log(`[EPG] Fetching upstream EPG: ${sourceDoc.url}/xmltv.php`);
+      for (const sourceRow of sourceDocs) {
+        const sExtra = (sourceRow.extra as any) || {};
+        if (!sExtra.useUpstreamEpg || !sourceRow.url || !sourceRow.username) continue;
+        const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(sourceRow.username)}&password=${encodeURIComponent(sourceRow.password!)}`;
+        log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
         const xml = await fetchXml(upstreamEpgUrl);
         if (xml) xmlParts.push(xml);
       }

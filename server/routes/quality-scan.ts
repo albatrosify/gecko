@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
-import { getDb, toId } from "../db.ts";
+import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scanJobs, ScanJob, buildStreamUrl } from "../quality-scan.ts";
 import { getCached } from "../cache.ts";
@@ -37,17 +37,17 @@ export function createQualityScanRouter() {
     }
 
     const db = getDb();
-    const playlistDoc = await db.collection('playlists').findOne({
-      _id: toId(playlistId),
-      userId: req.user!.id,
-    });
+    const { playlists: schemaPlaylists, sources: schemaSources } = await import('../schema.ts');
+    const { eq, and, inArray } = await import('drizzle-orm');
+
+    const playlistDoc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).get();
     if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
-    const sourceIds: string[] = playlistDoc.sourceIds || [];
-    const sourceDocs = await db.collection('sources')
-      .find({ _id: { $in: sourceIds.map(toId) } })
-      .toArray();
-    const sourcesMap = new Map(sourceDocs.map(doc => [doc._id.toString(), doc]));
+    const sourceIds: string[] = (Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : []) as string[];
+    const sourceDocs = sourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+      : [];
+    const sourcesMap = new Map(sourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
     const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
     if (!validSources.length) return res.status(400).json({ error: 'No sources found for playlist' });
 
@@ -97,7 +97,7 @@ export function createQualityScanRouter() {
               // (defaults to 'mp4' only when cache is cold — most providers ignore the extension anyway)
               let extension: string | undefined;
               if (type === 'vod' || type === 'series') {
-                const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+                const cached = getCached(`${sourceDoc.id}_streams_${type}`);
                 if (cached?.data) {
                   const streamData = (cached.data as any[]).find(
                     (s: any) => String(s.stream_id ?? s.series_id) === originalStreamId
@@ -115,16 +115,21 @@ export function createQualityScanRouter() {
 
           if (meta) {
             meta.scannedAt = new Date().toISOString();
-            // Upsert detectedMeta — use raw originalStreamId (prefix already decoded above) so it
-            // matches the existing mapping document rather than creating an orphan with the prefixed key
-            await db.collection('mappings').updateOne(
-              { playlistId, originalId: originalStreamId, type },
-              {
-                $set: { detectedMeta: meta, ...(sIdx !== null ? { sourceIdx: sIdx } : {}) },
-                $setOnInsert: { originalName: '', customName: '', hidden: false, order: 0, categoryId: '' },
-              },
-              { upsert: true }
-            );
+            const { mappings: schemaMappings } = await import('../schema.ts');
+            const { eq, and } = await import('drizzle-orm');
+
+            const existingMapping = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlistId), eq(schemaMappings.originalId, originalStreamId), eq(schemaMappings.type, type))).get();
+            if (existingMapping) {
+               const currentExtra = (existingMapping.extra as any) || {};
+               currentExtra.detectedMeta = meta;
+               if (sIdx !== null) currentExtra.sourceIdx = sIdx;
+               db.update(schemaMappings).set({ extra: currentExtra }).where(eq(schemaMappings.id, existingMapping.id)).run();
+            } else {
+               const newExtra = { detectedMeta: meta, originalName: '', customName: '', hidden: false, order: 0, categoryId: '' } as any;
+               if (sIdx !== null) newExtra.sourceIdx = sIdx;
+               db.insert(schemaMappings).values({ id: generateId(), playlistId, originalId: originalStreamId, type, extra: newExtra }).run();
+            }
+
             job.results.push({ streamId, meta });
           } else {
             job.results.push({ streamId, error: lastError || 'All sources failed' });
