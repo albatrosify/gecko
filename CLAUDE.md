@@ -30,19 +30,20 @@ npm run lint      # Type-check only (tsc --noEmit, no test suite)
 
 Docker:
 ```bash
-docker compose up -d   # App + MongoDB
+docker compose up -d   # App only — SQLite is built-in, no external services needed
 ```
 
-Requires a `.env` file (copy from `.env.example`) with `MONGODB_URI`, `MONGODB_DB`, `JWT_SECRET`, `APP_URL`, `PORT`.
+Requires a `.env` file (copy from `.env.example`) with `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 
 ## Architecture
 
 **Single-process server** (`server.ts`) — Express handles both the REST API and serves the Vite-built frontend (or proxies to Vite in dev mode). No separate frontend build step needed in development.
 
 **Backend** (`server/`):
-- `db.ts` — MongoDB connection; `toId()` converts string → ObjectId, `docsWithId()` maps `_id` → `id`
+- `db.ts` — SQLite connection via `better-sqlite3` + Drizzle ORM; `toId()` is a passthrough (IDs are plain strings/UUIDs), `docsWithId()` maps rows to `{ id, ...fields }` merging the `extra` JSON column
+- `schema.ts` — Drizzle table definitions for all collections
 - `auth.ts` — JWT middleware (`requireAuth`), local email/password with bcrypt
-- `cache.ts` — Disk-based JSON cache (`data/cache/`, 12h TTL) for upstream playlist data; keyed by source ID
+- `cache.ts` — Two-tier cache: in-memory Map (1 min TTL) backed by SQLite `cache` table (12h TTL); keyed by source ID
 - `xtream.ts` — `XtreamClient` fetches from upstream Xtream API (`player_api.php`)
 - `epg.ts` — XMLTV EPG fetching/parsing
 
@@ -52,14 +53,15 @@ Requires a `.env` file (copy from `.env.example`) with `MONGODB_URI`, `MONGODB_D
 - `App.tsx` — Router + auth gate; all routes under a collapsible sidebar
 - `components/index.tsx` — All UI components in one file: `Dashboard`, `PlaylistEditor`, `SourceManager`, `EPGManager`, `Settings`, `Layout`, `ErrorBoundary`
 
-**Data model** (MongoDB collections):
+**Data model** (SQLite tables via Drizzle, defined in `server/schema.ts`):
 - `users` — email/password/role (`admin`|`user`)
-- `sources` — upstream Xtream/M3U providers (per-user); supports `autoSyncEnabled` + `syncCron` (crontab) for scheduled refresh
+- `sources` — upstream Xtream/M3U providers (per-user); supports `autoSyncEnabled` + `syncCron` (crontab) for scheduled refresh; extra fields in `extra` JSON column
 - `epgs` — XMLTV EPG URLs (per-user)
-- `playlists` — aggregation configs with custom `username`/`password` for downstream access; `directStreams: true` bypasses the stream proxy
-- `mappings` — per-playlist stream overrides (hide, rename, reorder, regex rules, EPG mapping)
+- `playlists` — aggregation configs with custom `username`/`password` for downstream access; `directStreams: true` bypasses the stream proxy; `sourceIds` stored as JSON array
+- `mappings` — per-playlist stream overrides (hide, rename, reorder, regex rules, EPG mapping); extra fields in `extra` JSON column
 - `categoryMappings` — per-playlist category overrides (hide, rename, reorder)
 - `source_sync_meta` — cooldown tracking for upstream syncs (5-min minimum between syncs)
+- `cache` — SQLite-backed cache table replacing the old disk-based JSON files
 
 **Xtream proxy** — `/player_api.php` and `/get.php` endpoints in `server.ts` merge multiple upstream sources, apply stream/category mappings, and serve a unified Xtream-compatible API. The `APP_URL` env var is used to rewrite stream URLs so they proxy through this server. In-memory `proxyStats` tracks active connections, bytes, and bandwidth history (60 data points at 2s intervals).
 

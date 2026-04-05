@@ -14,7 +14,7 @@ A self-hosted IPTV playlist aggregator and editor. Connect upstream Xtream Codes
 - **M3U Export** — Download playlists in M3U format
 - **EPG Support** — Attach XMLTV EPG sources to playlists
 - **Multi-user** — Local email/password authentication with admin/user roles
-- **Disk-based Cache** — Handles large upstream playlists (100K+ streams) efficiently
+- **Zero-dependency Storage** — Single SQLite file, no external database required
 
 ## Quick Start with Docker
 
@@ -25,9 +25,9 @@ cd gecko
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env — set JWT_SECRET, APP_URL, and VPN credentials
+# Edit .env — set JWT_SECRET and APP_URL
 
-# Start the app (includes SQLite database built-in)
+# Start the app (SQLite database built-in, no external services needed)
 docker compose up -d
 
 # Open in browser
@@ -62,6 +62,5 @@ npm run dev
 - **Frontend**: React 19 + Vite + Tailwind CSS 4
 - **Backend**: Express + TypeScript (tsx)
 - **Database**: SQLite (better-sqlite3 + Drizzle ORM)
-
 - **Auth**: JWT + bcrypt (local email/password)
 - **Deployment**: Docker + Docker Compose
