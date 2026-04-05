@@ -409,8 +409,9 @@ export function PlaylistManager({ user }: { user: User }) {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '' });
+  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '', sourceOverrides: {} as Record<string, { username?: string; password?: string }> });
   const [availableEpgs, setAvailableEpgs] = useState<any[]>([]);
+  const [sources, setSources] = useState<UpstreamSource[]>([]);
 
   const loadPlaylists = useCallback(async () => {
     try {
@@ -426,6 +427,7 @@ export function PlaylistManager({ user }: { user: User }) {
     api.epgs.list().then(setAvailableEpgs).catch(() => {
       // Ignore EPG load errors: non-critical for initial render
     });
+    api.sources.list().then(setSources).catch(() => {});
   }, [loadPlaylists]);
 
   const handleAdd = async () => {
@@ -720,6 +722,48 @@ export function PlaylistManager({ user }: { user: User }) {
                 )}
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Upstream Source Overrides</label>
+                <p className="text-[10px] text-zinc-600 mt-1">Optionally specify different credentials to authenticate with the upstream sources.</p>
+                <div className="space-y-4 max-h-60 overflow-y-auto custom-scrollbar">
+                  {editingPlaylist.sourceIds.map(sourceId => {
+                    const source = sources.find(s => s.id === sourceId);
+                    if (!source) return null;
+                    const override = editData.sourceOverrides[sourceId] || { username: '', password: '' };
+                    return (
+                      <div key={sourceId} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+                        <div className="text-xs font-bold text-zinc-400">{source.name}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            placeholder="Override Username"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            value={override.username || ''}
+                            onChange={e => setEditData({
+                              ...editData,
+                              sourceOverrides: {
+                                ...editData.sourceOverrides,
+                                [sourceId]: { ...override, username: e.target.value }
+                              }
+                            })}
+                          />
+                          <input
+                            placeholder="Override Password"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            value={override.password || ''}
+                            onChange={e => setEditData({
+                              ...editData,
+                              sourceOverrides: {
+                                ...editData.sourceOverrides,
+                                [sourceId]: { ...override, password: e.target.value }
+                              }
+                            })}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
                 <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
                 <textarea
@@ -791,7 +835,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 <button 
                   onClick={() => {
                     setEditingPlaylist(playlist);
-                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '' });
+                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '', sourceOverrides: playlist.sourceOverrides || {} });
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 

@@ -295,7 +295,14 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
         : [];
 
-      const sourcesMap = new Map(sourceDocs.map(doc => [doc.id, doc]));
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
 
       for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
         if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
@@ -337,7 +344,14 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       const sourceDocs = sourceIds.length > 0
         ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
         : [];
-      const sourcesMap = new Map(sourceDocs.map(doc => [doc.id, doc]));
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
       const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
 
       const qLower = q.trim().toLowerCase();
@@ -413,7 +427,14 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       const sourceDocs = sourceIds.length > 0
         ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
         : [];
-      const sourcesMap = new Map(sourceDocs.map(doc => [doc.id, doc]));
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
       const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
       if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
 
