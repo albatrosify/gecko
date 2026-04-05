@@ -21,8 +21,12 @@ export async function getGlobalQualityFormat(): Promise<string> {
     return _qualityFormatCache.value;
   }
   const db = getDb();
-  const doc = await db.collection('settings').findOne({ _id: 'global' as any });
-  const value = (doc as any)?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
+  const { settings } = await import('./schema.ts');
+  const { eq } = await import('drizzle-orm');
+
+  const doc = db.select().from(settings).where(eq(settings.id, 'global')).get();
+  const extra = (doc?.extra as any) || {};
+  const value = extra.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]';
   _qualityFormatCache = { value, expiresAt: Date.now() + 60_000 };
   return value;
 }

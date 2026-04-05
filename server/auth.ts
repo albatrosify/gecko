@@ -31,32 +31,39 @@ export function createAuthRouter(): Router {
       }
 
       const db = getDb();
-      const existing = await db.collection('users').findOne({ email });
+      const { eq, count } = await import('drizzle-orm');
+      const { users } = await import('./schema.ts');
+      const { generateId } = await import('./db.ts');
+
+      const existing = db.select().from(users).where(eq(users.email, email)).get();
       if (existing) {
         return res.status(409).json({ error: 'Email already registered' });
       }
 
       // First user becomes admin
-      const userCount = await db.collection('users').countDocuments();
-      const role = userCount === 0 ? 'admin' : 'user';
+      const resultCount = db.select({ value: count() }).from(users).get();
+      const role = (resultCount?.value || 0) === 0 ? 'admin' : 'user';
 
       const hashedPassword = await bcrypt.hash(password, 12);
-      const result = await db.collection('users').insertOne({
+      const newId = generateId();
+
+      db.insert(users).values({
+        id: newId,
         email,
         password: hashedPassword,
         role,
         createdAt: new Date(),
-      });
+      }).run();
 
       const token = jwt.sign(
-        { id: result.insertedId.toString(), email, role },
+        { id: newId, email, role },
         JWT_SECRET(),
         { expiresIn: TOKEN_EXPIRY }
       );
 
       res.status(201).json({
         token,
-        user: { id: result.insertedId.toString(), email, role },
+        user: { id: newId, email, role },
       });
     } catch (error) {
       console.error('Register error:', error);
@@ -73,7 +80,10 @@ export function createAuthRouter(): Router {
       }
 
       const db = getDb();
-      const user = await db.collection('users').findOne({ email });
+      const { eq } = await import('drizzle-orm');
+      const { users } = await import('./schema.ts');
+
+      const user = db.select().from(users).where(eq(users.email, email)).get();
       if (!user) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
@@ -84,14 +94,14 @@ export function createAuthRouter(): Router {
       }
 
       const token = jwt.sign(
-        { id: user._id.toString(), email: user.email, role: user.role },
+        { id: user.id, email: user.email, role: user.role },
         JWT_SECRET(),
         { expiresIn: TOKEN_EXPIRY }
       );
 
       res.json({
         token,
-        user: { id: user._id.toString(), email: user.email, role: user.role },
+        user: { id: user.id, email: user.email, role: user.role },
       });
     } catch (error) {
       console.error('Login error:', error);
