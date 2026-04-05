@@ -14,22 +14,24 @@ export function createAdminRouter() {
       return res.status(403).json({ error: "Admin access required" });
     }
     const db = getDb();
-    const users = await db.collection('users').find({}, { projection: { password: 0 } }).toArray();
+    const { users: schemaUsers, playlists: schemaPlaylists } = await import('../schema.ts');
 
-    const userIds = users.map((u) => u._id.toString());
-    const playlistCounts = await db.collection('playlists').aggregate([
-      { $match: { userId: { $in: userIds } } },
-      { $group: { _id: "$userId", count: { $sum: 1 } } }
-    ]).toArray();
+    const allUsers = db.select({
+      id: schemaUsers.id,
+      email: schemaUsers.email,
+      role: schemaUsers.role,
+      createdAt: schemaUsers.createdAt
+    }).from(schemaUsers).all();
 
-    const countMap = playlistCounts.reduce((acc, curr) => {
-      acc[curr._id] = curr.count;
+    const allPlaylists = db.select({ id: schemaPlaylists.id, userId: schemaPlaylists.userId }).from(schemaPlaylists).all();
+    const countMap = allPlaylists.reduce((acc, curr) => {
+      acc[curr.userId] = (acc[curr.userId] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
-    const userList = users.map((u) => ({
-      ...docWithId(u),
-      playlistCount: countMap[u._id.toString()] || 0
+    const userList = allUsers.map((u) => ({
+      ...u,
+      playlistCount: countMap[u.id] || 0
     }));
 
     res.json(userList);
@@ -47,16 +49,21 @@ export function createAdminRouter() {
     }
 
     // Cascade delete
-    const userPlaylists = await db.collection('playlists').find({ userId }).toArray();
-    const playlistIds = userPlaylists.map(p => p._id.toString());
+    const { eq, inArray } = await import('drizzle-orm');
+    const { users: schemaUsers, playlists: schemaPlaylists, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, sources: schemaSources } = await import('../schema.ts');
 
-    await Promise.all([
-      db.collection('users').deleteOne({ _id: toId(userId) }),
-      db.collection('playlists').deleteMany({ userId }),
-      db.collection('mappings').deleteMany({ playlistId: { $in: playlistIds } }),
-      db.collection('categoryMappings').deleteMany({ playlistId: { $in: playlistIds } }),
-      db.collection('sources').deleteMany({ userId })
-    ]);
+    const userPlaylists = db.select({ id: schemaPlaylists.id }).from(schemaPlaylists).where(eq(schemaPlaylists.userId, userId)).all();
+    const playlistIds = userPlaylists.map(p => p.id);
+
+    db.transaction((tx) => {
+      tx.delete(schemaUsers).where(eq(schemaUsers.id, userId)).run();
+      tx.delete(schemaPlaylists).where(eq(schemaPlaylists.userId, userId)).run();
+      if (playlistIds.length > 0) {
+        tx.delete(schemaMappings).where(inArray(schemaMappings.playlistId, playlistIds)).run();
+        tx.delete(schemaCategoryMappings).where(inArray(schemaCategoryMappings.playlistId, playlistIds)).run();
+      }
+      tx.delete(schemaSources).where(eq(schemaSources.userId, userId)).run();
+    });
 
     log(`Admin deleted user ${userId} and all associated data`);
     res.json({ success: true });
