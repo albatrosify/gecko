@@ -4935,9 +4935,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
                       <div className="flex gap-1.5">
                         <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
-                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{source.username}/{source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
+                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{(playlist as any)?.extra?.sourceOverrides?.[source.id]?.username || source.username}/{(playlist as any)?.extra?.sourceOverrides?.[source.id]?.password || source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
                         </code>
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${source.username}/${source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.extra?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.extra?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
                           <ExternalLink size={11} />
                         </button>
                       </div>
