@@ -62,5 +62,14 @@ npm run dev
 - **Frontend**: React 19 + Vite + Tailwind CSS 4
 - **Backend**: Express + TypeScript (tsx)
 - **Database**: SQLite (better-sqlite3 + Drizzle ORM)
+
+## Migrating from MongoDB to SQLite
+
+If you are upgrading from an older version that used MongoDB, you can easily migrate your data:
+
+1. Ensure your MongoDB instance is running (e.g. `docker-compose up -d mongo` if you used `docker-compose.separate.yml` before).
+2. Set the `MONGODB_URI` environment variable to point to your MongoDB instance, and ensure `SQLITE_PATH` points to where you want your new SQLite database file.
+3. Run the migration script: `npx tsx scripts/migrate-mongo-to-sqlite.ts`.
+4. Your new `.db` file is ready to use! You can now stop and remove your MongoDB container.
 - **Auth**: JWT + bcrypt (local email/password)
 - **Deployment**: Docker + Docker Compose
