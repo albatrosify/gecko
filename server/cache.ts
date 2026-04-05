@@ -23,21 +23,13 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
   const db = getDb();
   
   try {
-    const row = db.select({ data: cache.data, updatedAt: cache.updatedAt })
-      .from(cache)
-      .where(
-        eq(cache.key, key)
-      )
-      .get();
-
-    if (!row) return null;
-
-    // Check expiration using simple queries, or we can just fetch and then check TTL
+    // Fetch and then check TTL
     const dbRow = db.select().from(cache).where(eq(cache.key, key)).get();
-    if (!dbRow || !dbRow.expiresAt || Date.now() > dbRow.expiresAt) {
-        if (dbRow) {
-            db.delete(cache).where(eq(cache.key, key)).run();
-        }
+
+    if (!dbRow) return null;
+
+    if (!dbRow.expiresAt || Date.now() > dbRow.expiresAt) {
+        db.delete(cache).where(eq(cache.key, key)).run();
         memoryCache.delete(key);
         return null;
     }
