@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } 
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
 import { 
-  Plus, 
+  Plus, FolderPlus, Star,
   Play, 
   Trash2, 
   Eye,
@@ -1742,6 +1742,8 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [activeTab, setActiveTab] = useState<'live' | 'vod' | 'series'>('live');
   const [categories, setCategories] = useState<any[]>([]);
+  const [customCategories, setCustomCategories] = useState<any[]>([]);
+  const [customCategoryItems, setCustomCategoryItems] = useState<any[]>([]);
   const [streams, setStreams] = useState<any[]>([]);
   const [mappings, setMappings] = useState<StreamMapping[]>([]);
   const [categoryMappings, setCategoryMappings] = useState<CategoryMapping[]>([]);
@@ -1835,7 +1837,38 @@ export function PlaylistEditor({ user }: { user: User }) {
         api.upstream.fetchStreams(s, activeTab, forceRefresh, activeSourceIds.indexOf(s.id))
       ));
       const mergedStreams = streamResults.flatMap(r => r.streams || []);
-      setStreams(mergedStreams);
+
+      // Inject copied streams from customCategoryItems
+      const cItems = await api.customCategoryItems.list(id as string);
+      const activeTabItems = cItems.filter(item => item.type === activeTab);
+      const extraStreams: any[] = [];
+
+      activeTabItems.forEach(item => {
+        const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
+        const originalStream = mergedStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+        if (originalStream) {
+          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true };
+          if (clone.stream_id) clone.stream_id = item.streamId;
+          if (clone.series_id) clone.series_id = item.streamId;
+          extraStreams.push(clone);
+        } else {
+          // Add a dummy missing item representation
+          extraStreams.push({
+            _rawId: item.streamId,
+            _uniqueId: item.streamId,
+            stream_id: item.streamId,
+            series_id: item.streamId,
+            category_id: `custom_${item.customCategoryId}`,
+            name: item.extra?.name || 'Unknown Channel',
+            stream_icon: item.extra?.stream_icon,
+            cover: item.extra?.cover,
+            _isMissing: true,
+            _isCopy: true
+          });
+        }
+      });
+
+      setStreams([...mergedStreams, ...extraStreams]);
 
       // Apply pending spotlight navigation (cross-tab: tab change cleared selections before load)
       const nav = pendingNavRef.current;
@@ -2167,7 +2200,21 @@ export function PlaylistEditor({ user }: { user: User }) {
   }, [streams, mappings, activeTab]);
 
   const sortedCategories = useMemo(() => {
-    if (!categories.length) return [];
+    let combinedCategories = [...categories];
+
+    // Inject custom categories
+    customCategories.forEach(cc => {
+      if (cc.type === activeTab) {
+        combinedCategories.push({
+          category_id: `custom_${cc.id}`,
+          category_name: cc.name,
+          id: cc.id,
+          _isCustom: true
+        });
+      }
+    });
+
+    if (!combinedCategories.length) return [];
     
     const mappingByOriginalId = new Map();
     categoryMappings.forEach(m => {
@@ -2176,8 +2223,18 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     });
 
-    const categoriesWithMapping = (categories || []).map((c) => {
+    const categoriesWithMapping = (combinedCategories || []).map((c) => {
       const catId = String(c.category_id || c.id);
+      if (c._isCustom) {
+        const cc = customCategories.find(x => x.id === c.id);
+        return {
+          ...c,
+          customName: c.category_name,
+          order: cc?.order ?? 0,
+          hidden: cc?.hidden ?? false,
+          syncOnDemand: false
+        };
+      }
       const mapping = mappingByOriginalId.get(catId);
       return { 
         ...c, 
@@ -2195,7 +2252,7 @@ export function PlaylistEditor({ user }: { user: User }) {
     if (!categorySearch.trim()) return sorted;
     const q = categorySearch.toLowerCase();
     return sorted.filter(c => (c.customName || c.category_name || c.name || '').toLowerCase().includes(q));
-  }, [categories, categoryMappings, activeTab, categorySearch, showHiddenCategories]);
+  }, [categories, categoryMappings, customCategories, activeTab, categorySearch, showHiddenCategories]);
 
   const filteredStreams = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -2906,6 +2963,26 @@ export function PlaylistEditor({ user }: { user: User }) {
                 title={showHiddenCategories ? 'Hide hidden categories' : 'Show hidden categories'}
               >
                 {showHiddenCategories ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+              <button
+                onClick={async () => {
+                  const name = window.prompt("Enter custom category name:");
+                  if (!name || !name.trim()) return;
+                  try {
+                    setLoading(true);
+                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 0, hidden: false });
+                    await refreshMappings();
+                  } catch (e) {
+                    console.error("Failed to add custom category:", e);
+                    alert("Failed to create custom category.");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="p-2 rounded-xl border bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 transition-all shrink-0"
+                title="Add Custom Category"
+              >
+                <FolderPlus size={16} />
               </button>
               {selectedCategoryIds.size > 0 && (
                 <button 
@@ -3722,6 +3799,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         ) : (
           <div className="flex flex-col truncate">
             <div className="flex items-center gap-1 min-w-0">
+              {cat._isCustom && <Star size={10} className="text-yellow-500 shrink-0" />}
               <span className={cn(
                 "text-xs font-medium truncate transition-colors",
                 isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
@@ -3742,6 +3820,21 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         "flex items-center gap-1 transition-opacity",
         isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       )}>
+        {cat._isCustom && (
+          <button
+            onClick={async (e) => {
+               e.stopPropagation();
+               if (window.confirm('Delete custom category? Streams copied here will be removed from this category.')) {
+                 await api.customCategories.remove(cat.id);
+                 onMappingChange();
+               }
+            }}
+            className="p-1 hover:bg-red-500/20 rounded text-red-500 transition-colors"
+            title="Delete Custom Category"
+          >
+            <X size={12} />
+          </button>
+        )}
         <button 
           onClick={toggleSyncOnDemand}
           className={cn(

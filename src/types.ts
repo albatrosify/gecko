@@ -57,6 +57,26 @@ export interface Playlist {
   sourceOverrides?: Record<string, { username?: string; password?: string }>;
 }
 
+export interface CustomCategory {
+  id: string;
+  playlistId: string;
+  type: 'live' | 'vod' | 'series';
+  name: string;
+  order: number;
+  hidden: boolean;
+}
+
+export interface CustomCategoryItem {
+  id: string;
+  customCategoryId: string;
+  playlistId: string;
+  type: 'live' | 'vod' | 'series';
+  upstreamStreamId: string;
+  upstreamSourceId: string;
+  streamId: string;
+  extra: any;
+}
+
 export interface CategoryMapping {
   id: string;
   playlistId: string;

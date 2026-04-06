@@ -69,6 +69,26 @@ export const cache = sqliteTable('cache', {
   expiresAt: integer('expiresAt'),
 });
 
+export const customCategories = sqliteTable('customCategories', {
+  id: text('id').primaryKey(),
+  playlistId: text('playlistId').notNull(),
+  type: text('type').notNull(), // 'live', 'vod', 'series'
+  name: text('name').notNull(),
+  order: integer('order').notNull().default(0),
+  hidden: integer('hidden', { mode: 'boolean' }).notNull().default(false),
+});
+
+export const customCategoryItems = sqliteTable('customCategoryItems', {
+  id: text('id').primaryKey(),
+  customCategoryId: text('customCategoryId').notNull(),
+  playlistId: text('playlistId').notNull(),
+  type: text('type').notNull(),
+  upstreamStreamId: text('upstreamStreamId').notNull(),
+  upstreamSourceId: text('upstreamSourceId').notNull(),
+  streamId: text('streamId').notNull(), // User-facing stable stream ID
+  extra: text('extra', { mode: 'json' }), // Snapshot of name, icon, etc.
+});
+
 export const settings = sqliteTable('settings', {
   id: text('id').primaryKey(),
   extra: text('extra', { mode: 'json' }),
