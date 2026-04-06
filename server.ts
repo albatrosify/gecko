@@ -19,6 +19,7 @@ import { createEpgsRouter } from "./server/routes/epgs.ts";
 import { createPlaylistsRouter } from "./server/routes/playlists.ts";
 import { createMappingsRouter } from "./server/routes/mappings.ts";
 import { createMigrationsRouter } from "./server/routes/migrations.ts";
+import { createCustomCategoriesRouter } from "./server/routes/customCategories.ts";
 import { createQualityScanRouter } from "./server/routes/quality-scan.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
 
@@ -88,6 +89,7 @@ async function startServer() {
     app.use('/api', createPlaylistsRouter(epgsRouter));
     app.use('/api', createMappingsRouter());
     app.use('/api', createMigrationsRouter());
+    app.use('/api', createCustomCategoriesRouter());
     app.use('/api', createQualityScanRouter());
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)

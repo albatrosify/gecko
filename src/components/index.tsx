@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } 
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
 import { 
-  Plus, 
+  Plus, FolderPlus, Star,
   Play, 
   Trash2, 
   Eye,
@@ -1742,6 +1742,8 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [activeTab, setActiveTab] = useState<'live' | 'vod' | 'series'>('live');
   const [categories, setCategories] = useState<any[]>([]);
+  const [customCategories, setCustomCategories] = useState<any[]>([]);
+  const [customCategoryItems, setCustomCategoryItems] = useState<any[]>([]);
   const [streams, setStreams] = useState<any[]>([]);
   const [mappings, setMappings] = useState<StreamMapping[]>([]);
   const [categoryMappings, setCategoryMappings] = useState<CategoryMapping[]>([]);
@@ -1774,15 +1776,19 @@ export function PlaylistEditor({ user }: { user: User }) {
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
     try {
-      const [playlistData, mappingData, catMappingData, epgData] = await Promise.all([
+      const [playlistData, mappingData, catMappingData, epgData, customCatData, customItemData] = await Promise.all([
         api.playlists.list().then(list => list.find(p => p.id === id) || null),
         api.mappings.list(id),
         api.categoryMappings.list(id),
         api.epgs.channels(id).catch(() => ({ channels: [] })),
+        api.customCategories.list(id),
+        api.customCategoryItems.list(id),
       ]);
       setPlaylist(playlistData);
       setMappings(mappingData);
       setCategoryMappings(catMappingData);
+      setCustomCategories(customCatData);
+      setCustomCategoryItems(customItemData);
       setEpgChannels(epgData.channels);
     } catch (error) {
       console.error('Failed to load playlist data:', error);
@@ -1835,7 +1841,39 @@ export function PlaylistEditor({ user }: { user: User }) {
         api.upstream.fetchStreams(s, activeTab, forceRefresh, activeSourceIds.indexOf(s.id))
       ));
       const mergedStreams = streamResults.flatMap(r => r.streams || []);
-      setStreams(mergedStreams);
+
+      // Inject copied streams from customCategoryItems
+      const cItems = await api.customCategoryItems.list(id as string);
+      const activeTabItems = cItems.filter(item => item.type === activeTab);
+      const extraStreams: any[] = [];
+
+      activeTabItems.forEach(item => {
+        const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
+        const originalStream = mergedStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+        if (originalStream) {
+          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true, _customItemId: item.id };
+          if (clone.stream_id) clone.stream_id = item.streamId;
+          if (clone.series_id) clone.series_id = item.streamId;
+          extraStreams.push(clone);
+        } else {
+          // Add a dummy missing item representation
+          extraStreams.push({
+            _rawId: item.streamId,
+            _uniqueId: item.streamId,
+            stream_id: item.streamId,
+            series_id: item.streamId,
+            category_id: `custom_${item.customCategoryId}`,
+            name: item.extra?.name || 'Unknown Channel',
+            stream_icon: item.extra?.stream_icon,
+            cover: item.extra?.cover,
+            _isMissing: true,
+            _isCopy: true,
+            _customItemId: item.id
+          });
+        }
+      });
+
+      setStreams([...mergedStreams, ...extraStreams]);
 
       // Apply pending spotlight navigation (cross-tab: tab change cleared selections before load)
       const nav = pendingNavRef.current;
@@ -2167,7 +2205,21 @@ export function PlaylistEditor({ user }: { user: User }) {
   }, [streams, mappings, activeTab]);
 
   const sortedCategories = useMemo(() => {
-    if (!categories.length) return [];
+    let combinedCategories = [...categories];
+
+    // Inject custom categories
+    customCategories.forEach(cc => {
+      if (cc.type === activeTab) {
+        combinedCategories.push({
+          category_id: `custom_${cc.id}`,
+          category_name: cc.name,
+          id: cc.id,
+          _isCustom: true
+        });
+      }
+    });
+
+    if (!combinedCategories.length) return [];
     
     const mappingByOriginalId = new Map();
     categoryMappings.forEach(m => {
@@ -2176,8 +2228,18 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     });
 
-    const categoriesWithMapping = (categories || []).map((c) => {
+    const categoriesWithMapping = (combinedCategories || []).map((c) => {
       const catId = String(c.category_id || c.id);
+      if (c._isCustom) {
+        const cc = customCategories.find(x => x.id === c.id);
+        return {
+          ...c,
+          customName: c.category_name,
+          order: cc?.order ?? 0,
+          hidden: cc?.hidden ?? false,
+          syncOnDemand: false
+        };
+      }
       const mapping = mappingByOriginalId.get(catId);
       return { 
         ...c, 
@@ -2195,7 +2257,7 @@ export function PlaylistEditor({ user }: { user: User }) {
     if (!categorySearch.trim()) return sorted;
     const q = categorySearch.toLowerCase();
     return sorted.filter(c => (c.customName || c.category_name || c.name || '').toLowerCase().includes(q));
-  }, [categories, categoryMappings, activeTab, categorySearch, showHiddenCategories]);
+  }, [categories, categoryMappings, customCategories, activeTab, categorySearch, showHiddenCategories]);
 
   const filteredStreams = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -2416,6 +2478,82 @@ export function PlaylistEditor({ user }: { user: User }) {
     }
   };
 
+  const handleBatchCopy = async (targetCustomCategoryIdStr: string, scope: 'all' | 'categories' | 'streams' | 'single', specificStream?: any) => {
+    let activeStreams: any[] = [];
+
+    if (scope === 'all') {
+      activeStreams = sortedStreams;
+    } else if (scope === 'categories') {
+      activeStreams = sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id)));
+    } else if (scope === 'streams') {
+      activeStreams = sortedStreams.filter(s => selectedStreamIds.has(String(s._uniqueId)));
+    } else if (scope === 'single' && specificStream) {
+      activeStreams = [specificStream];
+    }
+
+    if (activeStreams.length === 0) {
+      alert("No channels selected in scope.");
+      return;
+    }
+
+    let targetCustomCategoryId = targetCustomCategoryIdStr;
+    if (targetCustomCategoryIdStr.startsWith('custom_')) {
+      targetCustomCategoryId = targetCustomCategoryIdStr.substring(7);
+    }
+
+    // Find the custom category
+    const cc = customCategories.find(c => c.id === targetCustomCategoryId || c.name === targetCustomCategoryIdStr);
+    if (!cc) {
+      alert("Target custom category not found.");
+      return;
+    }
+
+    const trueCustomCategoryId = cc.id;
+
+    // Build custom category items
+    const items = activeStreams.map(stream => {
+      // Avoid copying copies for simplicity, or handle resolving their original IDs
+      if (stream._isCopy) return null;
+
+      const upstreamStreamId = String(stream.stream_id ?? stream.series_id);
+      const upstreamSourceId = playlist!.sourceIds[stream._sourceIdx ?? 0];
+      if (!upstreamSourceId) return null;
+
+      const streamId = crypto.randomUUID();
+
+      return {
+        customCategoryId: trueCustomCategoryId,
+        playlistId: id,
+        type: activeTab,
+        upstreamStreamId,
+        upstreamSourceId,
+        streamId,
+        extra: {
+          name: stream.name || stream.title || '',
+          stream_icon: stream.stream_icon,
+          cover: stream.cover
+        }
+      };
+    }).filter(Boolean);
+
+    if (items.length > 0) {
+      try {
+        setLoading(true);
+        await api.customCategoryItems.batchCreate(items);
+        await refreshMappings();
+        // Since loadData depends on these to inject clones into the UI stream array, we should re-load data.
+        await loadData(true);
+      } catch (error) {
+        console.error("Batch copy failed:", error);
+        alert("Failed to apply batch changes.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      alert("No suitable channels to copy.");
+    }
+  };
+
   const handleBatchMove = async (newCategoryId: string, scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
@@ -2552,12 +2690,16 @@ export function PlaylistEditor({ user }: { user: User }) {
 
   const refreshMappings = useCallback(async () => {
     if (!id) return;
-    const [mappingData, catMappingData] = await Promise.all([
+    const [mappingData, catMappingData, customCatData, customItemData] = await Promise.all([
       api.mappings.list(id),
       api.categoryMappings.list(id),
+      api.customCategories.list(id),
+      api.customCategoryItems.list(id),
     ]);
     setMappings(mappingData);
     setCategoryMappings(catMappingData);
+    setCustomCategories(customCatData);
+    setCustomCategoryItems(customItemData);
   }, [id]);
 
   const isPlaylistLoading = !playlist;
@@ -2907,6 +3049,26 @@ export function PlaylistEditor({ user }: { user: User }) {
               >
                 {showHiddenCategories ? <Eye size={16} /> : <EyeOff size={16} />}
               </button>
+              <button
+                onClick={async () => {
+                  const name = window.prompt("Enter custom category name:");
+                  if (!name || !name.trim()) return;
+                  try {
+                    setLoading(true);
+                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 0, hidden: false });
+                    await refreshMappings();
+                  } catch (e) {
+                    console.error("Failed to add custom category:", e);
+                    alert("Failed to create custom category.");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="p-2 rounded-xl border bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 transition-all shrink-0"
+                title="Add Custom Category"
+              >
+                <FolderPlus size={16} />
+              </button>
               {selectedCategoryIds.size > 0 && (
                 <button 
                   onClick={() => handleBatchMoveToTop('categories')}
@@ -3039,6 +3201,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                   globalFormat={globalFormat}
                   scrollToId={scrollToStreamId}
                   onScrolled={() => setScrollToStreamId(null)}
+                  onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
+                  customCategories={customCategories}
                 />
 
               </div>
@@ -3722,6 +3886,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         ) : (
           <div className="flex flex-col truncate">
             <div className="flex items-center gap-1 min-w-0">
+              {cat._isCustom && <Star size={10} className="text-yellow-500 shrink-0" />}
               <span className={cn(
                 "text-xs font-medium truncate transition-colors",
                 isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
@@ -3742,6 +3907,21 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         "flex items-center gap-1 transition-opacity",
         isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       )}>
+        {cat._isCustom && (
+          <button
+            onClick={async (e) => {
+               e.stopPropagation();
+               if (window.confirm('Delete custom category? Streams copied here will be removed from this category.')) {
+                 await api.customCategories.remove(cat.id);
+                 onMappingChange();
+               }
+            }}
+            className="p-1 hover:bg-red-500/20 rounded text-red-500 transition-colors"
+            title="Delete Custom Category"
+          >
+            <X size={12} />
+          </button>
+        )}
         <button 
           onClick={toggleSyncOnDemand}
           className={cn(
@@ -3805,7 +3985,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories }: {
 
   streams: any[];
   selectedCategoryIds: Set<string>;
@@ -3825,7 +4005,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   globalFormat?: string;
   scrollToId?: string | null;
   onScrolled?: () => void;
-
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }) {
   const filteredStreams = streams;
 
@@ -3917,7 +4098,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   playlistSourceIds,
                   playlist,
                   globalFormat,
-
+                  onBatchCopy,
+                  customCategories,
                 }}
               >
                 {VirtualStreamRow}
@@ -3980,7 +4162,8 @@ const VirtualStreamRow = React.memo(({
     playlistSourceIds,
     playlist,
     globalFormat,
-
+    onBatchCopy,
+    customCategories
   } = data;
   
   const stream = filteredStreams[index];
@@ -4030,6 +4213,8 @@ const VirtualStreamRow = React.memo(({
       epgChannels={epgChannels}
       allSources={allSources}
       playlistSourceIds={playlistSourceIds}
+      onBatchCopy={onBatchCopy}
+      customCategories={customCategories}
     />
   );
 });
@@ -4053,6 +4238,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
   allSources?: any[];
   playlistSourceIds?: string[];
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }>(({ 
   style, 
   stream, 
@@ -4071,10 +4258,15 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   isDragging, 
   epgChannels,
   allSources,
-  playlistSourceIds
+  playlistSourceIds,
+  onBatchCopy,
+  customCategories
 }, ref) => {
+  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
+
+  const availableCustomCategories = customCategories?.filter(c => c.type === type) || [];
 
   const toggleVisibility = async () => {
     try {
@@ -4137,14 +4329,18 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       )}
     >
       {/* Drag handle */}
-      <button
-        {...dragAttributes}
-        {...dragListeners}
-        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
-        onClick={e => e.stopPropagation()}
-      >
-        <GripVertical size={14} />
-      </button>
+      {stream._isMissing ? (
+        <div className="w-6 shrink-0" />
+      ) : (
+        <button
+          {...dragAttributes}
+          {...dragListeners}
+          className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
+          onClick={e => e.stopPropagation()}
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
 
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
@@ -4167,11 +4363,13 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         <div className="flex items-center gap-1 min-w-0">
           <span className={cn(
             "text-[13px] font-bold truncate transition-colors",
-            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white"
+            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white",
+            stream._isMissing && "line-through opacity-40"
           )}>
             {displayName}
           </span>
           <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
+          {stream._isMissing && <span className="text-[9px] text-red-400 font-bold shrink-0">Missing</span>}
         </div>
         {mapping?.epgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
@@ -4257,20 +4455,70 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         );
       })()}
 
-      {/* Visibility toggle */}
-      <div className="w-8 shrink-0 flex items-center justify-center">
-        <button
-          onClick={toggleVisibility}
-          className={cn(
-            "p-1 rounded transition-colors",
-            mapping?.hidden
-              ? "text-zinc-600 hover:text-zinc-300"
-              : "text-emerald-500 hover:text-emerald-400"
+      {/* Copy to Custom Category */}
+      {!stream._isCopy && availableCustomCategories.length > 0 && onBatchCopy && (
+        <div className="w-8 shrink-0 flex items-center justify-center relative">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(v => !v); }}
+            className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
+            title="Copy to Custom Category"
+          >
+            <Copy size={14} />
+          </button>
+
+          {showCopyDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
+              <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 py-1">
+                <div className="px-3 py-2 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Copy to Category</div>
+                <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                  {availableCustomCategories.map(cc => (
+                    <button
+                      key={cc.id}
+                      onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); onBatchCopy(`custom_${cc.id}`, stream); }}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors truncate flex items-center gap-2"
+                    >
+                      <Star size={10} className="text-yellow-500 shrink-0" />
+                      {cc.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
-          title={mapping?.hidden ? "Show" : "Hide"}
-        >
-          {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        </div>
+      )}
+
+      {/* Visibility toggle / Remove Missing */}
+      <div className="w-8 shrink-0 flex items-center justify-center">
+        {stream._isMissing ? (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (stream._customItemId) {
+                await api.customCategoryItems.remove(stream._customItemId);
+                onMappingChange();
+              }
+            }}
+            className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Remove Missing Stream"
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : (
+          <button
+            onClick={toggleVisibility}
+            className={cn(
+              "p-1 rounded transition-colors",
+              mapping?.hidden
+                ? "text-zinc-600 hover:text-zinc-300"
+                : "text-emerald-500 hover:text-emerald-400"
+            )}
+            title={mapping?.hidden ? "Show" : "Hide"}
+          >
+            {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        )}
       </div>
     </div>
   );
