@@ -2519,7 +2519,7 @@ export function PlaylistEditor({ user }: { user: User }) {
       const upstreamSourceId = playlist!.sourceIds[stream._sourceIdx ?? 0];
       if (!upstreamSourceId) return null;
 
-      const streamId = String(Date.now() + Math.floor(Math.random() * 1000));
+      const streamId = crypto.randomUUID();
 
       return {
         customCategoryId: trueCustomCategoryId,
@@ -3202,6 +3202,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   scrollToId={scrollToStreamId}
                   onScrolled={() => setScrollToStreamId(null)}
                   onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
+                  customCategories={customCategories}
                 />
 
               </div>
@@ -3984,7 +3985,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories }: {
 
   streams: any[];
   selectedCategoryIds: Set<string>;
@@ -4005,6 +4006,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   scrollToId?: string | null;
   onScrolled?: () => void;
   onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }) {
   const filteredStreams = streams;
 
@@ -4097,7 +4099,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   playlist,
                   globalFormat,
                   onBatchCopy,
-
+                  customCategories,
                 }}
               >
                 {VirtualStreamRow}
@@ -4160,7 +4162,8 @@ const VirtualStreamRow = React.memo(({
     playlistSourceIds,
     playlist,
     globalFormat,
-    onBatchCopy
+    onBatchCopy,
+    customCategories
   } = data;
   
   const stream = filteredStreams[index];
@@ -4210,6 +4213,8 @@ const VirtualStreamRow = React.memo(({
       epgChannels={epgChannels}
       allSources={allSources}
       playlistSourceIds={playlistSourceIds}
+      onBatchCopy={onBatchCopy}
+      customCategories={customCategories}
     />
   );
 });
@@ -4233,6 +4238,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
   allSources?: any[];
   playlistSourceIds?: string[];
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }>(({ 
   style, 
   stream, 
@@ -4251,10 +4258,15 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   isDragging, 
   epgChannels,
   allSources,
-  playlistSourceIds
+  playlistSourceIds,
+  onBatchCopy,
+  customCategories
 }, ref) => {
+  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
+
+  const availableCustomCategories = customCategories?.filter(c => c.type === type) || [];
 
   const toggleVisibility = async () => {
     try {
@@ -4317,14 +4329,18 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       )}
     >
       {/* Drag handle */}
-      <button
-        {...dragAttributes}
-        {...dragListeners}
-        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
-        onClick={e => e.stopPropagation()}
-      >
-        <GripVertical size={14} />
-      </button>
+      {stream._isMissing ? (
+        <div className="w-6 shrink-0" />
+      ) : (
+        <button
+          {...dragAttributes}
+          {...dragListeners}
+          className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
+          onClick={e => e.stopPropagation()}
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
 
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
@@ -4437,20 +4453,70 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         );
       })()}
 
-      {/* Visibility toggle */}
-      <div className="w-8 shrink-0 flex items-center justify-center">
-        <button
-          onClick={toggleVisibility}
-          className={cn(
-            "p-1 rounded transition-colors",
-            mapping?.hidden
-              ? "text-zinc-600 hover:text-zinc-300"
-              : "text-emerald-500 hover:text-emerald-400"
+      {/* Copy to Custom Category */}
+      {!stream._isCopy && availableCustomCategories.length > 0 && onBatchCopy && (
+        <div className="w-8 shrink-0 flex items-center justify-center relative">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(v => !v); }}
+            className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
+            title="Copy to Custom Category"
+          >
+            <Copy size={14} />
+          </button>
+
+          {showCopyDropdown && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
+              <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 py-1">
+                <div className="px-3 py-2 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Copy to Category</div>
+                <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                  {availableCustomCategories.map(cc => (
+                    <button
+                      key={cc.id}
+                      onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); onBatchCopy(`custom_${cc.id}`, stream); }}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors truncate flex items-center gap-2"
+                    >
+                      <Star size={10} className="text-yellow-500 shrink-0" />
+                      {cc.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
-          title={mapping?.hidden ? "Show" : "Hide"}
-        >
-          {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+        </div>
+      )}
+
+      {/* Visibility toggle / Remove Missing */}
+      <div className="w-8 shrink-0 flex items-center justify-center">
+        {stream._isMissing ? (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (stream._customItemId) {
+                await api.customCategoryItems.remove(stream._customItemId);
+                onMappingChange();
+              }
+            }}
+            className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Remove Missing Stream"
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : (
+          <button
+            onClick={toggleVisibility}
+            className={cn(
+              "p-1 rounded transition-colors",
+              mapping?.hidden
+                ? "text-zinc-600 hover:text-zinc-300"
+                : "text-emerald-500 hover:text-emerald-400"
+            )}
+            title={mapping?.hidden ? "Show" : "Hide"}
+          >
+            {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        )}
       </div>
     </div>
   );
