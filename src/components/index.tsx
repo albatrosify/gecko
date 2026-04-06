@@ -1776,15 +1776,19 @@ export function PlaylistEditor({ user }: { user: User }) {
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
     try {
-      const [playlistData, mappingData, catMappingData, epgData] = await Promise.all([
+      const [playlistData, mappingData, catMappingData, epgData, customCatData, customItemData] = await Promise.all([
         api.playlists.list().then(list => list.find(p => p.id === id) || null),
         api.mappings.list(id),
         api.categoryMappings.list(id),
         api.epgs.channels(id).catch(() => ({ channels: [] })),
+        api.customCategories.list(id),
+        api.customCategoryItems.list(id),
       ]);
       setPlaylist(playlistData);
       setMappings(mappingData);
       setCategoryMappings(catMappingData);
+      setCustomCategories(customCatData);
+      setCustomCategoryItems(customItemData);
       setEpgChannels(epgData.channels);
     } catch (error) {
       console.error('Failed to load playlist data:', error);
@@ -1847,7 +1851,7 @@ export function PlaylistEditor({ user }: { user: User }) {
         const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
         const originalStream = mergedStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
         if (originalStream) {
-          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true };
+          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true, _customItemId: item.id };
           if (clone.stream_id) clone.stream_id = item.streamId;
           if (clone.series_id) clone.series_id = item.streamId;
           extraStreams.push(clone);
@@ -1863,7 +1867,8 @@ export function PlaylistEditor({ user }: { user: User }) {
             stream_icon: item.extra?.stream_icon,
             cover: item.extra?.cover,
             _isMissing: true,
-            _isCopy: true
+            _isCopy: true,
+            _customItemId: item.id
           });
         }
       });
@@ -2473,6 +2478,82 @@ export function PlaylistEditor({ user }: { user: User }) {
     }
   };
 
+  const handleBatchCopy = async (targetCustomCategoryIdStr: string, scope: 'all' | 'categories' | 'streams' | 'single', specificStream?: any) => {
+    let activeStreams: any[] = [];
+
+    if (scope === 'all') {
+      activeStreams = sortedStreams;
+    } else if (scope === 'categories') {
+      activeStreams = sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id)));
+    } else if (scope === 'streams') {
+      activeStreams = sortedStreams.filter(s => selectedStreamIds.has(String(s._uniqueId)));
+    } else if (scope === 'single' && specificStream) {
+      activeStreams = [specificStream];
+    }
+
+    if (activeStreams.length === 0) {
+      alert("No channels selected in scope.");
+      return;
+    }
+
+    let targetCustomCategoryId = targetCustomCategoryIdStr;
+    if (targetCustomCategoryIdStr.startsWith('custom_')) {
+      targetCustomCategoryId = targetCustomCategoryIdStr.substring(7);
+    }
+
+    // Find the custom category
+    const cc = customCategories.find(c => c.id === targetCustomCategoryId || c.name === targetCustomCategoryIdStr);
+    if (!cc) {
+      alert("Target custom category not found.");
+      return;
+    }
+
+    const trueCustomCategoryId = cc.id;
+
+    // Build custom category items
+    const items = activeStreams.map(stream => {
+      // Avoid copying copies for simplicity, or handle resolving their original IDs
+      if (stream._isCopy) return null;
+
+      const upstreamStreamId = String(stream.stream_id ?? stream.series_id);
+      const upstreamSourceId = playlist!.sourceIds[stream._sourceIdx ?? 0];
+      if (!upstreamSourceId) return null;
+
+      const streamId = String(Date.now() + Math.floor(Math.random() * 1000));
+
+      return {
+        customCategoryId: trueCustomCategoryId,
+        playlistId: id,
+        type: activeTab,
+        upstreamStreamId,
+        upstreamSourceId,
+        streamId,
+        extra: {
+          name: stream.name || stream.title || '',
+          stream_icon: stream.stream_icon,
+          cover: stream.cover
+        }
+      };
+    }).filter(Boolean);
+
+    if (items.length > 0) {
+      try {
+        setLoading(true);
+        await api.customCategoryItems.batchCreate(items);
+        await refreshMappings();
+        // Since loadData depends on these to inject clones into the UI stream array, we should re-load data.
+        await loadData(true);
+      } catch (error) {
+        console.error("Batch copy failed:", error);
+        alert("Failed to apply batch changes.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      alert("No suitable channels to copy.");
+    }
+  };
+
   const handleBatchMove = async (newCategoryId: string, scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
@@ -2609,12 +2690,16 @@ export function PlaylistEditor({ user }: { user: User }) {
 
   const refreshMappings = useCallback(async () => {
     if (!id) return;
-    const [mappingData, catMappingData] = await Promise.all([
+    const [mappingData, catMappingData, customCatData, customItemData] = await Promise.all([
       api.mappings.list(id),
       api.categoryMappings.list(id),
+      api.customCategories.list(id),
+      api.customCategoryItems.list(id),
     ]);
     setMappings(mappingData);
     setCategoryMappings(catMappingData);
+    setCustomCategories(customCatData);
+    setCustomCategoryItems(customItemData);
   }, [id]);
 
   const isPlaylistLoading = !playlist;
@@ -3116,6 +3201,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   globalFormat={globalFormat}
                   scrollToId={scrollToStreamId}
                   onScrolled={() => setScrollToStreamId(null)}
+                  onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
                 />
 
               </div>
@@ -3898,7 +3984,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy }: {
 
   streams: any[];
   selectedCategoryIds: Set<string>;
@@ -3918,7 +4004,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   globalFormat?: string;
   scrollToId?: string | null;
   onScrolled?: () => void;
-
+  onBatchCopy?: (target: string, stream?: any) => void;
 }) {
   const filteredStreams = streams;
 
@@ -4010,6 +4096,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   playlistSourceIds,
                   playlist,
                   globalFormat,
+                  onBatchCopy,
 
                 }}
               >
@@ -4073,7 +4160,7 @@ const VirtualStreamRow = React.memo(({
     playlistSourceIds,
     playlist,
     globalFormat,
-
+    onBatchCopy
   } = data;
   
   const stream = filteredStreams[index];

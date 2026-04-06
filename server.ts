@@ -89,7 +89,7 @@ async function startServer() {
     app.use('/api', createPlaylistsRouter(epgsRouter));
     app.use('/api', createMappingsRouter());
     app.use('/api', createMigrationsRouter());
-app.use('/api', createCustomCategoriesRouter());
+    app.use('/api', createCustomCategoriesRouter());
     app.use('/api', createQualityScanRouter());
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)

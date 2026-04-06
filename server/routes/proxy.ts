@@ -481,6 +481,20 @@ export function createProxyRouter() {
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
 
+           const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'live'))).all();
+           const copiedStreams = customItems.map(item => {
+             const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
+             const original = data.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+             if (!original) return null;
+
+             const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+             const extra = item.extra as any || {};
+             if (extra.name) clone.name = extra.name;
+             if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+             return clone;
+           }).filter(Boolean);
+           data = [...data, ...copiedStreams];
+
            const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
 
@@ -657,6 +671,19 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'vod'))).all();
+            const copiedStreams = customItems.map(item => {
+              const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
+              const original = data.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+              if (!original) return null;
+              const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+              const extra = item.extra as any || {};
+              if (extra.name) clone.name = extra.name;
+              if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+              return clone;
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
+
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
 
@@ -818,6 +845,19 @@ export function createProxyRouter() {
 
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
+
+            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'series'))).all();
+            const copiedStreams = customItems.map(item => {
+              const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
+              const original = data.find((s: any) => String(s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+              if (!original) return null;
+              const clone = { ...original, series_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+              const extra = item.extra as any || {};
+              if (extra.name) clone.name = extra.name;
+              if (extra.cover) clone.cover = extra.cover;
+              return clone;
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
 
             const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
@@ -1078,7 +1118,7 @@ export function createProxyRouter() {
     if (!playlist) return res.status(401).send("Invalid credentials");
 
     const db = getDb();
-    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
     const { eq, inArray, and } = await import('drizzle-orm');
 
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
@@ -1129,6 +1169,19 @@ export function createProxyRouter() {
       }));
 
       let rawStreams = allResults.flat();
+
+      const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, activeTabStr))).all();
+      const copiedStreams = customItems.map(item => {
+        const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
+        const original = rawStreams.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+        if (!original) return null;
+        const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+        const extra = item.extra as any || {};
+        if (extra.name) clone.name = extra.name;
+        if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+        return clone;
+      }).filter(Boolean);
+      rawStreams = [...rawStreams, ...copiedStreams];
 
       const catMap = new Map(catMappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
       const mappingMap = new Map(mappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
