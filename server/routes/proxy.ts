@@ -456,6 +456,18 @@ export function createProxyRouter() {
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
 
+           // Process copied streams
+           const copiedStreamMappings = mappings.filter(m => String(m.originalId).startsWith('copy_'));
+           const copiedStreams = copiedStreamMappings.map(m => {
+             const match = String(m.originalId).match(/^copy_[^_]+_(.+)$/);
+             if (!match) return null;
+             const realId = match[1];
+             const original = data.find((s: any) => String(s.stream_id) === realId || `${s._sourceIdx}_${s.stream_id}` === realId);
+             if (!original) return null; // If upstream removed, copy vanishes too.
+             return { ...original, stream_id: m.originalId, category_id: m.categoryId, _rawId: m.originalId, _isCopy: true };
+           }).filter(Boolean);
+           data = [...data, ...copiedStreams];
+
            const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
 
@@ -625,6 +637,18 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            // Process copied streams
+            const copiedStreamMappings = mappings.filter(m => String(m.originalId).startsWith('copy_'));
+            const copiedStreams = copiedStreamMappings.map(m => {
+              const match = String(m.originalId).match(/^copy_[^_]+_(.+)$/);
+              if (!match) return null;
+              const realId = match[1];
+              const original = data.find((s: any) => String(s.stream_id) === realId || `${s._sourceIdx}_${s.stream_id}` === realId);
+              if (!original) return null; // If upstream removed, copy vanishes too. If modified, we get fresh data.
+              return { ...original, stream_id: m.originalId, category_id: m.categoryId, _rawId: m.originalId, _isCopy: true };
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
+
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
 
@@ -779,6 +803,18 @@ export function createProxyRouter() {
 
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
+
+            // Process copied streams
+            const copiedStreamMappings = mappings.filter(m => String(m.originalId).startsWith('copy_'));
+            const copiedStreams = copiedStreamMappings.map(m => {
+              const match = String(m.originalId).match(/^copy_[^_]+_(.+)$/);
+              if (!match) return null;
+              const realId = match[1];
+              const original = data.find((s: any) => String(s.series_id) === realId || `${s._sourceIdx}_${s.series_id}` === realId);
+              if (!original) return null;
+              return { ...original, series_id: m.originalId, category_id: m.categoryId, _rawId: m.originalId, _isCopy: true };
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
 
             const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
@@ -1090,6 +1126,18 @@ export function createProxyRouter() {
       }));
 
       let rawStreams = allResults.flat();
+
+      // Process copied streams
+      const copiedStreamMappings = mappings.filter(m => m.type === activeTabStr && String(m.originalId).startsWith('copy_'));
+      const copiedStreams = copiedStreamMappings.map(m => {
+        const match = String(m.originalId).match(/^copy_[^_]+_(.+)$/);
+        if (!match) return null;
+        const realId = match[1];
+        const original = rawStreams.find((s: any) => String(s.stream_id) === realId || `${s._sourceIdx}_${s.stream_id}` === realId);
+        if (!original) return null;
+        return { ...original, stream_id: m.originalId, category_id: m.categoryId, _rawId: m.originalId, _isCopy: true };
+      }).filter(Boolean);
+      rawStreams = [...rawStreams, ...copiedStreams];
 
       const catMap = new Map(catMappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
       const mappingMap = new Map(mappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
