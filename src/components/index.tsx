@@ -4363,11 +4363,13 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         <div className="flex items-center gap-1 min-w-0">
           <span className={cn(
             "text-[13px] font-bold truncate transition-colors",
-            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white"
+            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white",
+            stream._isMissing && "line-through opacity-40"
           )}>
             {displayName}
           </span>
           <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
+          {stream._isMissing && <span className="text-[9px] text-red-400 font-bold shrink-0">Missing</span>}
         </div>
         {mapping?.epgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
