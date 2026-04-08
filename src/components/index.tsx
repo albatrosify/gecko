@@ -50,6 +50,7 @@ import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import axios from 'axios';
 import { computeDisplayName, resolutionToLabel } from '../quality';
+import { WebPlayer } from './WebPlayer';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -1766,6 +1767,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [autoMatchRematch, setAutoMatchRematch] = useState(false);
   const [scrollToStreamId, setScrollToStreamId] = useState<string | null>(null);
   const pendingNavRef = useRef<{ categoryId: string; streamId: string } | null>(null);
+  const [playerInfo, setPlayerInfo] = useState<{ url: string, title: string } | null>(null);
 
   useEffect(() => {
     api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {
@@ -3231,9 +3233,14 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onBatchApply={selectedStreamIds.size > 1 ? (rules) => handleBatchApplyRegex(rules, 'streams') : undefined}
                     onBatchVisibility={selectedStreamIds.size > 1 ? (hidden) => handleBatchVisibility(hidden, 'streams') : undefined}
                     onBatchMoveToTop={selectedStreamIds.size > 1 ? () => handleBatchMoveToTop('streams') : undefined}
+                    onPlay={(url, title) => setPlayerInfo({ url, title })}
                   />
                 );
               })()}
+
+              {playerInfo && (
+                <WebPlayer url={playerInfo.url} title={playerInfo.title} onClose={() => setPlayerInfo(null)} />
+              )}
 
               {selectedStreamIds.size === 0 && selectedCategoryIds.size > 0 && (
                 <CategoryPane
@@ -4761,7 +4768,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
   );
 }
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop, onPlay }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
@@ -4777,6 +4784,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   onBatchApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchVisibility?: (hidden: boolean) => void;
   onBatchMoveToTop?: () => void;
+  onPlay?: (url: string, title: string) => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
@@ -5267,7 +5275,11 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
                           {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/{(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
                         </code>
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.extra?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.extra?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                        {/* Play Upstream URL */}
+                        {onPlay && <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
+                          <Play size={11} />
+                        </button>}
+                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                           <ExternalLink size={11} />
                         </button>
                       </div>
@@ -5279,7 +5291,11 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                           <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-emerald-500/70 break-all font-mono border border-emerald-500/10">
                             {window.location.origin}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{playlist.username}/{playlist.password}/{stream.stream_id || stream.series_id}{type === 'live' ? '.ts' : '.mp4'}
                           </code>
-                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                          {/* Play Proxy URL */}
+                          {onPlay && <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
+                            <Play size={11} />
+                          </button>}
+                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                             <ExternalLink size={11} />
                           </button>
                         </div>
