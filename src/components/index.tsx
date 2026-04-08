@@ -4960,13 +4960,19 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
           </p>
         </div>
-        {!isMulti && onPlay && playlist && (
+        {!isMulti && onPlay && playlist && source && (
            <button
              onClick={() => {
-               const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+               let url;
+               if (playlist.directStreams) {
+                 url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+               } else {
+                 url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+               }
                onPlay(url, customName || originalName || "Stream");
              }}
              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
+             title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
            >
              <Play size={12} fill="currentColor" />
              Play
