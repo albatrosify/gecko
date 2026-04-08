@@ -4960,6 +4960,18 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
           </p>
         </div>
+        {!isMulti && onPlay && playlist && (
+           <button
+             onClick={() => {
+               const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+               onPlay(url, customName || originalName || "Stream");
+             }}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
+           >
+             <Play size={12} fill="currentColor" />
+             Play
+           </button>
+        )}
         <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-100 shrink-0">
           <X size={16} />
         </button>
