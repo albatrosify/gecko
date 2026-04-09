@@ -1,0 +1,8 @@
+
+> gecko@0.4.0 dev
+> tsx server.ts
+
+Initializing log file at: /app/data/server.log
+Log file ready.
+[10:27:57 AM] Starting server...
+[10:27:57 AM] Failed to start server: JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons. Please check your .env file or Docker environment configuration.
