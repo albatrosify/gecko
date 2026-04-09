@@ -74,12 +74,13 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     setActiveAudioTrack(-1);
     setActiveTextTrack(-1);
 
-    const initMpegts = () => {
+    const initMpegts = (forceNoAudio = false) => {
       if (mpegts.isSupported()) {
         const player = mpegts.createPlayer({
           type: 'mpegts',
           isLive: true,
           url: url,
+          hasAudio: forceNoAudio ? false : undefined, // If true, forces fallback mode without audio
         }, {
           enableStashBuffer: false,
           stashInitialSize: 128,
@@ -93,21 +94,31 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
           console.warn('mpegts error:', errorType, errorDetail, errorInfo);
           if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-            // AC3/Dolby is often unsupported. Log and try to continue or fallback.
             console.log('Media error, possibly unsupported codec like AC3.');
           }
         });
 
-        // Prevent uncaught promise rejections on appendBuffer failures
+        // Prevent uncaught promise rejections on appendBuffer failures and attempt to recover without audio
         const unhandledRejectionHandler = (e: PromiseRejectionEvent) => {
           if (e.reason && e.reason.name === 'NotSupportedError') {
-             // Suppress the console error from terminating the process
              e.preventDefault();
+             if (!forceNoAudio) {
+               console.warn("Unsupported audio codec detected. Restarting stream with video only...");
+               // Clean up the broken player
+               if (mpegtsPlayerRef.current) {
+                 try { mpegtsPlayerRef.current.destroy(); } catch (e) {}
+                 mpegtsPlayerRef.current = null;
+               }
+               // Remove this specific listener so it doesn't leak or fire twice
+               window.removeEventListener('unhandledrejection', unhandledRejectionHandler);
+               // Re-initialize without audio
+               initMpegts(true);
+             }
           }
         };
         window.addEventListener('unhandledrejection', unhandledRejectionHandler);
 
-        // Save reference to handler to remove it later
+        // Save reference to handler to remove it later on unmount
         (player as any)._customRejectionHandler = unhandledRejectionHandler;
 
         mpegtsPlayerRef.current = player;
@@ -118,7 +129,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           playPromise.catch(e => console.log('Auto-play blocked', e));
         }
       } else {
-        // Fallback to native if not supported (though rare for modern browsers without MSE)
         video.src = url;
       }
     };
