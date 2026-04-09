@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
 import { 
@@ -4015,6 +4016,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onBatchCopy?: (target: string, stream?: any) => void;
   customCategories?: any[];
 }) {
+  const showCopyColumn = (customCategories?.filter(c => c.type === activeTab).length ?? 0) > 0 && !!onBatchCopy;
+
   const filteredStreams = streams;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -4079,6 +4082,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             <div className="w-16 shrink-0 text-center">HDR</div>
             <div className="w-20 shrink-0 text-center">Audio</div>
             <div className="w-12 shrink-0 text-center">Res</div>
+            {showCopyColumn && <div className="w-8 shrink-0" />}
             <div className="w-8 shrink-0 text-center">Vis</div>
           </div>
           <div className="flex-1 min-h-0">
@@ -4270,6 +4274,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   customCategories
 }, ref) => {
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
+  const [copyDropdownPos, setCopyDropdownPos] = useState({ top: 0, right: 0 });
+  const copyBtnRef = useRef<HTMLButtonElement>(null);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
 
@@ -4463,20 +4469,37 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       })()}
 
       {/* Copy to Custom Category */}
-      {!stream._isCopy && availableCustomCategories.length > 0 && onBatchCopy && (
-        <div className="w-8 shrink-0 flex items-center justify-center relative">
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(v => !v); }}
-            className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
-            title="Copy to Custom Category"
-          >
-            <Copy size={14} />
-          </button>
+      {availableCustomCategories.length > 0 && onBatchCopy && (
+        <div className="w-8 shrink-0 flex items-center justify-center">
+          {!stream._isCopy && (
+            <button
+              ref={copyBtnRef}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!showCopyDropdown) {
+                  const rect = copyBtnRef.current?.getBoundingClientRect();
+                  if (rect) {
+                    setCopyDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                  }
+                  setShowCopyDropdown(true);
+                } else {
+                  setShowCopyDropdown(false);
+                }
+              }}
+              className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
+              title="Copy to Custom Category"
+            >
+              <Copy size={14} />
+            </button>
+          )}
 
-          {showCopyDropdown && (
+          {!stream._isCopy && showCopyDropdown && createPortal(
             <>
-              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
-              <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 py-1">
+              <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
+              <div
+                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-48"
+                style={{ top: copyDropdownPos.top, right: copyDropdownPos.right }}
+              >
                 <div className="px-3 py-2 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Copy to Category</div>
                 <div className="max-h-48 overflow-y-auto custom-scrollbar">
                   {availableCustomCategories.map(cc => (
@@ -4491,7 +4514,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
                   ))}
                 </div>
               </div>
-            </>
+            </>,
+            document.body
           )}
         </div>
       )}
