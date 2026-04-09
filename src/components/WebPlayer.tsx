@@ -54,11 +54,15 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
     // Cleanup previous players
     if (mpegtsPlayerRef.current) {
-      mpegtsPlayerRef.current.destroy();
+      try {
+        mpegtsPlayerRef.current.destroy();
+      } catch (e) {}
       mpegtsPlayerRef.current = null;
     }
     if (hlsPlayerRef.current) {
-      hlsPlayerRef.current.destroy();
+      try {
+        hlsPlayerRef.current.destroy();
+      } catch (e) {}
       hlsPlayerRef.current = null;
     }
 
@@ -159,10 +163,16 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       if (mpegtsPlayerRef.current) {
-        mpegtsPlayerRef.current.destroy();
+        try {
+          mpegtsPlayerRef.current.destroy();
+        } catch (e) {}
+        mpegtsPlayerRef.current = null;
       }
       if (hlsPlayerRef.current) {
-        hlsPlayerRef.current.destroy();
+        try {
+          hlsPlayerRef.current.destroy();
+        } catch (e) {}
+        hlsPlayerRef.current = null;
       }
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
