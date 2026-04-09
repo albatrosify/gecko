@@ -54,6 +54,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
     // Cleanup previous players
     if (mpegtsPlayerRef.current) {
+      if ((mpegtsPlayerRef.current as any)._customRejectionHandler) {
+        window.removeEventListener('unhandledrejection', (mpegtsPlayerRef.current as any)._customRejectionHandler);
+      }
       try {
         mpegtsPlayerRef.current.destroy();
       } catch (e) {}
@@ -77,7 +80,36 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           type: 'mpegts',
           isLive: true,
           url: url,
+        }, {
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+          lazyLoad: false,
+          deferLoadAfterSourceOpen: false,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 3,
+          liveBufferLatencyMinRemain: 1,
         });
+
+        player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+          console.warn('mpegts error:', errorType, errorDetail, errorInfo);
+          if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
+            // AC3/Dolby is often unsupported. Log and try to continue or fallback.
+            console.log('Media error, possibly unsupported codec like AC3.');
+          }
+        });
+
+        // Prevent uncaught promise rejections on appendBuffer failures
+        const unhandledRejectionHandler = (e: PromiseRejectionEvent) => {
+          if (e.reason && e.reason.name === 'NotSupportedError') {
+             // Suppress the console error from terminating the process
+             e.preventDefault();
+          }
+        };
+        window.addEventListener('unhandledrejection', unhandledRejectionHandler);
+
+        // Save reference to handler to remove it later
+        (player as any)._customRejectionHandler = unhandledRejectionHandler;
+
         mpegtsPlayerRef.current = player;
         player.attachMediaElement(video);
         player.load();
@@ -163,6 +195,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
       if (mpegtsPlayerRef.current) {
+        if ((mpegtsPlayerRef.current as any)._customRejectionHandler) {
+          window.removeEventListener('unhandledrejection', (mpegtsPlayerRef.current as any)._customRejectionHandler);
+        }
         try {
           mpegtsPlayerRef.current.destroy();
         } catch (e) {}
