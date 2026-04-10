@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
 import { 
-  Plus, 
+  Plus, FolderPlus, Star,
   Play, 
   Trash2, 
   Eye,
@@ -50,6 +51,7 @@ import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
 import axios from 'axios';
 import { computeDisplayName, resolutionToLabel } from '../quality';
+import { WebPlayer } from './WebPlayer';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -409,8 +411,9 @@ export function PlaylistManager({ user }: { user: User }) {
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
-  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '' });
+  const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '', sourceOverrides: {} as Record<string, { username?: string; password?: string }> });
   const [availableEpgs, setAvailableEpgs] = useState<any[]>([]);
+  const [sources, setSources] = useState<UpstreamSource[]>([]);
 
   const loadPlaylists = useCallback(async () => {
     try {
@@ -426,6 +429,7 @@ export function PlaylistManager({ user }: { user: User }) {
     api.epgs.list().then(setAvailableEpgs).catch(() => {
       // Ignore EPG load errors: non-critical for initial render
     });
+    api.sources.list().then(setSources).catch(() => {});
   }, [loadPlaylists]);
 
   const handleAdd = async () => {
@@ -720,6 +724,48 @@ export function PlaylistManager({ user }: { user: User }) {
                 )}
               </div>
               <div className="pt-4 border-t border-zinc-800 space-y-3">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Upstream Source Overrides</label>
+                <p className="text-[10px] text-zinc-600 mt-1">Optionally specify different credentials to authenticate with the upstream sources.</p>
+                <div className="space-y-4 max-h-60 overflow-y-auto custom-scrollbar">
+                  {editingPlaylist.sourceIds.map(sourceId => {
+                    const source = sources.find(s => s.id === sourceId);
+                    if (!source) return null;
+                    const override = editData.sourceOverrides[sourceId] || { username: '', password: '' };
+                    return (
+                      <div key={sourceId} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+                        <div className="text-xs font-bold text-zinc-400">{source.name}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            placeholder="Override Username"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            value={override.username || ''}
+                            onChange={e => setEditData({
+                              ...editData,
+                              sourceOverrides: {
+                                ...editData.sourceOverrides,
+                                [sourceId]: { ...override, username: e.target.value }
+                              }
+                            })}
+                          />
+                          <input
+                            placeholder="Override Password"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            value={override.password || ''}
+                            onChange={e => setEditData({
+                              ...editData,
+                              sourceOverrides: {
+                                ...editData.sourceOverrides,
+                                [sourceId]: { ...override, password: e.target.value }
+                              }
+                            })}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="pt-4 border-t border-zinc-800 space-y-3">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
                 <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
                 <textarea
@@ -791,7 +837,7 @@ export function PlaylistManager({ user }: { user: User }) {
                 <button 
                   onClick={() => {
                     setEditingPlaylist(playlist);
-                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '' });
+                    setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '', sourceOverrides: playlist.sourceOverrides || {} });
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 
@@ -1698,6 +1744,8 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [activeTab, setActiveTab] = useState<'live' | 'vod' | 'series'>('live');
   const [categories, setCategories] = useState<any[]>([]);
+  const [customCategories, setCustomCategories] = useState<any[]>([]);
+  const [customCategoryItems, setCustomCategoryItems] = useState<any[]>([]);
   const [streams, setStreams] = useState<any[]>([]);
   const [mappings, setMappings] = useState<StreamMapping[]>([]);
   const [categoryMappings, setCategoryMappings] = useState<CategoryMapping[]>([]);
@@ -1720,6 +1768,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [autoMatchRematch, setAutoMatchRematch] = useState(false);
   const [scrollToStreamId, setScrollToStreamId] = useState<string | null>(null);
   const pendingNavRef = useRef<{ categoryId: string; streamId: string } | null>(null);
+  const [playerInfo, setPlayerInfo] = useState<{ url: string, title: string } | null>(null);
 
   useEffect(() => {
     api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {
@@ -1730,15 +1779,19 @@ export function PlaylistEditor({ user }: { user: User }) {
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
     try {
-      const [playlistData, mappingData, catMappingData, epgData] = await Promise.all([
+      const [playlistData, mappingData, catMappingData, epgData, customCatData, customItemData] = await Promise.all([
         api.playlists.list().then(list => list.find(p => p.id === id) || null),
         api.mappings.list(id),
         api.categoryMappings.list(id),
         api.epgs.channels(id).catch(() => ({ channels: [] })),
+        api.customCategories.list(id),
+        api.customCategoryItems.list(id),
       ]);
       setPlaylist(playlistData);
       setMappings(mappingData);
       setCategoryMappings(catMappingData);
+      setCustomCategories(customCatData);
+      setCustomCategoryItems(customItemData);
       setEpgChannels(epgData.channels);
     } catch (error) {
       console.error('Failed to load playlist data:', error);
@@ -1791,7 +1844,39 @@ export function PlaylistEditor({ user }: { user: User }) {
         api.upstream.fetchStreams(s, activeTab, forceRefresh, activeSourceIds.indexOf(s.id))
       ));
       const mergedStreams = streamResults.flatMap(r => r.streams || []);
-      setStreams(mergedStreams);
+
+      // Inject copied streams from customCategoryItems
+      const cItems = await api.customCategoryItems.list(id as string);
+      const activeTabItems = cItems.filter(item => item.type === activeTab);
+      const extraStreams: any[] = [];
+
+      activeTabItems.forEach(item => {
+        const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
+        const originalStream = mergedStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+        if (originalStream) {
+          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true, _customItemId: item.id };
+          if (clone.stream_id) clone.stream_id = item.streamId;
+          if (clone.series_id) clone.series_id = item.streamId;
+          extraStreams.push(clone);
+        } else {
+          // Add a dummy missing item representation
+          extraStreams.push({
+            _rawId: item.streamId,
+            _uniqueId: item.streamId,
+            stream_id: item.streamId,
+            series_id: item.streamId,
+            category_id: `custom_${item.customCategoryId}`,
+            name: item.extra?.name || 'Unknown Channel',
+            stream_icon: item.extra?.stream_icon,
+            cover: item.extra?.cover,
+            _isMissing: true,
+            _isCopy: true,
+            _customItemId: item.id
+          });
+        }
+      });
+
+      setStreams([...mergedStreams, ...extraStreams]);
 
       // Apply pending spotlight navigation (cross-tab: tab change cleared selections before load)
       const nav = pendingNavRef.current;
@@ -2123,7 +2208,21 @@ export function PlaylistEditor({ user }: { user: User }) {
   }, [streams, mappings, activeTab]);
 
   const sortedCategories = useMemo(() => {
-    if (!categories.length) return [];
+    let combinedCategories = [...categories];
+
+    // Inject custom categories
+    customCategories.forEach(cc => {
+      if (cc.type === activeTab) {
+        combinedCategories.push({
+          category_id: `custom_${cc.id}`,
+          category_name: cc.name,
+          id: cc.id,
+          _isCustom: true
+        });
+      }
+    });
+
+    if (!combinedCategories.length) return [];
     
     const mappingByOriginalId = new Map();
     categoryMappings.forEach(m => {
@@ -2132,8 +2231,18 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     });
 
-    const categoriesWithMapping = (categories || []).map((c) => {
+    const categoriesWithMapping = (combinedCategories || []).map((c) => {
       const catId = String(c.category_id || c.id);
+      if (c._isCustom) {
+        const cc = customCategories.find(x => x.id === c.id);
+        return {
+          ...c,
+          customName: c.category_name,
+          order: cc?.order ?? 0,
+          hidden: cc?.hidden ?? false,
+          syncOnDemand: false
+        };
+      }
       const mapping = mappingByOriginalId.get(catId);
       return { 
         ...c, 
@@ -2151,7 +2260,7 @@ export function PlaylistEditor({ user }: { user: User }) {
     if (!categorySearch.trim()) return sorted;
     const q = categorySearch.toLowerCase();
     return sorted.filter(c => (c.customName || c.category_name || c.name || '').toLowerCase().includes(q));
-  }, [categories, categoryMappings, activeTab, categorySearch, showHiddenCategories]);
+  }, [categories, categoryMappings, customCategories, activeTab, categorySearch, showHiddenCategories]);
 
   const filteredStreams = useMemo(() => {
     const searchLower = searchTerm.toLowerCase();
@@ -2203,20 +2312,25 @@ export function PlaylistEditor({ user }: { user: User }) {
     loadPlaylistData();
   };
 
-  const applyRegex = (name: string, rules: { pattern: string; replacement: string }[] = []) => {
+  const applyRegex = (name: string, rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[] = []) => {
     let newName = name;
     rules.forEach(rule => {
-      try {
-        const re = new RegExp(rule.pattern, 'g');
-        newName = newName.replace(re, rule.replacement);
-      } catch (e) {
-        // Invalid regex
+      if (!rule.pattern) return;
+      if (rule.type === 'string') {
+        newName = newName.split(rule.pattern).join(rule.replacement);
+      } else {
+        try {
+          const re = new RegExp(rule.pattern, 'g');
+          newName = newName.replace(re, rule.replacement);
+        } catch (e) {
+          // Invalid regex
+        }
       }
     });
     return newName;
   };
 
-  const handleBatchApplyRegex = async (rules: { pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
+  const handleBatchApplyRegex = async (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[], scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
     if (scope === 'all') {
@@ -2241,15 +2355,7 @@ export function PlaylistEditor({ user }: { user: User }) {
       let newName = existingMapping?.customName || originalName;
       const initialName = newName;
 
-      rules.forEach(rule => {
-        try {
-          if (!rule.pattern) return;
-          const re = new RegExp(rule.pattern, 'g');
-          newName = newName.replace(re, rule.replacement);
-        } catch(e) {
-          // Ignore invalid regex patterns
-        }
-      });
+      newName = applyRegex(newName, rules);
 
       if (newName === initialName) return null;
 
@@ -2270,6 +2376,53 @@ export function PlaylistEditor({ user }: { user: User }) {
       } catch (error) {
         console.error("Batch update failed:", error);
         alert("Failed to apply batch changes.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      alert("No changes to apply.");
+    }
+  };
+
+  const handleBatchCategoryApplyRegex = async (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => {
+    if (selectedCategoryIds.size === 0) {
+      alert("No categories selected.");
+      return;
+    }
+
+    const mappingLookup = new Map(categoryMappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+
+    const updates = Array.from(selectedCategoryIds).map(catId => {
+      const existingMapping = mappingLookup.get(catId);
+      const cat = categories.find(c => String(c.category_id || c.id) === catId);
+      const originalName = cat?.category_name || cat?.name || "";
+      let newName = existingMapping?.customName || originalName;
+      const initialName = newName;
+
+      newName = applyRegex(newName, rules);
+
+      if (newName === initialName) return null;
+
+      return {
+        id: existingMapping?.id,
+        originalId: catId,
+        playlistId: id,
+        type: activeTab,
+        customName: newName,
+        originalName: originalName,
+        order: existingMapping?.order || 0,
+        hidden: existingMapping?.hidden || false
+      };
+    }).filter(Boolean);
+
+    if (updates.length > 0) {
+      try {
+        setLoading(true);
+        await api.categoryMappings.batchUpdate(updates as any[]);
+        await refreshMappings();
+      } catch (error) {
+        console.error("Batch category rename failed:", error);
+        alert("Failed to apply batch changes to categories.");
       } finally {
         setLoading(false);
       }
@@ -2325,6 +2478,82 @@ export function PlaylistEditor({ user }: { user: User }) {
       }
     } else {
       alert("No changes to apply.");
+    }
+  };
+
+  const handleBatchCopy = async (targetCustomCategoryIdStr: string, scope: 'all' | 'categories' | 'streams' | 'single', specificStream?: any) => {
+    let activeStreams: any[] = [];
+
+    if (scope === 'all') {
+      activeStreams = sortedStreams;
+    } else if (scope === 'categories') {
+      activeStreams = sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id)));
+    } else if (scope === 'streams') {
+      activeStreams = sortedStreams.filter(s => selectedStreamIds.has(String(s._uniqueId)));
+    } else if (scope === 'single' && specificStream) {
+      activeStreams = [specificStream];
+    }
+
+    if (activeStreams.length === 0) {
+      alert("No channels selected in scope.");
+      return;
+    }
+
+    let targetCustomCategoryId = targetCustomCategoryIdStr;
+    if (targetCustomCategoryIdStr.startsWith('custom_')) {
+      targetCustomCategoryId = targetCustomCategoryIdStr.substring(7);
+    }
+
+    // Find the custom category
+    const cc = customCategories.find(c => c.id === targetCustomCategoryId || c.name === targetCustomCategoryIdStr);
+    if (!cc) {
+      alert("Target custom category not found.");
+      return;
+    }
+
+    const trueCustomCategoryId = cc.id;
+
+    // Build custom category items
+    const items = activeStreams.map(stream => {
+      // Avoid copying copies for simplicity, or handle resolving their original IDs
+      if (stream._isCopy) return null;
+
+      const upstreamStreamId = String(stream.stream_id ?? stream.series_id);
+      const upstreamSourceId = playlist!.sourceIds[stream._sourceIdx ?? 0];
+      if (!upstreamSourceId) return null;
+
+      const streamId = crypto.randomUUID();
+
+      return {
+        customCategoryId: trueCustomCategoryId,
+        playlistId: id,
+        type: activeTab,
+        upstreamStreamId,
+        upstreamSourceId,
+        streamId,
+        extra: {
+          name: stream.name || stream.title || '',
+          stream_icon: stream.stream_icon,
+          cover: stream.cover
+        }
+      };
+    }).filter(Boolean);
+
+    if (items.length > 0) {
+      try {
+        setLoading(true);
+        await api.customCategoryItems.batchCreate(items);
+        await refreshMappings();
+        // Since loadData depends on these to inject clones into the UI stream array, we should re-load data.
+        await loadData(true);
+      } catch (error) {
+        console.error("Batch copy failed:", error);
+        alert("Failed to apply batch changes.");
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      alert("No suitable channels to copy.");
     }
   };
 
@@ -2464,12 +2693,16 @@ export function PlaylistEditor({ user }: { user: User }) {
 
   const refreshMappings = useCallback(async () => {
     if (!id) return;
-    const [mappingData, catMappingData] = await Promise.all([
+    const [mappingData, catMappingData, customCatData, customItemData] = await Promise.all([
       api.mappings.list(id),
       api.categoryMappings.list(id),
+      api.customCategories.list(id),
+      api.customCategoryItems.list(id),
     ]);
     setMappings(mappingData);
     setCategoryMappings(catMappingData);
+    setCustomCategories(customCatData);
+    setCustomCategoryItems(customItemData);
   }, [id]);
 
   const isPlaylistLoading = !playlist;
@@ -2819,6 +3052,26 @@ export function PlaylistEditor({ user }: { user: User }) {
               >
                 {showHiddenCategories ? <Eye size={16} /> : <EyeOff size={16} />}
               </button>
+              <button
+                onClick={async () => {
+                  const name = window.prompt("Enter custom category name:");
+                  if (!name || !name.trim()) return;
+                  try {
+                    setLoading(true);
+                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 0, hidden: false });
+                    await refreshMappings();
+                  } catch (e) {
+                    console.error("Failed to add custom category:", e);
+                    alert("Failed to create custom category.");
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="p-2 rounded-xl border bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 transition-all shrink-0"
+                title="Add Custom Category"
+              >
+                <FolderPlus size={16} />
+              </button>
               {selectedCategoryIds.size > 0 && (
                 <button 
                   onClick={() => handleBatchMoveToTop('categories')}
@@ -2951,6 +3204,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                   globalFormat={globalFormat}
                   scrollToId={scrollToStreamId}
                   onScrolled={() => setScrollToStreamId(null)}
+                  onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
+                  customCategories={customCategories}
                 />
 
               </div>
@@ -2979,9 +3234,14 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onBatchApply={selectedStreamIds.size > 1 ? (rules) => handleBatchApplyRegex(rules, 'streams') : undefined}
                     onBatchVisibility={selectedStreamIds.size > 1 ? (hidden) => handleBatchVisibility(hidden, 'streams') : undefined}
                     onBatchMoveToTop={selectedStreamIds.size > 1 ? () => handleBatchMoveToTop('streams') : undefined}
+                    onPlay={(url, title) => setPlayerInfo({ url, title })}
                   />
                 );
               })()}
+
+              {playerInfo && (
+                <WebPlayer url={playerInfo.url} title={playerInfo.title} onClose={() => setPlayerInfo(null)} />
+              )}
 
               {selectedStreamIds.size === 0 && selectedCategoryIds.size > 0 && (
                 <CategoryPane
@@ -2998,6 +3258,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onBatchVisibility={(hidden) => handleCategoryBatchVisibility(hidden)}
                   onMoveToTop={() => handleBatchMoveToTop('categories')}
                   onBatchApplyRegex={(rules) => handleBatchApplyRegex(rules, 'categories')}
+                  onBatchCategoryApplyRegex={(rules) => handleBatchCategoryApplyRegex(rules)}
                   onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
                   onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
                 />
@@ -3021,7 +3282,8 @@ interface BatchActionsSectionProps {
   mappings: StreamMapping[];
   playlist: Playlist | null;
   onRefresh: () => void;
-  onBatchApply: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApply: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchVisibility: (hidden: boolean) => void;
   onBatchMoveToTop: () => void;
 }
@@ -3034,10 +3296,11 @@ function BatchActionsSection({
   playlist,
   onRefresh,
   onBatchApply,
+  onBatchCategoryApply,
   onBatchVisibility,
   onBatchMoveToTop,
 }: BatchActionsSectionProps) {
-  const [rules, setRules] = useState([{ pattern: '', replacement: '' }]);
+  const [rules, setRules] = useState<{ type: 'regex' | 'string', pattern: string; replacement: string }[]>([{ type: 'regex', pattern: '', replacement: '' }]);
 
   // Quality scan state
   const [scanConcurrency, setScanConcurrency] = useState(1);
@@ -3151,45 +3414,65 @@ function BatchActionsSection({
       {/* Regex Rename Section */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Edit3 size={12} /> Regex Rename
+          <Edit3 size={12} /> Rename Options
         </div>
         <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
           {rules.map((rule, idx) => (
             <div key={idx} className="flex gap-2">
+              <select
+                value={rule.type}
+                onChange={e => { const r = [...rules]; r[idx].type = e.target.value as 'regex' | 'string'; setRules(r); }}
+                className="bg-zinc-900 border border-zinc-800/80 rounded-lg px-2 py-2 text-xs text-zinc-300 focus:border-emerald-500 outline-none transition-colors shrink-0"
+              >
+                <option value="regex">Regex</option>
+                <option value="string">String</option>
+              </select>
               <input
                 value={rule.pattern}
                 onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
-                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Pattern"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Find"
               />
               <input
                 value={rule.replacement}
                 onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
-                className="w-1/2 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
-                placeholder="Replacement"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                placeholder="Replace"
               />
               <button
                 onClick={() => setRules(rules.filter((_, i) => i !== idx))}
-                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all shrink-0"
                 title="Remove Rule"
               >
                 <Trash2 size={14} />
               </button>
             </div>
           ))}
-          <div className="pt-2 flex justify-between items-center">
-            <button
-              onClick={() => setRules([...rules, { pattern: '', replacement: '' }])}
-              className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
-            >
-              + Add Rule
-            </button>
-            <button
-              onClick={() => onBatchApply(rules)}
-              className="px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
-            >
-              Apply Regex rename
-            </button>
+          <div className="pt-2 flex flex-col gap-2">
+            <div className="flex justify-start">
+              <button
+                onClick={() => setRules([...rules, { type: 'regex', pattern: '', replacement: '' }])}
+                className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
+              >
+                + Add Rule
+              </button>
+            </div>
+            <div className="flex gap-2 justify-end">
+              {onBatchCategoryApply && (
+                <button
+                  onClick={() => onBatchCategoryApply(rules)}
+                  className="flex-1 px-4 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black rounded-lg text-[10px] hover:bg-purple-500/20 transition-all uppercase tracking-tighter"
+                >
+                  Apply to Categories
+                </button>
+              )}
+              <button
+                onClick={() => onBatchApply(rules)}
+                className="flex-1 px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
+              >
+                Apply to Channels
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3268,14 +3551,16 @@ function BatchActionsSection({
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onBatchVisibility(false)}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all hover:-translate-y-0.5"
+            disabled={streamIds.length === 0}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
           >
             <Eye size={14} />
             Show All
           </button>
           <button
             onClick={() => onBatchVisibility(true)}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+            disabled={streamIds.length === 0}
+            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
           >
             <EyeOff size={14} />
             Hide All
@@ -3316,7 +3601,8 @@ interface CategoryPaneProps {
   onMappingChange: () => void;     // refresh after changes
   onBatchVisibility: (hidden: boolean) => void;   // for category-level hide/show
   onMoveToTop: () => void;                         // move selected categories to top
-  onBatchApplyRegex: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
   onMoveStreamsToTop: () => void;
 }
@@ -3324,7 +3610,7 @@ interface CategoryPaneProps {
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
-  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
+  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
@@ -3456,7 +3742,6 @@ function CategoryPane({
       {/* Batch actions for streams in selected categories */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-4 space-y-4">
-        {scopedStreamIds.length > 0 ? (
           <BatchActionsSection
             streamIds={scopedStreamIds}
             playlistId={playlistId}
@@ -3465,12 +3750,10 @@ function CategoryPane({
             playlist={playlist}
             onRefresh={onMappingChange}
             onBatchApply={onBatchApplyRegex}
+            onBatchCategoryApply={onBatchCategoryApplyRegex}
             onBatchVisibility={onBatchStreamVisibility}
             onBatchMoveToTop={onMoveStreamsToTop}
           />
-        ) : (
-          <div className="py-6 text-zinc-600 text-sm text-center">No streams in selected categories</div>
-        )}
         </div>
       </div>
     </div>
@@ -3611,6 +3894,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         ) : (
           <div className="flex flex-col truncate">
             <div className="flex items-center gap-1 min-w-0">
+              {cat._isCustom && <Star size={10} className="text-yellow-500 shrink-0" />}
               <span className={cn(
                 "text-xs font-medium truncate transition-colors",
                 isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
@@ -3631,6 +3915,21 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         "flex items-center gap-1 transition-opacity",
         isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       )}>
+        {cat._isCustom && (
+          <button
+            onClick={async (e) => {
+               e.stopPropagation();
+               if (window.confirm('Delete custom category? Streams copied here will be removed from this category.')) {
+                 await api.customCategories.remove(cat.id);
+                 onMappingChange();
+               }
+            }}
+            className="p-1 hover:bg-red-500/20 rounded text-red-500 transition-colors"
+            title="Delete Custom Category"
+          >
+            <X size={12} />
+          </button>
+        )}
         <button 
           onClick={toggleSyncOnDemand}
           className={cn(
@@ -3694,7 +3993,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories }: {
 
   streams: any[];
   selectedCategoryIds: Set<string>;
@@ -3714,8 +4013,11 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   globalFormat?: string;
   scrollToId?: string | null;
   onScrolled?: () => void;
-
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }) {
+  const showCopyColumn = (customCategories?.filter(c => c.type === activeTab).length ?? 0) > 0 && !!onBatchCopy;
+
   const filteredStreams = streams;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -3780,6 +4082,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             <div className="w-16 shrink-0 text-center">HDR</div>
             <div className="w-20 shrink-0 text-center">Audio</div>
             <div className="w-12 shrink-0 text-center">Res</div>
+            {showCopyColumn && <div className="w-8 shrink-0" />}
             <div className="w-8 shrink-0 text-center">Vis</div>
           </div>
           <div className="flex-1 min-h-0">
@@ -3806,7 +4109,8 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   playlistSourceIds,
                   playlist,
                   globalFormat,
-
+                  onBatchCopy,
+                  customCategories,
                 }}
               >
                 {VirtualStreamRow}
@@ -3869,7 +4173,8 @@ const VirtualStreamRow = React.memo(({
     playlistSourceIds,
     playlist,
     globalFormat,
-
+    onBatchCopy,
+    customCategories
   } = data;
   
   const stream = filteredStreams[index];
@@ -3919,6 +4224,8 @@ const VirtualStreamRow = React.memo(({
       epgChannels={epgChannels}
       allSources={allSources}
       playlistSourceIds={playlistSourceIds}
+      onBatchCopy={onBatchCopy}
+      customCategories={customCategories}
     />
   );
 });
@@ -3942,6 +4249,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
   allSources?: any[];
   playlistSourceIds?: string[];
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
 }>(({ 
   style, 
   stream, 
@@ -3960,10 +4269,17 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   isDragging, 
   epgChannels,
   allSources,
-  playlistSourceIds
+  playlistSourceIds,
+  onBatchCopy,
+  customCategories
 }, ref) => {
+  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
+  const [copyDropdownPos, setCopyDropdownPos] = useState({ top: 0, right: 0 });
+  const copyBtnRef = useRef<HTMLButtonElement>(null);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
+
+  const availableCustomCategories = customCategories?.filter(c => c.type === type) || [];
 
   const toggleVisibility = async () => {
     try {
@@ -4026,14 +4342,18 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       )}
     >
       {/* Drag handle */}
-      <button
-        {...dragAttributes}
-        {...dragListeners}
-        className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
-        onClick={e => e.stopPropagation()}
-      >
-        <GripVertical size={14} />
-      </button>
+      {stream._isMissing ? (
+        <div className="w-6 shrink-0" />
+      ) : (
+        <button
+          {...dragAttributes}
+          {...dragListeners}
+          className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
+          onClick={e => e.stopPropagation()}
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
 
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
@@ -4056,11 +4376,13 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         <div className="flex items-center gap-1 min-w-0">
           <span className={cn(
             "text-[13px] font-bold truncate transition-colors",
-            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white"
+            isSelected ? "text-emerald-400" : "text-zinc-100 group-hover:text-white",
+            stream._isMissing && "line-through opacity-40"
           )}>
             {displayName}
           </span>
           <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
+          {stream._isMissing && <span className="text-[9px] text-red-400 font-bold shrink-0">Missing</span>}
         </div>
         {mapping?.epgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
@@ -4146,20 +4468,88 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         );
       })()}
 
-      {/* Visibility toggle */}
-      <div className="w-8 shrink-0 flex items-center justify-center">
-        <button
-          onClick={toggleVisibility}
-          className={cn(
-            "p-1 rounded transition-colors",
-            mapping?.hidden
-              ? "text-zinc-600 hover:text-zinc-300"
-              : "text-emerald-500 hover:text-emerald-400"
+      {/* Copy to Custom Category */}
+      {availableCustomCategories.length > 0 && onBatchCopy && (
+        <div className="w-8 shrink-0 flex items-center justify-center">
+          {!stream._isCopy && (
+            <button
+              ref={copyBtnRef}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!showCopyDropdown) {
+                  const rect = copyBtnRef.current?.getBoundingClientRect();
+                  if (rect) {
+                    setCopyDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                  }
+                  setShowCopyDropdown(true);
+                } else {
+                  setShowCopyDropdown(false);
+                }
+              }}
+              className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
+              title="Copy to Custom Category"
+            >
+              <Copy size={14} />
+            </button>
           )}
-          title={mapping?.hidden ? "Show" : "Hide"}
-        >
-          {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
+
+          {!stream._isCopy && showCopyDropdown && createPortal(
+            <>
+              <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
+              <div
+                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-48"
+                style={{ top: copyDropdownPos.top, right: copyDropdownPos.right }}
+              >
+                <div className="px-3 py-2 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Copy to Category</div>
+                <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                  {availableCustomCategories.map(cc => (
+                    <button
+                      key={cc.id}
+                      onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); onBatchCopy(`custom_${cc.id}`, stream); }}
+                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors truncate flex items-center gap-2"
+                    >
+                      <Star size={10} className="text-yellow-500 shrink-0" />
+                      {cc.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>,
+            document.body
+          )}
+        </div>
+      )}
+
+      {/* Visibility toggle / Remove Missing */}
+      <div className="w-8 shrink-0 flex items-center justify-center">
+        {stream._isMissing ? (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (stream._customItemId) {
+                await api.customCategoryItems.remove(stream._customItemId);
+                onMappingChange();
+              }
+            }}
+            className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Remove Missing Stream"
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : (
+          <button
+            onClick={toggleVisibility}
+            className={cn(
+              "p-1 rounded transition-colors",
+              mapping?.hidden
+                ? "text-zinc-600 hover:text-zinc-300"
+                : "text-emerald-500 hover:text-emerald-400"
+            )}
+            title={mapping?.hidden ? "Show" : "Hide"}
+          >
+            {mapping?.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -4402,7 +4792,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
   );
 }
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop }: {
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop, onPlay }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
@@ -4415,9 +4805,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   selectedStreamIds?: Set<string>;
   allStreams?: any[];
   allMappings?: StreamMapping[];
-  onBatchApply?: (rules: { pattern: string; replacement: string }[]) => void;
+  onBatchApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchVisibility?: (hidden: boolean) => void;
   onBatchMoveToTop?: () => void;
+  onPlay?: (url: string, title: string) => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
@@ -4593,6 +4984,24 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
           </p>
         </div>
+        {!isMulti && onPlay && playlist && source && (
+           <button
+             onClick={() => {
+               let url;
+               if (playlist.directStreams) {
+                 url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+               } else {
+                 url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+               }
+               onPlay(url, customName || originalName || "Stream");
+             }}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
+             title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
+           >
+             <Play size={12} fill="currentColor" />
+             Play
+           </button>
+        )}
         <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-100 shrink-0">
           <X size={16} />
         </button>
@@ -4906,9 +5315,13 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                       <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
                       <div className="flex gap-1.5">
                         <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
-                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{source.username}/{source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
+                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/{(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
                         </code>
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${source.username}/${source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                        {/* Play Upstream URL */}
+                        {onPlay && <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
+                          <Play size={11} />
+                        </button>}
+                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                           <ExternalLink size={11} />
                         </button>
                       </div>
@@ -4920,7 +5333,11 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                           <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-emerald-500/70 break-all font-mono border border-emerald-500/10">
                             {window.location.origin}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{playlist.username}/{playlist.password}/{stream.stream_id || stream.series_id}{type === 'live' ? '.ts' : '.mp4'}
                           </code>
-                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0">
+                          {/* Play Proxy URL */}
+                          {onPlay && <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
+                            <Play size={11} />
+                          </button>}
+                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                             <ExternalLink size={11} />
                           </button>
                         </div>

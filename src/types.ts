@@ -54,6 +54,27 @@ export interface Playlist {
   qualityLabelFormat?: string;  // e.g. "[{label}]" — per-playlist template
   isSynced?: boolean;
   nextStreamId?: number;
+  sourceOverrides?: Record<string, { username?: string; password?: string }>;
+}
+
+export interface CustomCategory {
+  id: string;
+  playlistId: string;
+  type: 'live' | 'vod' | 'series';
+  name: string;
+  order: number;
+  hidden: boolean;
+}
+
+export interface CustomCategoryItem {
+  id: string;
+  customCategoryId: string;
+  playlistId: string;
+  type: 'live' | 'vod' | 'series';
+  upstreamStreamId: string;
+  upstreamSourceId: string;
+  streamId: string;
+  extra: any;
 }
 
 export interface CategoryMapping {
@@ -82,7 +103,7 @@ export interface StreamMapping {
   order: number;
   hidden: boolean;
   categoryId: string; // Custom category ID
-  regexRenames?: { pattern: string; replacement: string }[];
+  regexRenames?: { type?: 'regex' | 'string'; pattern: string; replacement: string }[];
   detectedMeta?: DetectedStreamMeta;
   useDetectedQuality?: boolean;
   sourceIdx?: number;
