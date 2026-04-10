@@ -14,7 +14,6 @@ import {
   X, 
   Database, 
   Globe, 
-  FileJson,
   ArrowLeft,
   Save,
   ExternalLink,
