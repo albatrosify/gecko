@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
-import { getDb, toId, docWithId } from "../db.ts";
+import { getDb } from "../db.ts";
 import { log } from "../logger.ts";
 
 export function createAdminRouter() {
