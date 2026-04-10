@@ -24,7 +24,6 @@ import {
   Film,
   Clapperboard,
   Settings as SettingsIcon,
-  LogOut, 
   ChevronRight, 
   ChevronDown, 
   ChevronUp,
