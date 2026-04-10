@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-ro
 import api, { isLoggedIn, clearToken } from './api';
 import { User as AppUser } from './types';
 import { Layout, Dashboard, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
-import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Wifi } from 'lucide-react';
+import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity } from 'lucide-react';
 import Logo from './assets/logo.png';
 
 import pkg from '../package.json';
