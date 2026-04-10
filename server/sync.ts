@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import cronstrue from "cronstrue";
-import { getDb, toId } from "./db.ts";
+import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { XtreamClient } from "./xtream.ts";
 import { getCached, setCache } from "./cache.ts";
