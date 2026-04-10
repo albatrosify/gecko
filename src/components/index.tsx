@@ -13,7 +13,6 @@ import {
   Check, 
   X, 
   Database, 
-  Globe, 
   FileJson,
   ArrowLeft,
   Save,
