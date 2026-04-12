@@ -1,6 +1,7 @@
 # Default/development setup — no VPN. Do NOT merge VPN or gluetun config from docker-compose.prod.yml into this file.
 services:
   app:
+    # Pulls from GitHub Container Registry
     image: ghcr.io/albatrosify/gecko:latest
     ports:
       - "3000:3000"
