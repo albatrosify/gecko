@@ -19,7 +19,8 @@ services:
     restart: unless-stopped
 
   app:
-    image: registry.homgsa.de/marius/open-itptv-editor:${IPTV_VERSION:-latest}
+    # Pulls from GitHub Container Registry
+    image: ghcr.io/albatrosify/gecko:${GECKO_VERSION:-latest}
     network_mode: "service:gluetun"
     depends_on:
       - gluetun

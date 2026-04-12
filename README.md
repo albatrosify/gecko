@@ -28,6 +28,7 @@ cp .env.example .env
 # Edit .env — set JWT_SECRET and APP_URL
 
 # Start the app (SQLite database built-in, no external services needed)
+# This will pull the latest image from the GitHub Container Registry (ghcr.io/albatrosify/gecko)
 docker compose up -d
 
 # Open in browser
