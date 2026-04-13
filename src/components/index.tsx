@@ -2,6 +2,33 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } 
 import { createPortal } from 'react-dom';
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
+
+export const copyToClipboard = async (text: string) => {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err) {
+      console.warn('Clipboard API failed, falling back to execCommand', err);
+    }
+  }
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  // Prevent scrolling to bottom
+  textArea.style.position = "fixed";
+  textArea.style.left = "-999999px";
+  textArea.style.top = "-999999px";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    document.execCommand('copy');
+  } catch (err) {
+    console.error('Fallback execCommand failed', err);
+  }
+  textArea.remove();
+};
+
 import { 
   Plus, FolderPlus, Star,
   Play, 
@@ -855,22 +882,44 @@ export function PlaylistManager({ user }: { user: User }) {
               </div>
             </div>
 
-            <div className="bg-zinc-950 rounded-2xl p-4 border border-zinc-800/50 space-y-3">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-zinc-500 uppercase font-bold tracking-tighter">API Endpoint</span>
-                <button 
-                  onClick={() => {
-                    const url = `${window.location.origin}/player_api.php?username=${playlist.username}&password=${playlist.password}`;
-                    navigator.clipboard.writeText(url);
-                  }}
-                  className="text-emerald-500 hover:underline flex items-center gap-1"
-                >
-                  Copy <ExternalLink size={12} />
-                </button>
+            <div className="bg-zinc-950 rounded-2xl p-4 border border-zinc-800/50 space-y-4">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-zinc-500 uppercase font-bold tracking-tighter">API Endpoint</span>
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/player_api.php?username=${playlist.username}&password=${playlist.password}`;
+                      copyToClipboard(url);
+                    }}
+                    className="text-emerald-500 hover:underline flex items-center gap-1"
+                  >
+                    Copy <ExternalLink size={12} />
+                  </button>
+                </div>
+                <code className="block text-[10px] text-zinc-400 break-all font-mono">
+                  {window.location.origin}/player_api.php?username={playlist.username}&password={playlist.password}
+                </code>
               </div>
-              <code className="block text-[10px] text-zinc-400 break-all font-mono">
-                {window.location.origin}/player_api.php?username={playlist.username}&password={playlist.password}
-              </code>
+
+              <div className="h-px w-full bg-zinc-800/50" />
+
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-zinc-500 uppercase font-bold tracking-tighter">M3U Endpoint</span>
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/get.php?username=${playlist.username}&password=${playlist.password}&type=m3u_plus&output=ts`;
+                      copyToClipboard(url);
+                    }}
+                    className="text-emerald-500 hover:underline flex items-center gap-1"
+                  >
+                    Copy <ExternalLink size={12} />
+                  </button>
+                </div>
+                <code className="block text-[10px] text-zinc-400 break-all font-mono">
+                  {window.location.origin}/get.php?username={playlist.username}&password={playlist.password}&type=m3u_plus&output=ts
+                </code>
+              </div>
             </div>
 
             <div className="flex items-center justify-between px-2">
@@ -5321,7 +5370,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         {onPlay && <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
                           <Play size={11} />
                         </button>}
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
+                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; copyToClipboard(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                           <ExternalLink size={11} />
                         </button>
                       </div>
@@ -5337,7 +5386,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                           {onPlay && <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
                             <Play size={11} />
                           </button>}
-                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; navigator.clipboard.writeText(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
+                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; copyToClipboard(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                             <ExternalLink size={11} />
                           </button>
                         </div>
