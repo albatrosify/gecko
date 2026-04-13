@@ -573,9 +573,7 @@ export function createProxyRouter() {
              s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
              s._streamOrder = mapping?.order ?? idx;
 
-             if (!playlist.isSynced) {
-               s.streamId = String(mapping?.order ?? idx);
-             }
+
 
              // Proxy icon and strip prefix
              if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase);
@@ -753,9 +751,7 @@ export function createProxyRouter() {
               s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
-              if (!playlist.isSynced) {
-                s.streamId = String(mapping?.order ?? idx);
-              }
+
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
                 s.category_id = String(s.category_id).split('_').slice(1).join('_');
@@ -927,9 +923,7 @@ export function createProxyRouter() {
               s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
-              if (!playlist.isSynced) {
-                s.streamId = String(mapping?.order ?? idx);
-              }
+
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
                 s.category_id = String(s.category_id).split('_').slice(1).join('_');
@@ -1250,19 +1244,12 @@ export function createProxyRouter() {
         return a._streamOrder - b._streamOrder;
       });
 
-      // Only generate integer stream IDs for custom playlists (not synced)
-       const streamsWithIds = !playlist.isSynced ? streams.map((s: any, idx: number) => {
-         const streamId = (playlist.nextStreamId || 1) + idx;
-         s.streamId = streamId;
-         return s;
-       }) : streams;
-
       // Build base URL for proxied streams
       const proxyBaseUrl = getBaseUrl(req);
 
-      for (const stream of streamsWithIds) {
+      for (const stream of streams) {
         const mapping = stream._mapping;
-        const streamId = stream.streamId;
+        const streamId = String(stream.stream_id || stream.series_id);
 
         const baseName = mapping
           ? computeDisplayName(mapping, playlist.qualityLabelFormat, m3uGlobalFormat)
@@ -1275,10 +1262,9 @@ export function createProxyRouter() {
 
         let url;
         if (playlist.directStreams && stream._client) {
-          const originalStreamId = String(stream.stream_id || stream.series_id);
-          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(originalStreamId, stream.container_extension);
-          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(originalStreamId, stream.container_extension);
-          else url = stream._client.getLiveStreamUrl(originalStreamId);
+          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(streamId, stream.container_extension);
+          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(streamId, stream.container_extension);
+          else url = stream._client.getLiveStreamUrl(streamId);
         } else {
           const pathType = m3uType === 'vod' ? 'movie' : m3uType === 'series' ? 'series' : 'live';
           url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${streamId}.ts`;
