@@ -444,10 +444,18 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       const streamData = (cached?.data as any[] | undefined)?.find(
         (s: any) => String(s.stream_id ?? s.series_id) === streamId
       );
-      const extension = streamData?.container_extension || 'mp4';
-      const title = streamData?.name || streamData?.title || streamId;
+      // For series episodes, we don't know the extension since they aren't in the streams list. Default to mp4.
+      // Also the episode name is not easily known, so we fallback to streamId.
+      let extension = streamData?.container_extension || 'mp4';
+      let title = streamData?.name || streamData?.title || `Episode_${streamId}`;
 
-      const url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
+      // Check query params if they exist for title and extension (optional enhancement, but we'll stick to mp4 and streamId fallback)
+      if (req.query.extension && typeof req.query.extension === 'string') {
+        extension = req.query.extension;
+      }
+
+      let url = '';
+      url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
 
       // Proxy the upstream response as a file download
       const upstreamRes = await axios.get(url, {
@@ -465,6 +473,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       (upstreamRes.data as NodeJS.ReadableStream).pipe(res);
     } catch (e: any) {
       if (!res.headersSent) res.status(502).json({ error: `Upstream error: ${e.message}` });
+
     }
   });
 

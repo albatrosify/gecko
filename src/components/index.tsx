@@ -4731,7 +4731,7 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
 }
 
 
-function SeriesDetailsModal({ playlistId, seriesId, onClose, title }: { playlistId: string; seriesId: string; onClose: () => void; title?: string }) {
+function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, source, playlist }: { playlistId: string; seriesId: string; onClose: () => void; title?: string; onPlay?: (url: string, name: string) => void; source?: any; playlist?: any }) {
   const [info, setInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4868,6 +4868,18 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title }: { playlist
                           </div>
 
                           <div className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {onPlay && source && playlist && (
+                              <button
+                                onClick={() => {
+                                  const url = `${source.url.replace(/\/$/, '')}/series/${playlist.sourceOverrides?.[source.id]?.username || source.username}/${playlist.sourceOverrides?.[source.id]?.password || source.password}/${ep.id}.mp4`;
+                                  onPlay(url, `${title || 'Series'} - ${ep.episode_num}. ${ep.title}`);
+                                }}
+                                className="p-2 rounded-lg bg-zinc-800 text-emerald-400 hover:text-emerald-300 hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                                title="Play Episode"
+                              >
+                                <Play size={14} /> Play
+                              </button>
+                            )}
                             <a
                               href={`/api/download/series/${playlistId}/${ep.id}?token=${localStorage.getItem('auth_token') ?? ''}`}
                               download
@@ -4893,7 +4905,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title }: { playlist
 }
 
 
-function SeriesSeasonsBrowser({ playlistId, seriesId, title }: { playlistId: string; seriesId: string; title?: string }) {
+function SeriesSeasonsBrowser({ playlistId, seriesId, title, onPlay, source, playlist }: { playlistId: string; seriesId: string; title?: string; onPlay?: (url: string, name: string) => void; source?: any; playlist?: any }) {
   const [showModal, setShowModal] = useState(false);
 
   return (
@@ -4912,6 +4924,9 @@ function SeriesSeasonsBrowser({ playlistId, seriesId, title }: { playlistId: str
           seriesId={seriesId}
           onClose={() => setShowModal(false)}
           title={title}
+          onPlay={onPlay}
+          source={source}
+          playlist={playlist}
         />
       )}
     </>
@@ -5413,6 +5428,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 playlistId={playlistId}
                 seriesId={stream._rawId || String(stream.series_id || stream._uniqueId)}
                 title={stream.name || originalName}
+                onPlay={onPlay}
+                source={source}
+                playlist={playlist}
               />
             </div>
           )}
