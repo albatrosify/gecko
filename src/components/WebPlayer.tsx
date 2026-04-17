@@ -198,12 +198,48 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
 
+    const onLoadedMetadata = () => {
+      // Native audio tracks (Safari, or Chrome with flag)
+      if ((video as any).audioTracks && (video as any).audioTracks.length > 0) {
+        const at = (video as any).audioTracks;
+        const tracks = [];
+        let active = 0;
+        for (let i = 0; i < at.length; i++) {
+          tracks.push({ id: i, name: at[i].language || at[i].label || `Audio ${i + 1}` });
+          if (at[i].enabled) active = i;
+        }
+        setAudioTracks(tracks);
+        setActiveAudioTrack(active);
+      }
+
+      // Native text tracks
+      if (video.textTracks && video.textTracks.length > 0) {
+        const tt = video.textTracks;
+        const ttracks = [{ id: -1, name: 'Off' }];
+        let active = -1;
+        for (let i = 0; i < tt.length; i++) {
+          if (tt[i].kind === 'metadata') continue;
+          ttracks.push({ id: i, name: tt[i].language || tt[i].label || `Sub ${i + 1}` });
+          if (tt[i].mode === 'showing') active = i;
+        }
+        if (ttracks.length > 1) {
+          setTextTracks(ttracks);
+          setActiveTextTrack(active);
+        }
+      }
+    };
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('addtrack', onLoadedMetadata); // Sometimes tracks are added after
+
+
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
 
     return () => {
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('addtrack', onLoadedMetadata);
       if (mpegtsPlayerRef.current) {
         if ((mpegtsPlayerRef.current as any)._customRejectionHandler) {
           window.removeEventListener('unhandledrejection', (mpegtsPlayerRef.current as any)._customRejectionHandler);
