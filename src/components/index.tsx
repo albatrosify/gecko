@@ -4871,8 +4871,8 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                             {onPlay && source && playlist && (
                               <button
                                 onClick={() => {
-                                  const url = `${source.url.replace(/\/$/, '')}/series/${playlist.sourceOverrides?.[source.id]?.username || source.username}/${playlist.sourceOverrides?.[source.id]?.password || source.password}/${ep.id}.mp4`;
-                                  onPlay(url, `${title || 'Series'} - ${ep.episode_num}. ${ep.title}`);
+                                  const ext = ep.container_extension || ep.info?.container_extension || 'mp4'; const url = `${source.url.replace(/\/$/, '')}/series/${playlist.sourceOverrides?.[source.id]?.username || source.username}/${playlist.sourceOverrides?.[source.id]?.password || source.password}/${ep.id}.${ext}`;
+                                  onPlay(url, `${title || 'Series'} - ${ep.episode_num}. ${ep.title}`); onClose();
                                 }}
                                 className="p-2 rounded-lg bg-zinc-800 text-emerald-400 hover:text-emerald-300 hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
                                 title="Play Episode"
@@ -4881,7 +4881,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                               </button>
                             )}
                             <a
-                              href={`/api/download/series/${playlistId}/${ep.id}?token=${localStorage.getItem('auth_token') ?? ''}`}
+                              href={`/api/download/series/${playlistId}/${ep.id}?extension=${ep.container_extension || ep.info?.container_extension || 'mp4'}&token=${localStorage.getItem('auth_token') ?? ''}`}
                               download
                               className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
                               title="Download Episode"
