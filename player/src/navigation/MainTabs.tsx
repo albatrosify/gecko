@@ -1,12 +1,55 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import TvScreen from '../screens/TvScreen';
-import VodScreen from '../screens/VodScreen';
-import SeriesScreen from '../screens/SeriesScreen';
+import CategoriesScreen from '../screens/CategoriesScreen';
+import StreamsScreen from '../screens/StreamsScreen';
+import SeriesInfoScreen from '../screens/SeriesInfoScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
+const Stack = createNativeStackNavigator();
+
+const screenOptions = {
+  headerStyle: { backgroundColor: '#18181b' }, // zinc-900
+  headerTintColor: '#fafafa', // zinc-50
+};
+
+function TvStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="Categories" component={CategoriesScreen} initialParams={{ type: 'live' }} options={{ title: 'Live TV' }} />
+      <Stack.Screen name="Streams" component={StreamsScreen} />
+    </Stack.Navigator>
+  );
+}
+
+function VodStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="Categories" component={CategoriesScreen} initialParams={{ type: 'vod' }} options={{ title: 'Movies' }} />
+      <Stack.Screen name="Streams" component={StreamsScreen} />
+    </Stack.Navigator>
+  );
+}
+
+function SeriesStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="Categories" component={CategoriesScreen} initialParams={{ type: 'series' }} options={{ title: 'Series' }} />
+      <Stack.Screen name="Streams" component={StreamsScreen} />
+      <Stack.Screen name="SeriesInfo" component={SeriesInfoScreen} />
+    </Stack.Navigator>
+  );
+}
+
+function SettingsStack() {
+  return (
+    <Stack.Navigator screenOptions={screenOptions}>
+      <Stack.Screen name="SettingsScreen" component={SettingsScreen} options={{ title: 'Settings' }} />
+    </Stack.Navigator>
+  );
+}
 
 export default function MainTabs() {
   return (
@@ -14,7 +57,7 @@ export default function MainTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ focused, color, size }) => {
-          let iconName: keyof typeof Ionicons.glyphMap;
+          let iconName: keyof typeof Ionicons.glyphMap = 'help-circle';
 
           if (route.name === 'TV') {
             iconName = focused ? 'tv' : 'tv-outline';
@@ -24,24 +67,22 @@ export default function MainTabs() {
             iconName = focused ? 'play-circle' : 'play-circle-outline';
           } else if (route.name === 'Settings') {
             iconName = focused ? 'settings' : 'settings-outline';
-          } else {
-            iconName = 'help-circle';
           }
 
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: '#6366f1', // Indigo 500 (gecko default primary)
-        tabBarInactiveTintColor: 'gray',
+        tabBarActiveTintColor: '#6366f1', // Indigo 500
+        tabBarInactiveTintColor: '#a1a1aa', // zinc-400
         tabBarStyle: {
-          backgroundColor: '#ffffff',
-          borderTopColor: '#e5e7eb',
+          backgroundColor: '#18181b', // zinc-900
+          borderTopColor: '#27272a', // zinc-800
         },
       })}
     >
-      <Tab.Screen name="TV" component={TvScreen} />
-      <Tab.Screen name="VOD" component={VodScreen} />
-      <Tab.Screen name="Series" component={SeriesScreen} />
-      <Tab.Screen name="Settings" component={SettingsScreen} />
+      <Tab.Screen name="TV" component={TvStack} />
+      <Tab.Screen name="VOD" component={VodStack} />
+      <Tab.Screen name="Series" component={SeriesStack} />
+      <Tab.Screen name="Settings" component={SettingsStack} />
     </Tab.Navigator>
   );
 }

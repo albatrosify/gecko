@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Button } from 'react-native';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Playlist = {
   id: string;
@@ -11,6 +12,7 @@ type Playlist = {
 };
 
 export default function PlaylistSelectScreen() {
+  const insets = useSafeAreaInsets();
   const { geckoUrl, jwtToken, selectPlaylist, logout } = useAuth();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,16 +41,16 @@ export default function PlaylistSelectScreen() {
   if (isLoading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color="#6366f1" />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 20) }]}>
       <View style={styles.header}>
         <Text style={styles.title}>Select a Playlist</Text>
-        <Button title="Logout" onPress={logout} color="red" />
+        <Button title="Logout" onPress={logout} color="#ef4444" />
       </View>
       <FlatList
         data={playlists}
@@ -69,8 +71,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 20,
-    backgroundColor: '#fff',
-    paddingTop: 60,
+    backgroundColor: '#09090b', // zinc-950
   },
   header: {
     flexDirection: 'row',
@@ -81,31 +82,34 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 24,
     fontWeight: 'bold',
+    color: '#fafafa', // zinc-50
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#09090b',
   },
   card: {
     padding: 16,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: '#27272a', // zinc-800
     borderRadius: 8,
     marginBottom: 12,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#18181b', // zinc-900
   },
   name: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 4,
+    color: '#fafafa',
   },
   user: {
-    color: '#666',
+    color: '#a1a1aa', // zinc-400
   },
   empty: {
     textAlign: 'center',
-    color: '#999',
+    color: '#a1a1aa',
     marginTop: 40,
   },
 });
