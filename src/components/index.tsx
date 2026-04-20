@@ -4495,9 +4495,6 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
             )}>
               {displayName}
             </span>
-            {mapping?.customName && mapping.customName !== originalName && (
-              <div className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" title="Modified: will not update from upstream" />
-            )}
             <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
           {stream._isMissing && <span className="text-[9px] text-red-400 font-bold shrink-0">Missing</span>}
         </div>
