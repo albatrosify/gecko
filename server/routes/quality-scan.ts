@@ -125,8 +125,9 @@ export function createQualityScanRouter() {
                if (sIdx !== null) currentExtra.sourceIdx = sIdx;
                db.update(schemaMappings).set({ extra: currentExtra }).where(eq(schemaMappings.id, existingMapping.id)).run();
             } else {
-               const newExtra = { detectedMeta: meta, originalName: '', customName: '', hidden: false, order: 0, categoryId: '' } as any;
+               const newExtra = { detectedMeta: meta, originalName: '', customName: '', hidden: false, order: 999999, categoryId: '' } as any;
                if (sIdx !== null) newExtra.sourceIdx = sIdx;
+
                db.insert(schemaMappings).values({ id: generateId(), playlistId, originalId: originalStreamId, type, extra: newExtra }).run();
             }
 

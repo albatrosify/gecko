@@ -3107,7 +3107,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   if (!name || !name.trim()) return;
                   try {
                     setLoading(true);
-                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 0, hidden: false });
+                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 999999, hidden: false });
                     await refreshMappings();
                   } catch (e) {
                     console.error("Failed to add custom category:", e);
@@ -3715,7 +3715,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { customName: trimmed });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: trimmed, order: 0, hidden: false });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: trimmed, order: 999999, hidden: false });
     }
     setEditingName(false);
     onMappingChange();
@@ -3727,7 +3727,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { hidden: newHidden });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: newHidden });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 999999, hidden: newHidden });
     }
     onMappingChange();
   };
@@ -3738,7 +3738,7 @@ function CategoryPane({
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
     } else {
-      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 0, hidden: false, syncOnDemand: newSync });
+      await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 999999, hidden: false, syncOnDemand: newSync });
     }
     onMappingChange();
   };
@@ -3899,7 +3899,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           originalId: catId,
           originalName: cat.category_name || "",
           customName: cat.category_name || "",
-          order: 0,
+          order: 999999,
           hidden: newHidden
         });
       }
@@ -3920,7 +3920,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           originalId: catId,
           originalName: cat.category_name || "",
           customName: newName,
-          order: 0,
+          order: 999999,
           hidden: false
         });
       }
@@ -3945,7 +3945,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           originalId: catId,
           originalName: cat.category_name || "",
           customName: cat.category_name || "",
-          order: 0,
+          order: 999999,
           hidden: false,
           syncOnDemand: newSync
         });
@@ -4400,35 +4400,35 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
           originalId,
           originalName,
           customName: originalName,
-          order: 0,
-          hidden: true,
-          categoryId: String(stream.category_id || ""),
-          sourceIdx: stream._sourceIdx ?? 0
-        });
+            order: mapping?.order ?? 999999,
+            hidden: true,
+            categoryId: String(stream.category_id || ""),
+            sourceIdx: stream._sourceIdx ?? 0
+          });
+        }
+        onMappingChange();
+      } catch (error) {
+        console.error('Failed to toggle visibility:', error);
       }
-      onMappingChange();
-    } catch (error) {
-      console.error('Failed to toggle visibility:', error);
-    }
-  };
-
-  const handleRename = async (newName: string) => {
-     try {
-       if (mapping?.id) {
-         await api.mappings.update(mapping.id, { customName: newName });
-       } else {
-         await api.mappings.create({
-           playlistId,
-           type,
-           originalId,
-           originalName,
-           customName: newName,
-           order: 0,
-           hidden: false,
-           categoryId: String(stream.category_id || ""),
-           sourceIdx: stream._sourceIdx ?? 0
-         });
-       }
+    };
+  
+    const handleRename = async (newName: string) => {
+       try {
+         if (mapping?.id) {
+           await api.mappings.update(mapping.id, { customName: newName });
+         } else {
+           await api.mappings.create({
+             playlistId,
+             type,
+             originalId,
+             originalName,
+             customName: newName,
+             order: mapping?.order ?? 999999,
+             hidden: false,
+             categoryId: String(stream.category_id || ""),
+             sourceIdx: stream._sourceIdx ?? 0
+           });
+         }
        onMappingChange();
      } catch (error) {
        console.error('Failed to rename stream:', error);
@@ -5044,7 +5044,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               playlistId,
               type,
               originalName: s.name || s.title || '',
-              order: m?.order || 0,
+              order: m?.order ?? 999999,
               hidden: m?.hidden || false,
               categoryId: String(s.category_id || ''),
               customName: m?.customName || s.name || s.title || '',
@@ -5063,7 +5063,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             type,
             originalId: stream._rawId || stream._uniqueId,
             originalName,
-            order: mapping?.order || 0,
+            order: mapping?.order ?? 999999,
             hidden: mapping?.hidden || false,
             categoryId: String(stream.category_id || ""),
             sourceIdx: stream._sourceIdx ?? 0,
