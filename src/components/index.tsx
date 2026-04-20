@@ -4456,8 +4456,14 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         <button
           {...dragAttributes}
           {...dragListeners}
-          className="text-zinc-700 hover:text-zinc-400 cursor-grab active:cursor-grabbing p-1 shrink-0"
+          className={cn(
+            "cursor-grab active:cursor-grabbing p-1 shrink-0 transition-colors",
+            mapping?.customName && mapping.customName !== originalName 
+              ? "text-orange-500 hover:text-orange-400" 
+              : "text-zinc-700 hover:text-zinc-400"
+          )}
           onClick={e => e.stopPropagation()}
+          title={mapping?.customName && mapping.customName !== originalName ? "Modified: will not update from upstream" : "Drag to reorder"}
         >
           <GripVertical size={14} />
         </button>
