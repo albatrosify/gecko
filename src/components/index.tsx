@@ -5075,6 +5075,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
     setLoading(false);
   };
 
+  const isMulti = selectedStreamIds && selectedStreamIds.size > 1;
   const isModified = mapping?.customName && mapping.customName !== originalName;
 
   return (
