@@ -3995,6 +3995,13 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         ) : (
           <div className="flex flex-col truncate">
             <div className="flex items-center gap-1 min-w-0">
+              <div className="w-1.5 h-1.5 shrink-0 flex items-center justify-center">
+                {mapping?.customName && mapping.customName !== cat.category_name ? (
+                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500" title="Modified: will not update from upstream" />
+                ) : (
+                  <div className="w-1.5 h-1.5" />
+                )}
+              </div>
               {cat._isCustom && <Star size={10} className="text-yellow-500 shrink-0" />}
               <span className={cn(
                 "text-xs font-medium truncate transition-colors",
@@ -4002,9 +4009,6 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
               )}>
                 {mapping?.customName || cat.category_name}
               </span>
-              {mapping?.customName && mapping.customName !== cat.category_name && (
-                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" title="Modified: will not update from upstream" />
-              )}
             </div>
             {mapping?.syncOnDemand && (
               <span className="text-[8px] text-emerald-500/60 uppercase font-black flex items-center gap-0.5 mt-0.5">
