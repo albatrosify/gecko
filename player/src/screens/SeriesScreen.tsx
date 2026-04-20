@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Button, ScrollView } from 'react-native';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useAuth } from '../context/AuthContext';
 import { getXtreamApi } from '../api/xtream';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function SeriesScreen() {
+  const insets = useSafeAreaInsets();
   const { geckoUrl, selectedPlaylist } = useAuth();
   const [categories, setCategories] = useState<any[]>([]);
   const [series, setSeries] = useState<any[]>([]);
@@ -80,18 +82,23 @@ export default function SeriesScreen() {
     setActiveStream(null);
   };
 
-  if (activeStream) {
-    const ext = activeStream.container_extension || 'mp4';
-    const streamUrl = `${geckoUrl}/series/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${activeStream.id}.${ext}`;
+  const ext = activeStream?.container_extension || 'mp4';
+  const streamUrl = activeStream ? `${geckoUrl}/series/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${activeStream.id}.${ext}` : '';
+  const player = useVideoPlayer(streamUrl, player => {
+    if (activeStream) {
+        player.loop = false;
+        player.play();
+    }
+  });
 
+  if (activeStream) {
     return (
-      <View style={styles.playerContainer}>
-        <Video
-          source={{ uri: streamUrl }}
+      <View style={[styles.playerContainer, { paddingTop: insets.top }]}>
+        <VideoView
+          player={player}
           style={styles.video}
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          shouldPlay
+          allowsFullscreen
+          allowsPictureInPicture
         />
         <View style={styles.closeButton}>
           <Button title="Close" onPress={closePlayer} color="#fff" />
@@ -101,7 +108,7 @@ export default function SeriesScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.title}>
           {activeSeries ? activeSeries.name : selectedCategory ? 'Series' : 'Series Categories'}
@@ -149,7 +156,7 @@ export default function SeriesScreen() {
           )}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

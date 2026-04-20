@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, SafeAreaView, Button } from 'react-native';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useAuth } from '../context/AuthContext';
 import { getXtreamApi } from '../api/xtream';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TvScreen() {
+  const insets = useSafeAreaInsets();
   const { geckoUrl, selectedPlaylist } = useAuth();
   const [categories, setCategories] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
@@ -57,17 +59,22 @@ export default function TvScreen() {
     setActiveStream(null);
   };
 
-  if (activeStream) {
-    const streamUrl = `${geckoUrl}/live/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${activeStream.stream_id}.m3u8`;
+  const streamUrl = activeStream ? `${geckoUrl}/live/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${activeStream.stream_id}.m3u8` : '';
+  const player = useVideoPlayer(streamUrl, player => {
+    if (activeStream) {
+        player.loop = false;
+        player.play();
+    }
+  });
 
+  if (activeStream) {
     return (
-      <View style={styles.playerContainer}>
-        <Video
-          source={{ uri: streamUrl }}
+      <View style={[styles.playerContainer, { paddingTop: insets.top }]}>
+        <VideoView
+          player={player}
           style={styles.video}
-          useNativeControls
-          resizeMode={ResizeMode.CONTAIN}
-          shouldPlay
+          allowsFullscreen
+          allowsPictureInPicture
         />
         <View style={styles.closeButton}>
           <Button title="Close" onPress={closePlayer} color="#fff" />
@@ -77,7 +84,7 @@ export default function TvScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.title}>{selectedCategory ? 'Channels' : 'Live TV Categories'}</Text>
         {selectedCategory && <Button title="Back" onPress={handleBackToCategories} />}
@@ -106,7 +113,7 @@ export default function TvScreen() {
           )}
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
