@@ -2,6 +2,8 @@ import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
+import { eq, inArray, and } from 'drizzle-orm';
+import { mappings as schemaMappings, categoryMappings as schemaCategoryMappings } from '../schema.ts';
 
 export function createMappingsRouter() {
   const router = Router();
@@ -13,9 +15,6 @@ export function createMappingsRouter() {
     const { playlistId } = req.query;
     if (!playlistId) return res.status(400).json({ error: "playlistId required" });
     const db = getDb();
-    const { mappings: schemaMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
-
     const docs = db.select().from(schemaMappings).where(eq(schemaMappings.playlistId, playlistId as string)).all();
     const formatted = docs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) }));
     res.json(formatted);
@@ -23,7 +22,6 @@ export function createMappingsRouter() {
 
   router.post("/mappings", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { mappings: schemaMappings } = await import('../schema.ts');
     const newId = generateId();
     const { playlistId, type, originalId, ...extra } = req.body;
 
@@ -33,8 +31,6 @@ export function createMappingsRouter() {
 
   router.put("/mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { mappings: schemaMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
     const { id, playlistId, type, originalId, ...extra } = req.body;
 
     const doc = db.select().from(schemaMappings).where(eq(schemaMappings.id, req.params.id)).get();
@@ -52,8 +48,6 @@ export function createMappingsRouter() {
   router.post("/mappings/batch", requireAuth, async (req: AuthRequest, res) => {
     try {
       const db = getDb();
-      const { mappings: schemaMappings } = await import('../schema.ts');
-      const { eq, and } = await import('drizzle-orm');
       const { updates } = req.body; // Array of { id?, originalId, playlistId, type, ...data }
 
       db.transaction((tx) => {
@@ -90,8 +84,6 @@ export function createMappingsRouter() {
 
   router.delete("/mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { mappings: schemaMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
     db.delete(schemaMappings).where(eq(schemaMappings.id, req.params.id)).run();
     res.json({ success: true });
   });
@@ -103,8 +95,6 @@ export function createMappingsRouter() {
     const { playlistId } = req.query;
     if (!playlistId) return res.status(400).json({ error: "playlistId required" });
     const db = getDb();
-    const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
 
     const docs = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlistId as string)).all();
     const formatted = docs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) }));
@@ -113,7 +103,6 @@ export function createMappingsRouter() {
 
   router.post("/category-mappings", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
     const newId = generateId();
     const { playlistId, type, originalId, ...extra } = req.body;
 
@@ -123,8 +112,6 @@ export function createMappingsRouter() {
 
   router.put("/category-mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
     const { id, playlistId, type, originalId, ...extra } = req.body;
 
     const doc = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.id, req.params.id)).get();
@@ -141,8 +128,6 @@ export function createMappingsRouter() {
 
   router.post("/category-mappings/batch", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-    const { eq, and } = await import('drizzle-orm');
     const { updates } = req.body;
 
     db.transaction((tx) => {
@@ -174,8 +159,6 @@ export function createMappingsRouter() {
 
   router.delete("/category-mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
     db.delete(schemaCategoryMappings).where(eq(schemaCategoryMappings.id, req.params.id)).run();
     res.json({ success: true });
   });
@@ -183,8 +166,6 @@ export function createMappingsRouter() {
   router.post("/mappings/reset", requireAuth, async (req: AuthRequest, res) => {
     try {
       const db = getDb();
-      const { mappings: schemaMappings } = await import('../schema.ts');
-      const { inArray } = await import('drizzle-orm');
       const { ids } = req.body;
 
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -211,8 +192,6 @@ export function createMappingsRouter() {
   router.post("/category-mappings/reset", requireAuth, async (req: AuthRequest, res) => {
     try {
       const db = getDb();
-      const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-      const { inArray } = await import('drizzle-orm');
       const { ids } = req.body;
 
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
