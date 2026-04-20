@@ -180,5 +180,60 @@ export function createMappingsRouter() {
     res.json({ success: true });
   });
 
+  router.post("/mappings/reset", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const db = getDb();
+      const { mappings: schemaMappings } = await import('../schema.ts');
+      const { inArray } = await import('drizzle-orm');
+      const { ids } = req.body;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: "ids array required" });
+      }
+
+      db.transaction((tx) => {
+        const docs = tx.select().from(schemaMappings).where(inArray(schemaMappings.id, ids)).all();
+        for (const doc of docs) {
+          const extra = (doc.extra as any) || {};
+          delete extra.customName;
+          delete extra.customIcon;
+          tx.update(schemaMappings).set({ extra }).where(eq(schemaMappings.id, doc.id)).run();
+        }
+      });
+
+      res.json({ success: true, count: ids.length });
+    } catch (err: any) {
+      log(`[reset mappings] error: ${err?.message || err}`);
+      res.status(500).json({ error: String(err?.message || err) });
+    }
+  });
+
+  router.post("/category-mappings/reset", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const db = getDb();
+      const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+      const { inArray } = await import('drizzle-orm');
+      const { ids } = req.body;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: "ids array required" });
+      }
+
+      db.transaction((tx) => {
+        const docs = tx.select().from(schemaCategoryMappings).where(inArray(schemaCategoryMappings.id, ids)).all();
+        for (const doc of docs) {
+          const extra = (doc.extra as any) || {};
+          delete extra.customName;
+          tx.update(schemaCategoryMappings).set({ extra }).where(eq(schemaCategoryMappings.id, doc.id)).run();
+        }
+      });
+
+      res.json({ success: true, count: ids.length });
+    } catch (err: any) {
+      log(`[reset category-mappings] error: ${err?.message || err}`);
+      res.status(500).json({ error: String(err?.message || err) });
+    }
+  });
+
   return router;
 }

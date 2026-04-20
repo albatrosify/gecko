@@ -183,7 +183,13 @@ export const mappings = {
   async batchUpdate(updates: any[]) {
     return request<any>('/api/mappings/batch', {
       method: 'POST',
-      body: JSON.stringify({ updates }),
+      body: JSON.stringify({ updates })
+    });
+  },
+  async reset(ids: string[]) {
+    return request<any>('/api/mappings/reset', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
     });
   },
   async delete(id: string) {
@@ -254,6 +260,12 @@ export const categoryMappings = {
     return request<any>('/api/category-mappings/batch', {
       method: 'POST',
       body: JSON.stringify({ updates }),
+    });
+  },
+  async reset(ids: string[]) {
+    return request<any>('/api/category-mappings/reset', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
     });
   },
   async delete(id: string) {
