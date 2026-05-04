@@ -68,7 +68,7 @@ async function startServer() {
       const start = Date.now();
       res.on('finish', () => {
         // Skip logging the logs endpoint itself to avoid feedback loop
-        if (req.path !== '/api/system/logs') {
+        if (req.path !== '/api/system/logs' && req.path !== '/api/proxy/stats') {
           const duration = Date.now() - start;
           log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms - ${getClientInfo(req)}`);
         }
