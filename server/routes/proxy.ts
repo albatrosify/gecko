@@ -1319,14 +1319,16 @@ export function createProxyRouter() {
       const { epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
       const { inArray } = await import('drizzle-orm');
 
+      // Collect all fetch promises for concurrent execution
+      const fetchPromises: Promise<string | null>[] = [];
+
       // 1. Custom EPG sources linked to this playlist
       const epgIds: string[] = playlist.epgIds || [];
       if (epgIds.length) {
         const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
         for (const epgDoc of epgDocs) {
           if (!epgDoc.url) continue;
-          const xml = await fetchXml(epgDoc.url);
-          if (xml) xmlParts.push(xml);
+          fetchPromises.push(fetchXml(epgDoc.url));
         }
       }
 
@@ -1345,7 +1347,12 @@ export function createProxyRouter() {
         if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
         const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
         log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
-        const xml = await fetchXml(upstreamEpgUrl);
+        fetchPromises.push(fetchXml(upstreamEpgUrl));
+      }
+
+      // Resolve all fetches concurrently
+      const results = await Promise.all(fetchPromises);
+      for (const xml of results) {
         if (xml) xmlParts.push(xml);
       }
 
