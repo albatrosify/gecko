@@ -1323,9 +1323,12 @@ export function createProxyRouter() {
       const epgIds: string[] = playlist.epgIds || [];
       if (epgIds.length) {
         const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
-        for (const epgDoc of epgDocs) {
-          if (!epgDoc.url) continue;
-          const xml = await fetchXml(epgDoc.url);
+        const fetchPromises = epgDocs.map(async (epgDoc) => {
+          if (!epgDoc.url) return null;
+          return await fetchXml(epgDoc.url);
+        });
+        const results = await Promise.all(fetchPromises);
+        for (const xml of results) {
           if (xml) xmlParts.push(xml);
         }
       }
