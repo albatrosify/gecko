@@ -40,7 +40,6 @@ import {
   Check, 
   X, 
   Database, 
-  FileJson,
   ArrowLeft,
   Save,
   ExternalLink,
