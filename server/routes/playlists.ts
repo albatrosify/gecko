@@ -1,7 +1,7 @@
 import { Router } from "express";
 import axios from "axios";
 import { requireAuth, requireAuthOrQuery, AuthRequest } from "../auth.ts";
-import { getDb, toId, docsWithId } from "../db.ts";
+import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource } from "../sync.ts";
 import { duplicateCache, getCached } from "../cache.ts";
@@ -18,65 +18,63 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
   router.post("/playlists/:id/clone", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
     const playlistId = req.params.id;
+    const { playlists: schemaPlaylists, sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
     const { name, username, password, sourceUsername, sourcePassword } = req.body;
 
     // Validate username uniqueness if overridden
     if (username) {
-      const existing = await db.collection('playlists').findOne({ username });
+      const existing = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.username, username)).get();
       if (existing) {
         return res.status(400).json({ error: "Playlist username already in use" });
       }
     }
 
     try {
-      const sourcePlaylist = await db.collection('playlists').findOne({ _id: toId(playlistId), userId: req.user!.id });
+      const sourcePlaylist = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).get();
       if (!sourcePlaylist) return res.status(404).json({ error: "Source playlist not found" });
 
-      let newSourceIds = [...sourcePlaylist.sourceIds];
-      const originalPlaylistIdStr = playlistId.toString();
-      log(`[Clone] Duplicating: ${sourcePlaylist.name} (${originalPlaylistIdStr}). Original Source IDs: ${newSourceIds.join(', ')}`);
+      let newSourceIds = (Array.isArray(sourcePlaylist.sourceIds) ? sourcePlaylist.sourceIds : []) as string[];
+      log(`[Clone] Duplicating: ${sourcePlaylist.name} (${playlistId}). Original Source IDs: ${newSourceIds.join(', ')}`);
 
       // 0. Optionally create a new source if new credentials are provided
-      if (sourceUsername && sourcePassword && sourcePlaylist.sourceIds.length > 0) {
+      if (sourceUsername && sourcePassword && newSourceIds.length > 0) {
         log(`[Clone] Creating new source override for: ${sourceUsername}`);
-        const originalSourceId = sourcePlaylist.sourceIds[0];
-        const originalSource = await db.collection('sources').findOne({ _id: toId(originalSourceId) });
+        const originalSourceId = newSourceIds[0];
+        const originalSource = db.select().from(schemaSources).where(eq(schemaSources.id, originalSourceId)).get();
 
         if (originalSource) {
-          const newSourceDoc = {
-            ...originalSource,
-            _id: undefined,
+          const newSourceId = generateId();
+          const extra = { ...(originalSource.extra as any || {}), enabled: true, lastUpdated: new Date().toISOString() };
+          db.insert(schemaSources).values({
+            id: newSourceId,
             userId: req.user!.id,
             name: `${originalSource.name} (${sourceUsername})`,
+            type: originalSource.type,
+            url: originalSource.url,
             username: sourceUsername,
             password: sourcePassword,
-            createdAt: new Date().toISOString()
-          };
-          delete (newSourceDoc as any)._id;
-          const sourceResult = await db.collection('sources').insertOne(newSourceDoc);
-          newSourceIds = [sourceResult.insertedId.toString()];
-          log(`[Clone] Source cloned successfully: ${newSourceIds[0]}`);
+            autoSyncEnabled: originalSource.autoSyncEnabled,
+            syncCron: originalSource.syncCron,
+            extra
+          }).run();
 
-          // Re-schedule cron for the new source IF enabled
-          const ns = newSourceDoc as any;
-          if (ns.autoSyncEnabled && ns.syncCron) {
-            scheduleSourceCron({ ...ns, _id: sourceResult.insertedId });
+          newSourceIds = [newSourceId];
+          log(`[Clone] Source cloned successfully: ${newSourceId}`);
+
+          if (originalSource.autoSyncEnabled && originalSource.syncCron) {
+            scheduleSourceCron({ id: newSourceId, name: `${originalSource.name} (${sourceUsername})`, autoSyncEnabled: originalSource.autoSyncEnabled, syncCron: originalSource.syncCron, ...extra });
           }
 
-          // INSTANTLY duplicate the disk cache from old source to new source
-          // so the user sees everything immediately
-          const oldSid = originalSourceId.toString();
-          const newSid = sourceResult.insertedId.toString();
+          const oldSid = originalSourceId;
+          const newSid = newSourceId;
           duplicateCache(`${oldSid}_categories`, `${newSid}_categories`);
           duplicateCache(`${oldSid}_live_streams`, `${newSid}_live_streams`);
           duplicateCache(`${oldSid}_vod_streams`, `${newSid}_vod_streams`);
           duplicateCache(`${oldSid}_series`, `${newSid}_series`);
 
-          // FORCE an immediate refresh of the new source so the new playlist isn't "empty"
-          // We do this in the background to not block the clone response too long,
-          // but we start it now.
-          refreshSource(sourceResult.insertedId.toString(), 'live', true).catch(err => {
-            log(`[Clone] Background refresh failed for new source ${sourceResult.insertedId}: ${err?.message || err}`);
+          refreshSource(newSourceId, 'live', true).catch(err => {
+            log(`[Clone] Background refresh failed for new source ${newSourceId}: ${err?.message || err}`);
           });
         } else {
           log(`[Clone] WARNING: Original source ${originalSourceId} not found in DB.`);
@@ -84,36 +82,40 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       }
 
       // 1. Create new playlist doc
-      const newPlaylistDoc = {
-        ...sourcePlaylist,
-        _id: undefined,
+      const newPlaylistId = generateId();
+      const pExtra = { ...(sourcePlaylist.extra as any || {}), createdAt: new Date().toISOString() };
+      db.insert(schemaPlaylists).values({
+        id: newPlaylistId,
         userId: req.user!.id,
         name: name || `${sourcePlaylist.name} (Copy)`,
         username: username || sourcePlaylist.username,
         password: password || sourcePlaylist.password,
         sourceIds: newSourceIds,
-        createdAt: new Date().toISOString()
-      };
-      delete (newPlaylistDoc as any)._id;
-
-      const result = await db.collection('playlists').insertOne(newPlaylistDoc);
-      const newPlaylistId = result.insertedId.toString();
-
-      // Use a filter that catches both string and ObjectId to be safe
-      const playlistFilter = { $or: [{ playlistId: originalPlaylistIdStr }, { playlistId: toId(originalPlaylistIdStr) }] };
+        directStreams: sourcePlaylist.directStreams,
+        extra: pExtra
+      }).run();
 
       // 2. Clone Category Mappings
-      const catMappings = await db.collection('categoryMappings').find(playlistFilter).toArray();
+      const catMappings = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlistId)).all();
       if (catMappings.length > 0) {
         log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
-        const newCatMappings = catMappings.map(m => {
-          const newM = { ...m, _id: undefined, playlistId: newPlaylistId };
-          delete (newM as any)._id;
-          return newM;
+        const newCatMappings = catMappings.map(m => ({
+          id: generateId(),
+          playlistId: newPlaylistId,
+          type: m.type,
+          originalId: m.originalId,
+          extra: m.extra
+        }));
+
+        db.transaction((tx) => {
+          const CHUNK_SIZE = 500;
+          for (let i = 0; i < newCatMappings.length; i += CHUNK_SIZE) {
+            const chunk = newCatMappings.slice(i, i + CHUNK_SIZE);
+            if (chunk.length > 0) {
+              tx.insert(schemaCategoryMappings).values(chunk).run();
+            }
+          }
         });
-        await db.collection('categoryMappings').insertMany(newCatMappings);
-      } else {
-        log(`[Clone] No category mappings found for source ${originalPlaylistIdStr}`);
       }
 
       // Helper to replace credentials in URLs
@@ -124,41 +126,40 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       };
 
       // 3. Clone Stream Mappings
-      const streamMappings = await db.collection('mappings').find(playlistFilter).toArray();
+      const streamMappings = db.select().from(schemaMappings).where(eq(schemaMappings.playlistId, playlistId)).all();
       if (streamMappings.length > 0) {
         log(`[Clone] Found ${streamMappings.length} stream mappings to duplicate.`);
 
         let oldUser = '', oldPass = '';
-        if (sourceUsername && sourcePassword) {
-          const originalSourceId = sourcePlaylist.sourceIds[0];
-          const originalSource = await db.collection('sources').findOne({ _id: toId(originalSourceId) });
-          if (originalSource) {
-            oldUser = originalSource.username;
-            oldPass = originalSource.password;
+        if (sourceUsername && sourcePassword && newSourceIds.length > 0) {
+          const originalSourceId = (Array.isArray(sourcePlaylist.sourceIds) ? sourcePlaylist.sourceIds : [])[0];
+          if (originalSourceId) {
+             const originalSource = db.select().from(schemaSources).where(eq(schemaSources.id, originalSourceId)).get();
+             if (originalSource) {
+               oldUser = originalSource.username || '';
+               oldPass = originalSource.password || '';
+             }
           }
         }
 
-        const BATCH_SIZE = 1000;
-        for (let i = 0; i < streamMappings.length; i += BATCH_SIZE) {
-          const batch = streamMappings.slice(i, i + BATCH_SIZE).map(m => {
-            const newMapping: any = {
-              ...m,
-              _id: undefined,
-              playlistId: newPlaylistId
-            };
-            delete newMapping._id;
+        const newStreamMappings = streamMappings.map(m => {
+          const extra = { ...(m.extra as any || {}) };
+          if (sourceUsername && sourcePassword && oldUser && oldPass && extra.url) {
+            extra.url = replaceUrlCredentials(extra.url, oldUser, oldPass, sourceUsername, sourcePassword);
+          }
+          return { id: generateId(), playlistId: newPlaylistId, type: m.type, originalId: m.originalId, extra };
+        });
 
-            if (sourceUsername && sourcePassword && oldUser && oldPass && newMapping.url) {
-              newMapping.url = replaceUrlCredentials(newMapping.url, oldUser, oldPass, sourceUsername, sourcePassword);
+        db.transaction((tx) => {
+          const CHUNK_SIZE = 500;
+          for (let i = 0; i < newStreamMappings.length; i += CHUNK_SIZE) {
+            const chunk = newStreamMappings.slice(i, i + CHUNK_SIZE);
+            if (chunk.length > 0) {
+              tx.insert(schemaMappings).values(chunk).run();
             }
-
-            return newMapping;
-          });
-          await db.collection('mappings').insertMany(batch);
-        }
+          }
+        });
         log(`[Clone] Stream mappings duplicated successfully.`);
-      } else {
-        log(`[Clone] No stream mappings found for source playlist ${originalPlaylistIdStr}`);
       }
 
       log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
@@ -171,64 +172,74 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
   router.get("/playlists", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const docs = await db.collection('playlists').find({ userId: req.user!.id }).toArray();
-    res.json(docsWithId(docs));
+    const { playlists: schemaPlaylists } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+
+    const docs = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.userId, req.user!.id)).all();
+    const formatted = docs.map(d => ({
+      id: d.id, userId: d.userId, name: d.name, username: d.username, password: d.password,
+      sourceIds: d.sourceIds, directStreams: d.directStreams, ...(d.extra as any || {})
+    }));
+    res.json(formatted);
   });
 
   router.post("/playlists", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
+    const { playlists: schemaPlaylists } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+    const newId = generateId();
 
-    // Validate username uniqueness
     if (req.body.username) {
-      const existing = await db.collection('playlists').findOne({ username: req.body.username });
+      const existing = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.username, req.body.username)).get();
       if (existing) {
         return res.status(400).json({ error: "Playlist username already in use" });
       }
     }
 
-    const playlist = {
-      ...req.body,
-      userId: req.user!.id,
-      enabled: true,
-      sourceIds: [],
-      epgIds: [],
-      nextStreamId: 1,
-      isSynced: false, // Set to true if this is a synced upstream playlist
-    };
-    const result = await db.collection('playlists').insertOne(playlist);
-    res.status(201).json({ id: result.insertedId.toString(), ...playlist });
+    const { name, username, password, sourceIds, directStreams, ...extra } = req.body;
+    extra.enabled = true;
+    extra.nextStreamId = 1;
+    extra.isSynced = false;
+    extra.epgIds = [];
+
+    db.insert(schemaPlaylists).values({
+      id: newId, userId: req.user!.id, name, username, password,
+      sourceIds: sourceIds || [], directStreams, extra
+    }).run();
+
+    res.status(201).json({ id: newId, userId: req.user!.id, name, username, password, sourceIds: sourceIds || [], directStreams, ...extra });
   });
 
   router.put("/playlists/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { id, ...update } = req.body;
+    const { playlists: schemaPlaylists } = await import('../schema.ts');
+    const { eq, and, ne } = await import('drizzle-orm');
+    const { id, name, username, password, sourceIds, directStreams, ...extra } = req.body;
 
-    // Preserve nextStreamId if not explicitly updating
-    if (!update.nextStreamId) {
-      const existing = await db.collection('playlists').findOne({
-        _id: toId(req.params.id),
-        userId: req.user!.id
-      });
-      if (existing) {
-        update.nextStreamId = existing.nextStreamId ?? 1;
-      }
+    const existing = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, req.params.id), eq(schemaPlaylists.userId, req.user!.id))).get();
+    if (!existing) return res.status(404).json({ error: "Playlist not found" });
+
+    const currentExtra = (existing.extra as any) || {};
+    if (!extra.nextStreamId) {
+      extra.nextStreamId = currentExtra.nextStreamId ?? 1;
     }
 
-    // Validate username uniqueness if changing
-    if (update.username) {
-      const existing = await db.collection('playlists').findOne({
-        username: update.username,
-        _id: { $ne: toId(req.params.id) }
-      });
-      if (existing) {
+    if (username && username !== existing.username) {
+      const conflict = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.username, username)).get();
+      if (conflict) {
         return res.status(400).json({ error: "Playlist username already in use" });
       }
     }
 
-    await db.collection('playlists').updateOne(
-      { _id: toId(req.params.id), userId: req.user!.id },
-      { $set: update }
-    );
+    db.update(schemaPlaylists).set({
+      name: name !== undefined ? name : existing.name,
+      username: username !== undefined ? username : existing.username,
+      password: password !== undefined ? password : existing.password,
+      sourceIds: sourceIds !== undefined ? sourceIds : existing.sourceIds,
+      directStreams: directStreams !== undefined ? directStreams : existing.directStreams,
+      extra: { ...currentExtra, ...extra }
+    }).where(eq(schemaPlaylists.id, req.params.id)).run();
+
     if (epgsRouter && (epgsRouter as any).invalidateEpgChannelCache) {
       (epgsRouter as any).invalidateEpgChannelCache(req.params.id);
     }
@@ -240,28 +251,32 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
   // =====================================
   router.post("/playlists/:id/sync", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
+    const { playlists: schemaPlaylists, mappings: schemaMappings } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
     const { id } = req.params;
 
-    await db.collection('playlists').updateOne(
-      { _id: toId(id), userId: req.user!.id },
-      { $set: { isSynced: true } }
-    );
-
-    // Clear existing mappings and create new ones with original upstream IDs
-    await db.collection('mappings').deleteMany({ playlistId: id });
+    const doc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, id), eq(schemaPlaylists.userId, req.user!.id))).get();
+    if (doc) {
+      const extra = { ...(doc.extra as any || {}), isSynced: true };
+      db.update(schemaPlaylists).set({ extra }).where(eq(schemaPlaylists.id, id)).run();
+      db.delete(schemaMappings).where(eq(schemaMappings.playlistId, id)).run();
+    }
 
     res.json({ success: true, message: "Playlist marked as synced. Re-import streams to apply." });
   });
 
   router.delete("/playlists/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
+    const { playlists: schemaPlaylists, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
     const playlistId = req.params.id;
-    // Delete playlist and its mappings
-    await Promise.all([
-      db.collection('playlists').deleteOne({ _id: toId(playlistId), userId: req.user!.id }),
-      db.collection('mappings').deleteMany({ playlistId }),
-      db.collection('categoryMappings').deleteMany({ playlistId }),
-    ]);
+
+    db.transaction((tx) => {
+      tx.delete(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).run();
+      tx.delete(schemaMappings).where(eq(schemaMappings.playlistId, playlistId)).run();
+      tx.delete(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlistId)).run();
+    });
+
     res.json({ success: true });
   });
 
@@ -275,10 +290,10 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
     }
     try {
       const db = getDb();
-      const playlistDoc = await db.collection('playlists').findOne({
-        _id: toId(req.params.id),
-        userId: req.user!.id,
-      });
+      const { playlists: schemaPlaylists, sources: schemaSources } = await import('../schema.ts');
+      const { eq, and, inArray } = await import('drizzle-orm');
+
+      const playlistDoc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, req.params.id), eq(schemaPlaylists.userId, req.user!.id))).get();
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
       // Strip sourceIdx prefix (e.g. "0_12345" → sourceIdx=0, rawId="12345")
@@ -294,13 +309,27 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       }
 
       const imgBase = getBaseUrl(req);
-      const sourceIds: string[] = playlistDoc.sourceIds || [];
+      const sourceIds: string[] = (Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : []) as string[];
+
+      const sourceDocs = sourceIds.length > 0
+        ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+        : [];
+
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
+
       for (let sourceIdx = 0; sourceIdx < sourceIds.length; sourceIdx++) {
         if (targetSIdx !== null && targetSIdx !== sourceIdx) continue;
-        const sDoc = await db.collection('sources').findOne({ _id: toId(sourceIds[sourceIdx]) });
+        const sDoc = sourcesMap.get(sourceIds[sourceIdx]);
         if (!sDoc) continue;
         try {
-          const client = new XtreamClient(sDoc as any);
+          const client = new XtreamClient({ ...sDoc, ...(sDoc.extra as any || {}) } as any);
           const info = await client.getSeriesInfo(rawSeriesId);
           if (info && (info.seasons || info.episodes || info.info)) {
             return res.json(proxySeriesInfoImages(info, imgBase));
@@ -325,17 +354,25 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
     try {
       const db = getDb();
-      const playlistDoc = await db.collection('playlists').findOne({
-        _id: toId(req.params.id),
-        userId: req.user!.id,
-      });
+      const { playlists: schemaPlaylists, sources: schemaSources } = await import('../schema.ts');
+      const { eq, and, inArray } = await import('drizzle-orm');
+
+      const playlistDoc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, req.params.id), eq(schemaPlaylists.userId, req.user!.id))).get();
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
-      const sourceIds: string[] = playlistDoc.sourceIds || [];
-      const sourceDocs = await Promise.all(
-        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-      );
-      const validSources = sourceDocs.filter(Boolean);
+      const sourceIds: string[] = (Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : []) as string[];
+      const sourceDocs = sourceIds.length > 0
+        ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+        : [];
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
+      const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
 
       const qLower = q.trim().toLowerCase();
       const seen = new Set<string>();
@@ -343,7 +380,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
       outer:
       for (const sourceDoc of validSources) {
-        const sourceId = sourceDoc._id.toString();
+        const sourceId = sourceDoc.id;
 
         // Category name lookup — cache stores { liveCats, vodCats, seriesCats }
         const catCache = getCached(`${sourceId}_categories`);
@@ -400,29 +437,45 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
 
     try {
       const db = getDb();
-      const playlistDoc = await db.collection('playlists').findOne({
-        _id: toId(playlistId),
-        userId: req.user!.id,
-      });
+      const { playlists: schemaPlaylists, sources: schemaSources } = await import('../schema.ts');
+      const { eq, and, inArray } = await import('drizzle-orm');
+
+      const playlistDoc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).get();
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
-      const sourceIds: string[] = playlistDoc.sourceIds || [];
-      const sourceDocs = await Promise.all(
-        sourceIds.map((sid) => db.collection('sources').findOne({ _id: toId(sid) }))
-      );
-      const validSources = sourceDocs.filter(Boolean);
+      const sourceIds: string[] = (Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : []) as string[];
+      const sourceDocs = sourceIds.length > 0
+        ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+        : [];
+      const sourcesMap = new Map(sourceDocs.map(doc => {
+        const overrides = (playlistDoc.extra as any)?.sourceOverrides?.[doc.id];
+        if (overrides) {
+          if (overrides.username) doc.username = overrides.username;
+          if (overrides.password) doc.password = overrides.password;
+        }
+        return [doc.id, doc];
+      }));
+      const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
       if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
 
       // Use first available source; get container_extension from stream cache
       const sourceDoc = validSources[0]!;
-      const cached = getCached(`${sourceDoc.id ?? sourceDoc._id.toString()}_streams_${type}`);
+      const cached = getCached(`${sourceDoc.id}_streams_${type}`);
       const streamData = (cached?.data as any[] | undefined)?.find(
         (s: any) => String(s.stream_id ?? s.series_id) === streamId
       );
-      const extension = streamData?.container_extension || 'mp4';
-      const title = streamData?.name || streamData?.title || streamId;
+      // For series episodes, we don't know the extension since they aren't in the streams list. Default to mp4.
+      // Also the episode name is not easily known, so we fallback to streamId.
+      let extension = streamData?.container_extension || 'mp4';
+      let title = streamData?.name || streamData?.title || `Episode_${streamId}`;
 
-      const url = buildStreamUrl(sourceDoc, streamId, type as 'vod' | 'series', extension);
+      // Check query params if they exist for title and extension (optional enhancement, but we'll stick to mp4 and streamId fallback)
+      if (req.query.extension && typeof req.query.extension === 'string') {
+        extension = req.query.extension;
+      }
+
+      let url = '';
+      url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
 
       // Proxy the upstream response as a file download
       const upstreamRes = await axios.get(url, {
@@ -440,6 +493,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       (upstreamRes.data as NodeJS.ReadableStream).pipe(res);
     } catch (e: any) {
       if (!res.headersSent) res.status(502).json({ error: `Upstream error: ${e.message}` });
+
     }
   });
 

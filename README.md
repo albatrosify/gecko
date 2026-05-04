@@ -14,7 +14,7 @@ A self-hosted IPTV playlist aggregator and editor. Connect upstream Xtream Codes
 - **M3U Export** — Download playlists in M3U format
 - **EPG Support** — Attach XMLTV EPG sources to playlists
 - **Multi-user** — Local email/password authentication with admin/user roles
-- **Disk-based Cache** — Handles large upstream playlists (100K+ streams) efficiently
+- **Zero-dependency Storage** — Single SQLite file, no external database required
 
 ## Quick Start with Docker
 
@@ -25,13 +25,11 @@ cd gecko
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env — set JWT_SECRET, APP_URL, and VPN credentials
+# Edit .env — set JWT_SECRET and APP_URL
 
-# Start the app (includes MongoDB integrated)
+# Start the app (SQLite database built-in, no external services needed)
+# This will pull the latest image from the GitHub Container Registry (ghcr.io/albatrosify/gecko)
 docker compose up -d
-
-# OR run with separate services (original behavior)
-# docker compose -f docker-compose.separate.yml up -d
 
 # Open in browser
 open http://localhost:3000
@@ -45,15 +43,14 @@ Edit `.env` (or `docker-compose.yml` environment variables):
 
 | Variable | Default | Description |
 |---|---|---|
-| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection string |
-| `MONGODB_DB` | `open_iptv` | Database name |
+| `SQLITE_PATH` | `/app/data/gecko.db` | SQLite database file location |
 | `JWT_SECRET` | — | **Required.** Secret for JWT tokens (`openssl rand -hex 32`) |
 | `APP_URL` | `http://YOUR_LAN_IP:3000` | Public URL for Xtream proxy rewrites |
 | `PORT` | `3000` | Server port |
 
 ## Local Development
 
-**Prerequisites:** Node.js 20+, MongoDB running locally
+**Prerequisites:** Node.js 20+
 
 ```bash
 npm install
@@ -65,6 +62,6 @@ npm run dev
 
 - **Frontend**: React 19 + Vite + Tailwind CSS 4
 - **Backend**: Express + TypeScript (tsx)
-- **Database**: MongoDB 7
+- **Database**: SQLite (better-sqlite3 + Drizzle ORM)
 - **Auth**: JWT + bcrypt (local email/password)
 - **Deployment**: Docker + Docker Compose

@@ -1,24 +1,70 @@
 import express, { Router } from "express";
 import axios from "axios";
-import { getDb, toId, docWithId, docsWithId } from "../db.ts";
+import http from "http";
+import https from "https";
+import dns from "dns";
+import { getDb } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
 import { proxyStats } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
-import { DEFAULT_PORT } from "../config.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
 
+const isForbiddenIP = (ip: string): boolean => {
+  const normalizedIP = ip.toLowerCase();
+  if (
+    normalizedIP === 'localhost' ||
+    normalizedIP.endsWith('.local') ||
+    normalizedIP.includes('::ffff:')
+  ) {
+    return true;
+  }
+
+  return (
+    normalizedIP.startsWith('127.') ||
+    normalizedIP.startsWith('10.') ||
+    normalizedIP.startsWith('192.168.') ||
+    normalizedIP.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(normalizedIP) ||
+    normalizedIP === '::1' ||
+    normalizedIP === '0.0.0.0' || normalizedIP.startsWith('0.') ||
+    normalizedIP === '::' ||
+    /^[fF][cCdD]/.test(normalizedIP) || // fc00::/7
+    /^[fF][eE][89aAbB]/.test(normalizedIP) // fe80::/10
+  );
+};
+
+const safeLookup = (hostname: string, options: dns.LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void) => {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err, address as any, family);
+    const addrs = Array.isArray(address) ? address : [{ address, family }];
+
+    for (const addr of addrs) {
+      if (isForbiddenIP(addr.address)) {
+        return callback(new Error('Access to local network is forbidden'), '', 0);
+      }
+    }
+    callback(null, address as any, family);
+  });
+};
+
+const safeHttpAgent = new http.Agent({ lookup: safeLookup as any });
+const safeHttpsAgent = new https.Agent({ lookup: safeLookup as any });
+
 export function createProxyRouter() {
   const router = Router();
 
   const findPlaylistByCredentials = async (username: string, password: string) => {
     const db = getDb();
-    const doc = await db.collection('playlists').findOne({ username, password });
-    return doc ? docWithId(doc) : null;
+    const { playlists: schemaPlaylists } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+    const doc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.username, username), eq(schemaPlaylists.password, password))).get();
+    if (!doc) return null;
+    return { id: doc.id, userId: doc.userId, name: doc.name, username: doc.username, password: doc.password, sourceIds: doc.sourceIds, directStreams: doc.directStreams, ...(doc.extra as any || {}) };
   };
 
   // Proxy handling helper
@@ -37,13 +83,30 @@ export function createProxyRouter() {
     // Use integer stream ID directly (no underscore prefix)
     let originalId = streamId;
 
+    // Resolve custom category items first!
+    const activeTab = type === 'live' ? 'live' : (type === 'movie' ? 'vod' : 'series');
+    const { mappings: schemaMappings, sources: schemaSources, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
+    const { eq, and, inArray } = await import('drizzle-orm');
+
+    const customItem = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.streamId, streamId))).get();
+    if (customItem) {
+      const targetOriginalId = customItem.upstreamStreamId;
+      const targetSourceId = customItem.upstreamSourceId;
+      const sourceRow = db.select().from(schemaSources).where(eq(schemaSources.id, targetSourceId)).get();
+      if (!sourceRow) return res.status(404).send("Custom item source not found");
+      const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
+      const effectiveUsername = overrides?.username || sourceRow.username;
+      const effectivePassword = overrides?.password || sourceRow.password;
+      const cl = new XtreamClient({ ...sourceRow, username: effectiveUsername, password: effectivePassword } as any);
+      const targetExt = ext || (type === 'live' ? 'ts' : 'mp4');
+      const targetUrl = type === 'live' ? cl.getLiveStreamUrl(targetOriginalId) : (type === 'movie' ? cl.getVodStreamUrl(targetOriginalId, targetExt) : cl.getSeriesStreamUrl(targetOriginalId, targetExt));
+      return res.redirect(targetUrl);
+    }
+
     // Look up stream mapping by raw upstream stream ID.
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
-    const streamMapping = await db.collection('mappings').findOne({
-      playlistId: String(playlist.id),
-      originalId: streamId,
-      type: mappingTypeMap[type],
-    });
+    const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, streamId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
+    const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
     const streamName = streamMapping
       ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
       : `Stream ${streamId}`;
@@ -59,15 +122,24 @@ export function createProxyRouter() {
       ? [sourceIds[sourceIdx]]
       : sourceIds;
 
+    // Bulk fetch target sources to avoid N+1 queries
+    const targetSourceDocs = targetSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, targetSourceIds)).all()
+      : [];
+    const sourceMap = new Map(targetSourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
+
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     for (const sourceId of targetSourceIds) {
-      const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+      const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
+      const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+      const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
       const upstreamUrl = ext
-        ? `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}.${ext}`
-        : `${sourceDoc.url}/${type}/${sourceDoc.username}/${sourceDoc.password}/${originalId}`;
+        ? `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
+        : `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
 
       try {
         const response = await axios({
@@ -167,10 +239,16 @@ export function createProxyRouter() {
     const sourceId = playlist.sourceIds?.[0];
     if (!sourceId) return res.status(400).send("No source configured");
 
-    const sourceDoc = await db.collection('sources').findOne({ _id: toId(sourceId) });
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+    const sourceRow = db.select().from(schemaSources).where(eq(schemaSources.id, sourceId)).get();
+    const sourceDoc = sourceRow ? { ...sourceRow, ...(sourceRow.extra as any || {}) } : null;
     if (!sourceDoc) return res.status(404).send("Source not found");
 
-    const upstreamUrl = `${sourceDoc.url}/timeshift/${sourceDoc.username}/${sourceDoc.password}/${duration}/${start}/${streamId}.${ext}`;
+    const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
+    const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
+
+    const upstreamUrl = `${sourceDoc.url}/timeshift/${overrideUsername}/${overridePassword}/${duration}/${start}/${streamId}.${ext}`;
     log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
 
     try {
@@ -202,16 +280,37 @@ export function createProxyRouter() {
       return res.status(400).send('Missing or invalid url');
     }
     try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+      if (isForbiddenIP(hostname)) {
+        return res.status(403).send('Access to local network is forbidden');
+      }
+    } catch {
+      return res.status(400).send('Invalid url');
+    }
+
+    try {
       const upstream = await axios.get(url, {
         responseType: 'stream',
         timeout: 10000,
         headers: { 'User-Agent': 'Mozilla/5.0' },
+        httpAgent: safeHttpAgent,
+        httpsAgent: safeHttpsAgent,
+        beforeRedirect: (options: any) => {
+          const redirectHostname = (options.hostname || options.host || '').replace(/^\[|\]$/g, '');
+          if (isForbiddenIP(redirectHostname)) {
+            throw new Error('Access to local network is forbidden');
+          }
+        }
       });
       const ct = upstream.headers['content-type'] || 'image/jpeg';
       res.set('Content-Type', ct);
       res.set('Cache-Control', 'public, max-age=86400');
       upstream.data.pipe(res);
-    } catch {
+    } catch (err: any) {
+      if (err.message === 'Access to local network is forbidden') {
+        return res.status(403).send('Access to local network is forbidden');
+      }
       res.status(502).send('Failed to fetch image');
     }
   });
@@ -233,13 +332,27 @@ export function createProxyRouter() {
     }
 
     const db = getDb();
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, customCategories: schemaCustomCategories, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
+    const { eq, inArray, and } = await import('drizzle-orm');
+
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
-    const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
-    const sourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+    const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+    const sourceDocs = playlistSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+      : [];
+    const sourcesMap = new Map(sourceDocs.map(s => {
+      const baseSource = { ...s, ...(s.extra as any || {}) };
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
+      if (overrides) {
+        if (overrides.username) baseSource.username = overrides.username;
+        if (overrides.password) baseSource.password = overrides.password;
+      }
+      return [s.id, baseSource];
+    }));
 
     // Load all category mappings (usually small) but defer stream mappings (can be huge)
-    const catMappingDocs = await db.collection('categoryMappings').find({ playlistId: playlist.id }).toArray();
-    const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+    const catMappingDocs = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlist.id)).all();
+    const catMappings = catMappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as CategoryMapping[];
     let mappings: StreamMapping[] = [];
     const globalFormat = await getGlobalQualityFormat();
 
@@ -319,6 +432,13 @@ export function createProxyRouter() {
 
           data = allResults.flat();
 
+          const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'live'))).all();
+          customCats.forEach(cc => {
+            if (!cc.hidden) {
+              data.push({ category_id: `custom_${cc.id}`, category_name: cc.name, parent_id: 0, _order: cc.order, _hidden: false });
+            }
+          });
+
           const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
 
           data.forEach((c: any, idx: number) => {
@@ -347,20 +467,35 @@ export function createProxyRouter() {
         }
          case 'get_live_streams': {
            const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'live' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'live'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_live`);
                const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-           mappings = docsWithId(mappingDocs) as StreamMapping[];
+           mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
+
+           const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'live'))).all();
+           const liveSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
+           const liveDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
+           const copiedStreams = customItems.map(item => {
+             const sourceIdx = liveSourceIdxMap.get(item.upstreamSourceId);
+             if (sourceIdx === undefined) return null;
+             const original = liveDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
+             if (!original) return null;
+
+             const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+             const extra = item.extra as any || {};
+             if (extra.name) clone.name = extra.name;
+             if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+             return clone;
+           }).filter(Boolean);
+           data = [...data, ...copiedStreams];
 
            const catMap = new Map(catMappings.filter(m => m.type === 'live').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
@@ -440,9 +575,7 @@ export function createProxyRouter() {
              s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
              s._streamOrder = mapping?.order ?? idx;
 
-             if (!playlist.isSynced) {
-               s.streamId = String(mapping?.order ?? idx);
-             }
+
 
              // Proxy icon and strip prefix
              if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase);
@@ -491,6 +624,13 @@ export function createProxyRouter() {
 
             data = allResults.flat();
 
+            const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'vod'))).all();
+            customCats.forEach(cc => {
+              if (!cc.hidden) {
+                data.push({ category_id: `custom_${cc.id}`, category_name: cc.name, parent_id: 0, _order: cc.order, _hidden: false });
+              }
+            });
+
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
 
             data.forEach((c: any, idx: number) => {
@@ -518,20 +658,34 @@ export function createProxyRouter() {
           }
           case 'get_vod_streams': {
             const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'vod' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'vod'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_vod`);
                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-            mappings = docsWithId(mappingDocs) as StreamMapping[];
+            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
+
+            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'vod'))).all();
+            const vodSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
+            const vodDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
+            const copiedStreams = customItems.map(item => {
+              const sourceIdx = vodSourceIdxMap.get(item.upstreamSourceId);
+              if (sourceIdx === undefined) return null;
+              const original = vodDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
+              if (!original) return null;
+              const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+              const extra = item.extra as any || {};
+              if (extra.name) clone.name = extra.name;
+              if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+              return clone;
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
 
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
@@ -602,9 +756,7 @@ export function createProxyRouter() {
               s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
-              if (!playlist.isSynced) {
-                s.streamId = String(mapping?.order ?? idx);
-              }
+
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
                 s.category_id = String(s.category_id).split('_').slice(1).join('_');
@@ -648,6 +800,13 @@ export function createProxyRouter() {
 
             data = allResults.flat();
 
+            const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'series'))).all();
+            customCats.forEach(cc => {
+              if (!cc.hidden) {
+                data.push({ category_id: `custom_${cc.id}`, category_name: cc.name, parent_id: 0, _order: cc.order, _hidden: false });
+              }
+            });
+
             const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
 
             data.forEach((c: any, idx: number) => {
@@ -675,20 +834,34 @@ export function createProxyRouter() {
           }
           case 'get_series': {
             const categoryId = req.query.category_id as string;
-           const [mappingDocs, allResults] = await Promise.all([
-             db.collection('mappings').find({ playlistId: playlist.id, type: 'series' }).toArray(),
-             Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'series'))).all();
+           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_series`);
                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-             }))
-           ]);
+           }));
 
-            mappings = docsWithId(mappingDocs) as StreamMapping[];
+            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
+
+            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'series'))).all();
+            const seriesSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
+            const seriesDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.series_id}`, s]));
+            const copiedStreams = customItems.map(item => {
+              const sourceIdx = seriesSourceIdxMap.get(item.upstreamSourceId);
+              if (sourceIdx === undefined) return null;
+              const original = seriesDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
+              if (!original) return null;
+              const clone = { ...(original as any), series_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+              const extra = item.extra as any || {};
+              if (extra.name) clone.name = extra.name;
+              if (extra.cover) clone.cover = extra.cover;
+              return clone;
+            }).filter(Boolean);
+            data = [...data, ...copiedStreams];
 
             const catMap = new Map(catMappings.filter(m => m.type === 'series').map(m => [String(m.originalId), m]));
            const mappingMap = new Map(mappings.map(m => [String(m.originalId), m]));
@@ -758,9 +931,7 @@ export function createProxyRouter() {
               s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
-              if (!playlist.isSynced) {
-                s.streamId = String(mapping?.order ?? idx);
-              }
+
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
                 s.category_id = String(s.category_id).split('_').slice(1).join('_');
@@ -949,19 +1120,32 @@ export function createProxyRouter() {
     if (!playlist) return res.status(401).send("Invalid credentials");
 
     const db = getDb();
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
+    const { eq, inArray, and } = await import('drizzle-orm');
+
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
-    const sourceDocs = await db.collection('sources').find({ _id: { $in: playlist.sourceIds.map(toId) } }).toArray();
-    const m3uSourcesMap = new Map(sourceDocs.map(s => [s._id.toString(), s]));
+    const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+    const sourceDocs = playlistSourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+      : [];
+    const m3uSourcesMap = new Map(sourceDocs.map(s => {
+      const baseSource = { ...s, ...(s.extra as any || {}) };
+      const overrides = (playlist as any).sourceOverrides?.[s.id];
+      if (overrides) {
+        if (overrides.username) baseSource.username = overrides.username;
+        if (overrides.password) baseSource.password = overrides.password;
+      }
+      return [s.id, baseSource];
+    }));
 
     const m3uType = (type as string) || 'live';
     const activeTabStr = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
 
-    const [mappingDocs, catMappingDocs] = await Promise.all([
-      db.collection('mappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
-      db.collection('categoryMappings').find({ playlistId: playlist.id, type: activeTabStr }).toArray(),
-    ]);
-    const mappings = docsWithId(mappingDocs) as StreamMapping[];
-    const catMappings = docsWithId(catMappingDocs) as CategoryMapping[];
+    const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, activeTabStr))).all();
+    const catMappingDocs = db.select().from(schemaCategoryMappings).where(and(eq(schemaCategoryMappings.playlistId, playlist.id), eq(schemaCategoryMappings.type, activeTabStr))).all();
+
+    const mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
+    const catMappings = catMappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as CategoryMapping[];
     const m3uGlobalFormat = await getGlobalQualityFormat();
 
     try {
@@ -987,6 +1171,22 @@ export function createProxyRouter() {
       }));
 
       let rawStreams = allResults.flat();
+
+      const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, activeTabStr))).all();
+      const m3uSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
+      const m3uDataMap = new Map(rawStreams.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
+      const copiedStreams = customItems.map(item => {
+        const sourceIdx = m3uSourceIdxMap.get(item.upstreamSourceId);
+        if (sourceIdx === undefined) return null;
+        const original = m3uDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
+        if (!original) return null;
+        const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+        const extra = item.extra as any || {};
+        if (extra.name) clone.name = extra.name;
+        if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
+        return clone;
+      }).filter(Boolean);
+      rawStreams = [...rawStreams, ...copiedStreams];
 
       const catMap = new Map(catMappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
       const mappingMap = new Map(mappings.filter(m => m.type === activeTabStr).map(m => [String(m.originalId), m]));
@@ -1055,19 +1255,12 @@ export function createProxyRouter() {
         return a._streamOrder - b._streamOrder;
       });
 
-      // Only generate integer stream IDs for custom playlists (not synced)
-       const streamsWithIds = !playlist.isSynced ? streams.map((s: any, idx: number) => {
-         const streamId = (playlist.nextStreamId || 1) + idx;
-         s.streamId = streamId;
-         return s;
-       }) : streams;
-
       // Build base URL for proxied streams
       const proxyBaseUrl = getBaseUrl(req);
 
-      for (const stream of streamsWithIds) {
+      for (const stream of streams) {
         const mapping = stream._mapping;
-        const streamId = stream.streamId;
+        const streamId = String(stream.stream_id || stream.series_id);
 
         const baseName = mapping
           ? computeDisplayName(mapping, playlist.qualityLabelFormat, m3uGlobalFormat)
@@ -1080,10 +1273,9 @@ export function createProxyRouter() {
 
         let url;
         if (playlist.directStreams && stream._client) {
-          const originalStreamId = String(stream.stream_id || stream.series_id);
-          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(originalStreamId, stream.container_extension);
-          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(originalStreamId, stream.container_extension);
-          else url = stream._client.getLiveStreamUrl(originalStreamId);
+          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(streamId, stream.container_extension);
+          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(streamId, stream.container_extension);
+          else url = stream._client.getLiveStreamUrl(streamId);
         } else {
           const pathType = m3uType === 'vod' ? 'movie' : m3uType === 'series' ? 'series' : 'live';
           url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${streamId}.ts`;
@@ -1123,7 +1315,10 @@ export function createProxyRouter() {
             const zlib = await import('zlib');
             data = zlib.gunzipSync(data);
           }
-          return data.toString('utf-8');
+          let xml = data.toString('utf-8');
+          // Fix unescaped & in attribute values from malformed upstream feeds
+          xml = xml.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/gi, '&amp;');
+          return xml;
         } catch (err: any) {
           log(`[EPG] Failed to fetch ${url}: ${err.message}`);
           return null;
@@ -1131,31 +1326,44 @@ export function createProxyRouter() {
       };
 
       const xmlParts: string[] = [];
+      const fetchPromises: Promise<void>[] = [];
+
+      const { epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
+      const { inArray } = await import('drizzle-orm');
 
       // 1. Custom EPG sources linked to this playlist
       const epgIds: string[] = playlist.epgIds || [];
       if (epgIds.length) {
-        const epgDocs = await db.collection('epgs').find({ _id: { $in: epgIds.map(toId) } }).toArray();
+        const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
         for (const epgDoc of epgDocs) {
           if (!epgDoc.url) continue;
-          const xml = await fetchXml(epgDoc.url);
-          if (xml) xmlParts.push(xml);
+          fetchPromises.push(fetchXml(epgDoc.url).then(xml => {
+            if (xml) xmlParts.push(xml);
+          }));
         }
       }
 
       // 2. Upstream sources with useUpstreamEpg enabled
-      const sourceDocs = await db.collection('sources').find({
-        _id: { $in: (playlist.sourceIds || []).map(toId) },
-        useUpstreamEpg: true,
-      }).toArray();
+      const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
+      const sourceDocs = playlistSourceIds.length > 0
+        ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
+        : [];
 
-      for (const sourceDoc of sourceDocs) {
-        if (!sourceDoc.url || !sourceDoc.username) continue;
-        const upstreamEpgUrl = `${sourceDoc.url}/xmltv.php?username=${encodeURIComponent(sourceDoc.username)}&password=${encodeURIComponent(sourceDoc.password)}`;
-        log(`[EPG] Fetching upstream EPG: ${sourceDoc.url}/xmltv.php`);
-        const xml = await fetchXml(upstreamEpgUrl);
-        if (xml) xmlParts.push(xml);
+      for (const sourceRow of sourceDocs) {
+        const sExtra = (sourceRow.extra as any) || {};
+        const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
+        const effectiveUsername = overrides?.username || sourceRow.username;
+        const effectivePassword = overrides?.password || sourceRow.password;
+
+        if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
+        const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
+        log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
+        fetchPromises.push(fetchXml(upstreamEpgUrl).then(xml => {
+          if (xml) xmlParts.push(xml);
+        }));
       }
+
+      await Promise.all(fetchPromises);
 
       if (!xmlParts.length) {
         return res.send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');

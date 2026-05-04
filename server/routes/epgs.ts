@@ -1,7 +1,8 @@
 import { Router } from "express";
 import axios from "axios";
 import { requireAuth, AuthRequest } from "../auth.ts";
-import { getDb, toId, docsWithId } from "../db.ts";
+import { getDb } from "../db.ts";
+import { generateId } from "../db.ts";
 import { log } from "../logger.ts";
 
 export function createEpgsRouter() {
@@ -12,24 +13,39 @@ export function createEpgsRouter() {
   // =====================================
   router.get("/epgs", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const docs = await db.collection('epgs').find({ userId: req.user!.id }).toArray();
-    res.json(docsWithId(docs));
+    const { epgs: schemaEpgs } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+    const docs = db.select().from(schemaEpgs).where(eq(schemaEpgs.userId, req.user!.id)).all();
+
+    const formatted = docs.map(d => {
+      const extra = (d.extra as any) || {};
+      return { id: d.id, userId: d.userId, name: d.name, url: d.url, ...extra };
+    });
+    res.json(formatted);
   });
 
   router.post("/epgs", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const epg = {
-      ...req.body,
+    const { epgs: schemaEpgs } = await import('../schema.ts');
+    const newId = generateId();
+    const { name, url, ...extra } = req.body;
+
+    db.insert(schemaEpgs).values({
+      id: newId,
       userId: req.user!.id,
-      enabled: true,
-    };
-    const result = await db.collection('epgs').insertOne(epg);
-    res.status(201).json({ id: result.insertedId.toString(), ...epg });
+      name,
+      url,
+      extra: { ...extra, enabled: true }
+    }).run();
+
+    res.status(201).json({ id: newId, userId: req.user!.id, name, url, ...extra, enabled: true });
   });
 
   router.delete("/epgs/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    await db.collection('epgs').deleteOne({ _id: toId(req.params.id), userId: req.user!.id });
+    const { epgs: schemaEpgs } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+    db.delete(schemaEpgs).where(and(eq(schemaEpgs.id, req.params.id), eq(schemaEpgs.userId, req.user!.id))).run();
     epgChannelCache.clear(); // EPG removed — could affect any playlist, clear all
     res.json({ success: true });
   });
@@ -54,8 +70,13 @@ export function createEpgsRouter() {
     if (cached && Date.now() < cached.expiresAt) return res.json({ channels: cached.channels });
 
     const db = getDb();
-    const playlistDoc = await db.collection('playlists').findOne({ _id: toId(playlistId as string) });
+    const { playlists: schemaPlaylists, epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
+    const { eq, inArray, and } = await import('drizzle-orm');
+
+    const playlistDoc = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.id, playlistId as string)).get();
     if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+    const pExtra = (playlistDoc.extra as any) || {};
+    const sourceIds: string[] = Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : [];
 
     const fetchXmlHead = async (url: string, sourceName: string): Promise<string> => {
       try {
@@ -75,30 +96,39 @@ export function createEpgsRouter() {
       }
     };
 
-    const xmlSources: { xml: string; sourceName: string }[] = [];
+    const epgIds: string[] = pExtra.epgIds || [];
+    log(`[EPG] Playlist ${playlistId}: ${epgIds.length} custom EPG(s), sourceIds=${sourceIds.length}`);
+
+    // Collect all fetch promises to run concurrently
+    const fetchPromises: Promise<{ xml: string; sourceName: string }>[] = [];
 
     // Custom EPG sources
-    const epgIds: string[] = playlistDoc.epgIds || [];
-    log(`[EPG] Playlist ${playlistId}: ${epgIds.length} custom EPG(s), sourceIds=${(playlistDoc.sourceIds || []).length}`);
     if (epgIds.length) {
-      const epgDocs = await db.collection('epgs').find({ _id: { $in: epgIds.map(toId) } }).toArray();
+      const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
       log(`[EPG] Resolved ${epgDocs.length}/${epgIds.length} custom EPG docs from DB`);
       for (const e of epgDocs) {
-        if (e.url) xmlSources.push({ xml: await fetchXmlHead(e.url, e.name || e.url), sourceName: e.name || e.url });
+        if (e.url) {
+          const sourceName = e.name || e.url;
+          fetchPromises.push(fetchXmlHead(e.url, sourceName).then(xml => ({ xml, sourceName })));
+        }
       }
     }
 
     // Upstream sources with useUpstreamEpg
-    const sourceDocs = await db.collection('sources').find({
-      _id: { $in: (playlistDoc.sourceIds || []).map(toId) },
-      useUpstreamEpg: true,
-    }).toArray();
+    const sourceDocs = sourceIds.length > 0
+      ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+      : [];
+
     for (const s of sourceDocs) {
-      if (s.url && s.username) {
-        const url = `${s.url}/xmltv.php?username=${encodeURIComponent(s.username)}&password=${encodeURIComponent(s.password)}`;
-        xmlSources.push({ xml: await fetchXmlHead(url, `Upstream: ${s.name || s.url}`), sourceName: `Upstream: ${s.name || s.url}` });
+      const sExtra = (s.extra as any) || {};
+      if (sExtra.useUpstreamEpg && s.url && s.username) {
+        const url = `${s.url}/xmltv.php?username=${encodeURIComponent(s.username)}&password=${encodeURIComponent(s.password!)}`;
+        const sourceName = `Upstream: ${s.name || s.url}`;
+        fetchPromises.push(fetchXmlHead(url, sourceName).then(xml => ({ xml, sourceName })));
       }
     }
+
+    const xmlSources: { xml: string; sourceName: string }[] = await Promise.all(fetchPromises);
 
     // Parse <channel> elements, tag each with its source name
     const channels: {id: string; name: string; icon?: string; source: string}[] = [];

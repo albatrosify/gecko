@@ -19,29 +19,26 @@ services:
     restart: unless-stopped
 
   app:
-    image: registry.homgsa.de/marius/open-itptv-editor:${IPTV_VERSION:-latest}
+    # Pulls from GitHub Container Registry
+    image: ghcr.io/albatrosify/gecko:${GECKO_VERSION:-latest}
     network_mode: "service:gluetun"
     depends_on:
       - gluetun
     environment:
-      - MONGODB_URI=${MONGODB_URI:-mongodb://localhost:27017}
-      - MONGODB_DB=${MONGODB_DB:-open_iptv}
+      - SQLITE_PATH=/app/data/gecko.db
       - JWT_SECRET=${JWT_SECRET:-}
       - PORT=${PORT:-3000}
       - NODE_ENV=production
       - APP_URL=${APP_URL:-}
-      - CACHE_DIR=/app/data/cache
       - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
     volumes:
       - ./data/app:/app/data
-      - ./data/cache:/app/data/cache
-      - ./data/mongo:/data/db
     restart: unless-stopped
 
 networks:

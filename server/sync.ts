@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import cronstrue from "cronstrue";
-import { getDb, toId } from "./db.ts";
+import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { XtreamClient } from "./xtream.ts";
 import { getCached, setCache } from "./cache.ts";
@@ -38,19 +38,19 @@ export function getChangelog(oldItems: any[], newItems: any[], idField: string, 
   return { added, removed, renamed };
 }
 
+import { eq, and, inArray } from 'drizzle-orm';
+import { sources, playlists, mappings, source_sync_meta, source_changelogs } from './schema.ts';
+import { generateId } from './db.ts';
+
 export async function getSnapshot(sourceId: string, type: string): Promise<any> {
-  const db = getDb();
-  const doc = await db.collection('source_snapshots').findOne({ sourceId, type });
-  return doc?.snapshot ?? null;
+  const { getCached } = await import('./cache.ts');
+  const cached = getCached(`snapshot_${sourceId}_${type}`);
+  return cached?.data ?? null;
 }
 
 export async function setSnapshot(sourceId: string, type: string, snapshot: any): Promise<void> {
-  const db = getDb();
-  await db.collection('source_snapshots').updateOne(
-    { sourceId, type },
-    { $set: { snapshot, updatedAt: new Date().toISOString() } },
-    { upsert: true }
-  );
+  const { setCache } = await import('./cache.ts');
+  setCache(`snapshot_${sourceId}_${type}`, snapshot);
 }
 
 export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any) {
@@ -81,26 +81,37 @@ export async function recordSourceChanges(sourceId: string, type: string, oldDat
 
     if (added.length || removed.length || renamed.length) {
       log(`[Changelog] Recorded ${added.length} added, ${removed.length} removed, ${renamed.length} renamed for ${sourceId} (${type})`);
-      await db.collection('source_changelogs').insertOne({
+      const newId = generateId();
+      db.insert(source_changelogs).values({
+        id: newId,
         sourceId,
-        type,
-        timestamp: new Date().toISOString(),
-        added: added.slice(0, 500), // Cap payload size
-        removed: removed.slice(0, 500),
-        renamed: renamed.slice(0, 500),
-        totalAdded: added.length,
-        totalRemoved: removed.length,
-        totalRenamed: renamed.length
-      });
+        extra: {
+          type,
+          timestamp: new Date().toISOString(),
+          added: added.slice(0, 500), // Cap payload size
+          removed: removed.slice(0, 500),
+          renamed: renamed.slice(0, 500),
+          totalAdded: added.length,
+          totalRemoved: removed.length,
+          totalRenamed: renamed.length
+        }
+      }).run();
 
       // Cleanup: keep only last 500 logs per source
-      const logs = await db.collection('source_changelogs')
-        .find({ sourceId })
-        .sort({ timestamp: -1 })
-        .toArray();
+      const logs = db.select({ id: source_changelogs.id, extra: source_changelogs.extra })
+        .from(source_changelogs)
+        .where(eq(source_changelogs.sourceId, sourceId))
+        .all();
+
+      logs.sort((a, b) => {
+        const tA = new Date((a.extra as any).timestamp || 0).getTime();
+        const tB = new Date((b.extra as any).timestamp || 0).getTime();
+        return tB - tA; // sort desc
+      });
+
       if (logs.length > 500) {
-        const toDelete = logs.slice(500).map(l => l._id);
-        await db.collection('source_changelogs').deleteMany({ _id: { $in: toDelete } });
+        const toDelete = logs.slice(500).map(l => l.id);
+        db.delete(source_changelogs).where(inArray(source_changelogs.id, toDelete)).run();
       }
     }
   } catch (err: any) {
@@ -116,13 +127,13 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
   const fiveMinsAgo = new Date(Date.now() - 5 * 60000);
 
   if (!force) {
-    const lastSyncMeta = await db.collection('source_sync_meta').findOne({ key: metaKey });
-    if (lastSyncMeta && new Date(lastSyncMeta.timestamp) > fiveMinsAgo) {
+    const lastSyncMeta = db.select().from(source_sync_meta).where(eq(source_sync_meta.key, metaKey)).get();
+    if (lastSyncMeta && lastSyncMeta.extra && new Date((lastSyncMeta.extra as any).timestamp) > fiveMinsAgo) {
       return { success: true, skipped: true };
     }
   }
 
-  const source = await db.collection('sources').findOne({ _id: toId(sourceId) });
+  const source = db.select().from(sources).where(eq(sources.id, sourceId)).get();
   if (!source) return { error: "Source not found" };
 
   log(`[Sync] Starting ${type} sync for: ${source.name}`);
@@ -136,58 +147,60 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
 
     log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
 
-    const playlistIds = (await db.collection('playlists').find({ sourceIds: sourceId.toString() }).toArray()).map(p => p._id.toString());
-    const mappings = await db.collection('mappings').find({
-      playlistId: { $in: playlistIds },
-      type
-    }).toArray();
+    const allPlaylists = db.select({ id: playlists.id, sourceIds: playlists.sourceIds }).from(playlists).all();
+    const playlistIds = allPlaylists
+      .filter(p => {
+        const sids = Array.isArray(p.sourceIds) ? p.sourceIds : [];
+        return sids.includes(sourceId);
+      })
+      .map(p => p.id);
+
+    const mList = playlistIds.length > 0
+      ? db.select().from(mappings).where(and(inArray(mappings.playlistId, playlistIds), eq(mappings.type, type))).all()
+      : [];
 
     const idKey = type === 'live' ? 'stream_id' : type === 'vod' ? 'stream_id' : 'series_id';
-    const streamMap = new Map(upstreamStreams.map((s: any) => [s[idKey].toString(), s]));
+    const streamMap = new Map(upstreamStreams.map((s: any) => [String(s[idKey]), s]));
     let updatedCount = 0;
-    let totalExamined = mappings.length;
+    let totalExamined = mList.length;
 
-    const ops = mappings.map(m => {
-      // originalId may be source-prefixed (e.g. "0_1234") — strip prefix for upstream lookup
-      let lookupId = m.originalId;
-      if (lookupId.includes('_')) {
-        const parts = lookupId.split('_');
-        if (!isNaN(parseInt(parts[0]))) lookupId = parts.slice(1).join('_');
+    db.transaction((tx) => {
+      for (const m of mList) {
+        let lookupId = m.originalId;
+        if (lookupId.includes('_')) {
+          const parts = lookupId.split('_');
+          if (!isNaN(parseInt(parts[0]))) lookupId = parts.slice(1).join('_');
+        }
+        const upstream = streamMap.get(lookupId) as any;
+        if (!upstream) continue;
+
+        const extra = (m.extra as any) || {};
+        const isUnmodified = !extra.customName || extra.customName === extra.originalName;
+        const updates: any = { ...extra, originalName: upstream.name || upstream.title };
+
+        if (isUnmodified && (upstream.name || upstream.title) !== extra.originalName) {
+          updates.customName = upstream.name || upstream.title;
+          updatedCount++;
+        }
+
+        const hasChanges = Object.keys(updates).some(k => updates[k] !== extra[k]);
+        if (hasChanges) {
+          tx.update(mappings).set({ extra: updates }).where(eq(mappings.id, m.id)).run();
+        }
       }
-      const upstream = streamMap.get(lookupId) as any;
-      if (!upstream) return null;
-
-      const isUnmodified = !m.customName || m.customName === m.originalName;
-      const updates: any = { originalName: upstream.name || upstream.title };
-
-      if (isUnmodified && (upstream.name || upstream.title) !== m.originalName) {
-        updates.customName = upstream.name || upstream.title;
-        updatedCount++;
-      }
-
-      const hasChanges = Object.keys(updates).some(k => updates[k] !== (m as any)[k]);
-      if (hasChanges) {
-        return {
-          updateOne: {
-            filter: { _id: m._id },
-            update: { $set: updates }
-          }
-        };
-      }
-      return null;
-    }).filter(Boolean);
-
-    if (ops.length > 0) {
-      await db.collection('mappings').bulkWrite(ops as any);
-    }
+    });
 
     const lastUpdated = new Date().toISOString();
-    await db.collection('sources').updateOne({ _id: toId(sourceId) }, { $set: { lastUpdated } });
-    await db.collection('source_sync_meta').updateOne(
-      { key: metaKey },
-      { $set: { timestamp: lastUpdated } },
-      { upsert: true }
-    );
+    const sourceExtra = (source.extra as any) || {};
+    sourceExtra.lastUpdated = lastUpdated;
+    db.update(sources).set({ extra: sourceExtra }).where(eq(sources.id, sourceId)).run();
+
+    db.insert(source_sync_meta)
+      .values({ key: metaKey, lastSync: lastUpdated, extra: { timestamp: lastUpdated } })
+      .onConflictDoUpdate({
+        target: source_sync_meta.key,
+        set: { lastSync: lastUpdated, extra: { timestamp: lastUpdated } }
+      }).run();
 
     log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
 
@@ -272,9 +285,10 @@ export function scheduleSourceCron(source: any) {
 export async function initCronManager() {
   log("Initializing Source Cron Manager...");
   const db = getDb();
-  const sources = await db.collection('sources').find({ autoSyncEnabled: true, syncCron: { $exists: true } }).toArray();
+  const allSources = db.select().from(sources).all();
+  const activeSources = allSources.filter(s => s.autoSyncEnabled && s.syncCron);
 
-  for (const source of sources) {
+  for (const source of activeSources) {
     scheduleSourceCron(source);
   }
 
@@ -282,9 +296,8 @@ export async function initCronManager() {
   // is served from cache rather than blocking on an upstream fetch.
   (async () => {
     try {
-      const allSources = await db.collection('sources').find({}).toArray();
       const warmTasks = allSources.flatMap(source => {
-        const sid = source._id.toString();
+        const sid = source.id;
         return (['live', 'vod', 'series'] as const)
           .filter(type => !getCached(`${sid}_streams_${type}`))
           .map(type => {

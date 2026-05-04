@@ -1,7 +1,7 @@
-import fs from 'fs';
-import path from 'path';
+import { getDb } from './db.ts';
+import { cache } from './schema.ts';
+import { eq, gt } from 'drizzle-orm';
 
-const CACHE_DIR = process.env.CACHE_DIR || path.join(process.cwd(), 'data', 'cache');
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const IN_MEMORY_TTL_MS = 60 * 1000; // 1 minute
 
@@ -13,18 +13,6 @@ interface CacheEntry {
 
 const memoryCache = new Map<string, CacheEntry>();
 
-function ensureCacheDir() {
-  if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-  }
-}
-
-function getCachePath(key: string): string {
-  // Sanitize key for filesystem
-  const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return path.join(CACHE_DIR, `${safeKey}.json`);
-}
-
 export function getCached(key: string): { data: any; lastUpdated: string } | null {
   // Check memory cache first
   const mem = memoryCache.get(key);
@@ -32,25 +20,22 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
     return { data: mem.data, lastUpdated: mem.lastUpdated };
   }
 
-  ensureCacheDir();
-  const filePath = getCachePath(key);
-  
-  if (!fs.existsSync(filePath)) return null;
+  const db = getDb();
   
   try {
-    const stat = fs.statSync(filePath);
-    const age = Date.now() - stat.mtimeMs;
-    
-    if (age > CACHE_TTL_MS) {
-      // Cache expired
-      fs.unlinkSync(filePath);
-      memoryCache.delete(key);
-      return null;
+    // Fetch and then check TTL
+    const dbRow = db.select().from(cache).where(eq(cache.key, key)).get();
+
+    if (!dbRow) return null;
+
+    if (!dbRow.expiresAt || Date.now() > dbRow.expiresAt) {
+        db.delete(cache).where(eq(cache.key, key)).run();
+        memoryCache.delete(key);
+        return null;
     }
-    
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const data = JSON.parse(raw);
-    const lastUpdated = stat.mtime.toISOString();
+
+    const data = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : dbRow.data;
+    const lastUpdated = dbRow.updatedAt as string;
 
     // Update memory cache
     memoryCache.set(key, {
@@ -60,51 +45,91 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
     });
 
     return { data, lastUpdated };
-  } catch {
+  } catch (error) {
+    console.error('Cache get error:', error);
     return null;
   }
 }
 
 export function setCache(key: string, data: any): void {
-  ensureCacheDir();
-  const filePath = getCachePath(key);
+  const db = getDb();
   const lastUpdated = new Date().toISOString();
-  fs.writeFileSync(filePath, JSON.stringify(data));
+  const expiresAt = Date.now() + CACHE_TTL_MS;
 
-  // Update memory cache
-  memoryCache.set(key, {
-    data,
-    lastUpdated,
-    expiresAt: Date.now() + IN_MEMORY_TTL_MS
-  });
+  try {
+    const dataStr = JSON.stringify(data);
+    db.insert(cache)
+      .values({
+        key,
+        data: dataStr,
+        updatedAt: lastUpdated,
+        expiresAt
+      })
+      .onConflictDoUpdate({
+        target: cache.key,
+        set: {
+          data: dataStr,
+          updatedAt: lastUpdated,
+          expiresAt
+        }
+      })
+      .run();
+
+    // Update memory cache
+    memoryCache.set(key, {
+      data,
+      lastUpdated,
+      expiresAt: Date.now() + IN_MEMORY_TTL_MS
+    });
+  } catch (error) {
+    console.error('Cache set error:', error);
+  }
 }
 
 export function clearCache(key?: string): void {
-  ensureCacheDir();
-  if (key) {
-    const filePath = getCachePath(key);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    memoryCache.delete(key);
-  } else {
-    memoryCache.clear();
-    // Clear all cache
-    const files = fs.readdirSync(CACHE_DIR);
-    for (const file of files) {
-      fs.unlinkSync(path.join(CACHE_DIR, file));
+  const db = getDb();
+  try {
+    if (key) {
+      db.delete(cache).where(eq(cache.key, key)).run();
+      memoryCache.delete(key);
+    } else {
+      db.delete(cache).run();
+      memoryCache.clear();
     }
+  } catch (error) {
+    console.error('Cache clear error:', error);
   }
 }
-export function duplicateCache(oldKey: string, newKey: string): void {
-  ensureCacheDir();
-  const oldPath = getCachePath(oldKey);
-  const newPath = getCachePath(newKey);
-  if (fs.existsSync(oldPath)) {
-    fs.copyFileSync(oldPath, newPath);
 
-    // If old key is in memory, copy it to new key in memory too
-    const mem = memoryCache.get(oldKey);
-    if (mem) {
-      memoryCache.set(newKey, { ...mem });
+export function duplicateCache(oldKey: string, newKey: string): void {
+  const db = getDb();
+  try {
+    const oldRow = db.select().from(cache).where(eq(cache.key, oldKey)).get();
+    if (oldRow) {
+      db.insert(cache)
+        .values({
+          key: newKey,
+          data: oldRow.data,
+          updatedAt: oldRow.updatedAt,
+          expiresAt: oldRow.expiresAt
+        })
+        .onConflictDoUpdate({
+          target: cache.key,
+          set: {
+            data: oldRow.data,
+            updatedAt: oldRow.updatedAt,
+            expiresAt: oldRow.expiresAt
+          }
+        })
+        .run();
+
+      // If old key is in memory, copy it to new key in memory too
+      const mem = memoryCache.get(oldKey);
+      if (mem) {
+        memoryCache.set(newKey, { ...mem });
+      }
     }
+  } catch (error) {
+    console.error('Cache duplicate error:', error);
   }
 }

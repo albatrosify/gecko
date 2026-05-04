@@ -183,7 +183,13 @@ export const mappings = {
   async batchUpdate(updates: any[]) {
     return request<any>('/api/mappings/batch', {
       method: 'POST',
-      body: JSON.stringify({ updates }),
+      body: JSON.stringify({ updates })
+    });
+  },
+  async reset(ids: string[]) {
+    return request<any>('/api/mappings/reset', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
     });
   },
   async delete(id: string) {
@@ -192,6 +198,48 @@ export const mappings = {
 };
 
 // Category Mappings
+export const customCategories = {
+  async list(playlistId: string) {
+    return request<any[]>(`/api/custom-categories?playlistId=${playlistId}`);
+  },
+  async create(data: any) {
+    return request<any>('/api/custom-categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  async update(id: string, data: any) {
+    return request<any>(`/api/custom-categories/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+  async remove(id: string) {
+    return request<any>(`/api/custom-categories/${id}`, { method: 'DELETE' });
+  },
+};
+
+export const customCategoryItems = {
+  async list(playlistId: string) {
+    return request<any[]>(`/api/custom-category-items?playlistId=${playlistId}`);
+  },
+  async create(data: any) {
+    return request<any>('/api/custom-category-items', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  async batchCreate(items: any[]) {
+    return request<any>('/api/custom-category-items/batch', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  },
+  async remove(id: string) {
+    return request<any>(`/api/custom-category-items/${id}`, { method: 'DELETE' });
+  },
+};
+
 export const categoryMappings = {
   async list(playlistId: string) {
     return request<any[]>(`/api/category-mappings?playlistId=${playlistId}`);
@@ -212,6 +260,12 @@ export const categoryMappings = {
     return request<any>('/api/category-mappings/batch', {
       method: 'POST',
       body: JSON.stringify({ updates }),
+    });
+  },
+  async reset(ids: string[]) {
+    return request<any>('/api/category-mappings/reset', {
+      method: 'POST',
+      body: JSON.stringify({ ids })
     });
   },
   async delete(id: string) {
@@ -317,5 +371,5 @@ export const qualityScan = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, upstream, proxy, admin, system, settings, qualityScan };
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan };
 export default api;

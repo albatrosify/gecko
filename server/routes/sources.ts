@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
-import { getDb, toId, docsWithId } from "../db.ts";
+import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
@@ -14,35 +14,58 @@ export function createSourcesRouter() {
   // =====================================
   router.get("/sources", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const docs = await db.collection('sources').find({ userId: req.user!.id }).toArray();
-    res.json(docsWithId(docs));
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+    const docs = db.select().from(schemaSources).where(eq(schemaSources.userId, req.user!.id)).all();
+    const formatted = docs.map(d => ({
+      id: d.id, userId: d.userId, name: d.name, type: d.type, url: d.url,
+      username: d.username, password: d.password, autoSyncEnabled: d.autoSyncEnabled, syncCron: d.syncCron,
+      ...(d.extra as any || {})
+    }));
+    res.json(formatted);
   });
 
   router.post("/sources", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const source = {
-      ...req.body,
-      userId: req.user!.id,
-      enabled: true,
-      lastUpdated: new Date().toISOString(),
-    };
-    const result = await db.collection('sources').insertOne(source);
-    const newSource = { id: result.insertedId.toString(), ...source };
+    const { sources: schemaSources } = await import('../schema.ts');
+    const newId = generateId();
+    const { name, type, url, username, password, autoSyncEnabled, syncCron, ...extra } = req.body;
+
+    extra.enabled = true;
+    extra.lastUpdated = new Date().toISOString();
+
+    db.insert(schemaSources).values({
+      id: newId, userId: req.user!.id, name, type, url, username, password, autoSyncEnabled, syncCron, extra
+    }).run();
+
+    const newSource = { id: newId, userId: req.user!.id, name, type, url, username, password, autoSyncEnabled, syncCron, ...extra };
     scheduleSourceCron(newSource);
     res.status(201).json(newSource);
   });
 
   router.put("/sources/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { id, ...update } = req.body;
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+    const { id, name, type, url, username, password, autoSyncEnabled, syncCron, ...extra } = req.body;
     const sourceId = req.params.id;
-    await db.collection('sources').updateOne(
-      { _id: toId(sourceId), userId: req.user!.id },
-      { $set: update }
-    );
 
-    const fullSource = await db.collection('sources').findOne({ _id: toId(sourceId) });
-    if (fullSource) scheduleSourceCron(fullSource);
+    const doc = db.select().from(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).get();
+    if (doc) {
+      db.update(schemaSources).set({
+        name: name !== undefined ? name : doc.name,
+        type: type !== undefined ? type : doc.type,
+        url: url !== undefined ? url : doc.url,
+        username: username !== undefined ? username : doc.username,
+        password: password !== undefined ? password : doc.password,
+        autoSyncEnabled: autoSyncEnabled !== undefined ? autoSyncEnabled : doc.autoSyncEnabled,
+        syncCron: syncCron !== undefined ? syncCron : doc.syncCron,
+        extra: { ...(doc.extra as any || {}), ...extra }
+      }).where(eq(schemaSources.id, sourceId)).run();
+
+      const fullSource = db.select().from(schemaSources).where(eq(schemaSources.id, sourceId)).get();
+      if (fullSource) scheduleSourceCron({ ...fullSource, ...(fullSource.extra as any || {}) });
+    }
 
     res.json({ success: true });
   });
@@ -59,7 +82,7 @@ export function createSourcesRouter() {
 
     const error = results.find(r => (r as any).error);
     if (error) {
-      res.status(500).json(error);
+      res.json({ success: false, error: (error as any).error });
     } else {
       const totalUpdated = results.reduce((acc, r: any) => acc + (r.updatedCount || 0), 0);
       res.json({ success: true, updatedCount: totalUpdated, results });
@@ -68,18 +91,26 @@ export function createSourcesRouter() {
 
   router.get("/sources/:id/changelog", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const logs = await db.collection('source_changelogs')
-      .find({ sourceId: req.params.id })
-      .sort({ timestamp: -1 })
-      .limit(20)
-      .toArray();
-    res.json(logs);
+    const { source_changelogs: schemaChangelogs } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+
+    const logs = db.select().from(schemaChangelogs).where(eq(schemaChangelogs.sourceId, req.params.id)).all();
+    logs.sort((a, b) => {
+      const tA = new Date((a.extra as any).timestamp || 0).getTime();
+      const tB = new Date((b.extra as any).timestamp || 0).getTime();
+      return tB - tA;
+    });
+
+    res.json(logs.slice(0, 20).map(l => ({ id: l.id, sourceId: l.sourceId, ...(l.extra as any || {}) })));
   });
 
   router.delete("/sources/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
     const sourceId = req.params.id;
-    await db.collection('sources').deleteOne({ _id: toId(sourceId), userId: req.user!.id });
+
+    db.delete(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).run();
 
     if (activeCrons.has(sourceId)) {
       activeCrons.get(sourceId).stop();

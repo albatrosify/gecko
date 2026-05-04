@@ -31,14 +31,16 @@ export function createSystemRouter() {
   });
 
   // System Logs
-  router.get("/system/logs", requireAuth, (req, res) => {
+  router.get("/system/logs", requireAuth, async (req, res) => {
     try {
-      if (!fs.existsSync(LOG_PATH)) return res.json({ logs: "" });
-      const data = fs.readFileSync(LOG_PATH, "utf-8");
+      const data = await fs.promises.readFile(LOG_PATH, "utf-8");
       const lines = data.split("\n").filter(l => l.trim() !== "");
       const tail = lines.slice(-200).join("\n");
       res.json({ logs: tail });
     } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.json({ logs: "" });
+      }
       res.status(500).json({ error: "Failed to read logs: " + err.message });
     }
   });
@@ -46,11 +48,12 @@ export function createSystemRouter() {
   router.get("/proxy/stats", requireAuth, async (req, res) => {
     try {
       const db = getDb();
-      const [playlistsCount, usersCount, directStreamsCount] = await Promise.all([
-        db.collection('playlists').countDocuments(),
-        db.collection('users').countDocuments(),
-        db.collection('playlists').countDocuments({ directStreams: true }),
-      ]);
+      const { playlists, users } = await import('../schema.ts');
+      const { count, eq } = await import('drizzle-orm');
+
+      const playlistsCount = db.select({ value: count() }).from(playlists).get()?.value || 0;
+      const usersCount = db.select({ value: count() }).from(users).get()?.value || 0;
+      const directStreamsCount = db.select({ value: count() }).from(playlists).where(eq(playlists.directStreams, true)).get()?.value || 0;
 
       res.json({
         activeStreams: proxyStats.activeStreams,
@@ -78,9 +81,13 @@ export function createSystemRouter() {
   // Settings
   router.get("/settings", requireAuth, async (_req, res) => {
     const db = getDb();
-    const doc = await db.collection('settings').findOne({ _id: 'global' as any });
+    const { settings } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
+
+    const doc = db.select().from(settings).where(eq(settings.id, 'global')).get();
+    const extra = (doc?.extra as any) || {};
     res.json({
-      qualityLabelFormat: doc?.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
+      qualityLabelFormat: extra.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
     });
   });
 
@@ -89,15 +96,19 @@ export function createSystemRouter() {
       return res.status(403).json({ error: 'Admin only' });
     }
     const db = getDb();
+    const { settings } = await import('../schema.ts');
+    const { eq } = await import('drizzle-orm');
     const { qualityLabelFormat } = req.body;
+
     if (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200) {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
     }
-    await db.collection('settings').updateOne(
-      { _id: 'global' as any },
-      { $set: { qualityLabelFormat } },
-      { upsert: true }
-    );
+
+    db.insert(settings)
+      .values({ id: 'global', extra: { qualityLabelFormat } })
+      .onConflictDoUpdate({ target: settings.id, set: { extra: { qualityLabelFormat } } })
+      .run();
+
     invalidateQualityFormatCache();
     res.json({ success: true });
   });
