@@ -8,7 +8,6 @@ import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
 import { proxyStats } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
-import { DEFAULT_PORT } from "../config.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
