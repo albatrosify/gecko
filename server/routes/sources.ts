@@ -82,7 +82,7 @@ export function createSourcesRouter() {
 
     const error = results.find(r => (r as any).error);
     if (error) {
-      res.status(500).json(error);
+      res.json({ success: false, error: (error as any).error });
     } else {
       const totalUpdated = results.reduce((acc, r: any) => acc + (r.updatedCount || 0), 0);
       res.json({ success: true, updatedCount: totalUpdated, results });
