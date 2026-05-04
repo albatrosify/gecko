@@ -481,10 +481,15 @@ export function createProxyRouter() {
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
 
+           const streamLookup = new Map<string, any>();
+           data.forEach((s: any) => {
+             streamLookup.set(`${s._sourceIdx}_${s.stream_id}`, s);
+           });
+
            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'live'))).all();
            const copiedStreams = customItems.map(item => {
              const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
-             const original = data.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+             const original = streamLookup.get(`${sourceIdx}_${item.upstreamStreamId}`);
              if (!original) return null;
 
              const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
@@ -669,10 +674,15 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            const streamLookup = new Map<string, any>();
+            data.forEach((s: any) => {
+              streamLookup.set(`${s._sourceIdx}_${s.stream_id}`, s);
+            });
+
             const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'vod'))).all();
             const copiedStreams = customItems.map(item => {
               const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
-              const original = data.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+              const original = streamLookup.get(`${sourceIdx}_${item.upstreamStreamId}`);
               if (!original) return null;
               const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
               const extra = item.extra as any || {};
@@ -842,10 +852,15 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            const streamLookup = new Map<string, any>();
+            data.forEach((s: any) => {
+              streamLookup.set(`${s._sourceIdx}_${s.series_id}`, s);
+            });
+
             const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'series'))).all();
             const copiedStreams = customItems.map(item => {
               const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
-              const original = data.find((s: any) => String(s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+              const original = streamLookup.get(`${sourceIdx}_${item.upstreamStreamId}`);
               if (!original) return null;
               const clone = { ...original, series_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
               const extra = item.extra as any || {};
@@ -1164,12 +1179,26 @@ export function createProxyRouter() {
 
       let rawStreams = allResults.flat();
 
+      const streamLookup = new Map<string, any>();
+      rawStreams.forEach((s: any) => {
+        const sid = s.stream_id ?? s.series_id;
+        streamLookup.set(`${s._sourceIdx}_${sid}`, s);
+      });
+
       const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, activeTabStr))).all();
       const copiedStreams = customItems.map(item => {
         const sourceIdx = playlistSourceIds.indexOf(item.upstreamSourceId);
-        const original = rawStreams.find((s: any) => String(s.stream_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+        const original = streamLookup.get(`${sourceIdx}_${item.upstreamStreamId}`);
         if (!original) return null;
-        const clone = { ...original, stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+
+        // Use stream_id for live/vod, series_id for series
+        const clone = { ...original, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+        if (activeTabStr === 'series') {
+            clone.series_id = item.streamId;
+        } else {
+            clone.stream_id = item.streamId;
+        }
+
         const extra = item.extra as any || {};
         if (extra.name) clone.name = extra.name;
         if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
