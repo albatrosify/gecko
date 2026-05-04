@@ -31,14 +31,16 @@ export function createSystemRouter() {
   });
 
   // System Logs
-  router.get("/system/logs", requireAuth, (req, res) => {
+  router.get("/system/logs", requireAuth, async (req, res) => {
     try {
-      if (!fs.existsSync(LOG_PATH)) return res.json({ logs: "" });
-      const data = fs.readFileSync(LOG_PATH, "utf-8");
+      const data = await fs.promises.readFile(LOG_PATH, "utf-8");
       const lines = data.split("\n").filter(l => l.trim() !== "");
       const tail = lines.slice(-200).join("\n");
       res.json({ logs: tail });
     } catch (err: any) {
+      if (err.code === "ENOENT") {
+        return res.json({ logs: "" });
+      }
       res.status(500).json({ error: "Failed to read logs: " + err.message });
     }
   });
