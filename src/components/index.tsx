@@ -4793,33 +4793,36 @@ function GlobalSearch({ playlistId, onNavigate, onClose }: {
   );
 }
 
-function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; seriesId: string }) {
+
+function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, source, playlist }: { playlistId: string; seriesId: string; onClose: () => void; title?: string; onPlay?: (url: string, name: string) => void; source?: any; playlist?: any }) {
   const [info, setInfo] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [openSeasons, setOpenSeasons] = useState<Set<string>>(new Set());
+  const [selectedSeason, setSelectedSeason] = useState<string | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.playlists.seriesInfo(playlistId, seriesId);
-      setInfo(data);
-      // Auto-open first season
-      const firstSeason = Object.keys(data.episodes || {})[0];
-      if (firstSeason) setOpenSeasons(new Set([firstSeason]));
-    } catch (e) {
-      setError((e as Error).message || 'Failed to load');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Reset when series changes
-  useEffect(() => { setInfo(null); setError(null); setOpenSeasons(new Set()); }, [seriesId]);
-
-  const toggleSeason = (s: string) =>
-    setOpenSeasons(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await api.playlists.seriesInfo(playlistId, seriesId);
+        if (!mounted) return;
+        setInfo(data);
+        const seasonKeys = Object.keys(data.episodes || {}).sort((a, b) => parseInt(a) - parseInt(b));
+        if (seasonKeys.length > 0) {
+          setSelectedSeason(seasonKeys[0]);
+        }
+      } catch (e) {
+        if (!mounted) return;
+        setError((e as Error).message || 'Failed to load series details');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, [playlistId, seriesId]);
 
   const formatDuration = (secs?: number) => {
     if (!secs) return null;
@@ -4828,79 +4831,174 @@ function SeriesSeasonsBrowser({ playlistId, seriesId }: { playlistId: string; se
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
-  if (!info && !loading && !error) {
-    return (
-      <button
-        onClick={load}
-        className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-400 hover:text-zinc-100 transition-all"
-      >
-        <LayoutList size={13} />
-        Show Seasons & Episodes
-      </button>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-4 text-xs text-zinc-600">
-        <RefreshCw size={13} className="animate-spin" /> Loading seasons…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-between py-2 text-xs text-red-400">
-        <span>{error}</span>
-        <button onClick={load} className="underline">Retry</button>
-      </div>
-    );
-  }
-
   const episodes: Record<string, any[]> = info?.episodes || {};
   const seasonKeys = Object.keys(episodes).sort((a, b) => parseInt(a) - parseInt(b));
 
-  if (!seasonKeys.length) {
-    return <p className="text-[10px] text-zinc-600 italic">No episode data available.</p>;
-  }
+  const bgImage = info?.info?.backdrop_path && info.info.backdrop_path.length > 0
+    ? (Array.isArray(info.info.backdrop_path) ? info.info.backdrop_path[0] : info.info.backdrop_path)
+    : undefined;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <div className="bg-zinc-950 border border-zinc-800 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative">
+
+        {/* Header / Backdrop Area */}
+        <div className="relative shrink-0 h-48 md:h-64 bg-zinc-900 overflow-hidden">
+          {bgImage ? (
+            <div className="absolute inset-0">
+              <img src={bgImage} alt="Backdrop" className="w-full h-full object-cover opacity-40" />
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/80 to-transparent" />
+            </div>
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 to-zinc-900" />
+          )}
+
+          <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 text-zinc-400 hover:text-white rounded-full transition-colors z-10">
+            <X size={20} />
+          </button>
+
+          <div className="absolute bottom-0 left-0 right-0 p-6 flex items-end gap-6">
+            {info?.info?.cover && (
+              <img src={info.info.cover} alt="Cover" className="w-24 md:w-32 rounded-lg shadow-lg hidden md:block" />
+            )}
+            <div className="flex-1">
+              <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">{info?.info?.name || title || 'Series Details'}</h2>
+              {info?.info?.plot && (
+                <p className="text-sm text-zinc-400 line-clamp-2 md:line-clamp-3 max-w-3xl">{info.info.plot}</p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-zinc-500">
+                {info?.info?.genre && <span>{info.info.genre}</span>}
+                {info?.info?.cast && <span className="truncate max-w-sm">Cast: {info.info.cast}</span>}
+                {info?.info?.rating && <span className="flex items-center gap-1 text-yellow-500"><Star size={12} fill="currentColor" /> {info.info.rating}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+
+          {loading ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 gap-3">
+              <RefreshCw size={24} className="animate-spin text-emerald-500" />
+              <p>Loading series info...</p>
+            </div>
+          ) : error ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3">
+              <p className="text-red-400">{error}</p>
+              <button onClick={onClose} className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded hover:bg-zinc-700">Close</button>
+            </div>
+          ) : (
+            <>
+              {/* Seasons Sidebar */}
+              <div className="w-full md:w-48 shrink-0 border-r border-zinc-800 bg-zinc-900/50 flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto custom-scrollbar p-2 gap-1">
+                {seasonKeys.map(season => (
+                  <button
+                    key={season}
+                    onClick={() => setSelectedSeason(season)}
+                    className={`flex-shrink-0 md:flex-shrink w-auto md:w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${selectedSeason === season ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
+                  >
+                    Season {season}
+                  </button>
+                ))}
+              </div>
+
+              {/* Episodes List */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 bg-zinc-950">
+                {selectedSeason && episodes[selectedSeason] && (
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-bold text-zinc-300 mb-4">Season {selectedSeason} Episodes</h3>
+                    {episodes[selectedSeason].map(ep => {
+                      const dur = formatDuration(ep.info?.duration_secs);
+                      return (
+                        <div key={ep.id} className="flex items-center gap-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors group">
+
+                          {ep.info?.movie_image ? (
+                            <img src={ep.info.movie_image} alt="" className="w-24 h-16 object-cover rounded shadow-sm shrink-0 bg-zinc-950" />
+                          ) : (
+                            <div className="w-24 h-16 rounded bg-zinc-950/50 flex items-center justify-center shrink-0 border border-zinc-800">
+                              <Film size={20} className="text-zinc-700" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-bold text-zinc-200 truncate">{ep.episode_num}. {ep.title}</h4>
+                            {ep.info?.plot && <p className="text-xs text-zinc-500 line-clamp-1 mt-0.5">{ep.info.plot}</p>}
+                            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-zinc-500 font-medium">
+                              {dur && <span>{dur}</span>}
+                              {ep.info?.rating && <span className="flex items-center gap-0.5 text-yellow-500"><Star size={10} fill="currentColor" /> {ep.info.rating}</span>}
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {onPlay && source && playlist && (
+                              <button
+                                onClick={() => {
+                                  const ext = ep.container_extension || ep.info?.container_extension || 'mp4';
+                                  let url;
+                                  if (playlist.directStreams) {
+                                    url = `${source.url.replace(/\/$/, '')}/series/${playlist.sourceOverrides?.[source.id]?.username || source.username}/${playlist.sourceOverrides?.[source.id]?.password || source.password}/${ep.id}.${ext}`;
+                                  } else {
+                                    url = `${window.location.origin}/series/${playlist.username}/${playlist.password}/${ep.id}.${ext}`;
+                                  }
+                                  onPlay(url, `${title || 'Series'} - ${ep.episode_num}. ${ep.title}`); onClose();
+                                }}
+                                className="p-2 rounded-lg bg-zinc-800 text-emerald-400 hover:text-emerald-300 hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                                title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
+                              >
+                                <Play size={14} /> Play
+                              </button>
+                            )}
+                            <a
+                              href={`/api/download/series/${playlistId}/${ep.id}?extension=${ep.container_extension || ep.info?.container_extension || 'mp4'}&token=${localStorage.getItem('auth_token') ?? ''}`}
+                              download
+                              className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                              title="Download Episode"
+                            >
+                              <Download size={14} /> Download
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+
+function SeriesSeasonsBrowser({ playlistId, seriesId, title, onPlay, source, playlist }: { playlistId: string; seriesId: string; title?: string; onPlay?: (url: string, name: string) => void; source?: any; playlist?: any }) {
+  const [showModal, setShowModal] = useState(false);
 
   return (
-    <div className="space-y-1">
-      {seasonKeys.map(season => {
-        const eps: any[] = episodes[season];
-        const isOpen = openSeasons.has(season);
-        return (
-          <div key={season} className="border border-zinc-800 rounded-xl overflow-hidden">
-            <button
-              onClick={() => toggleSeason(season)}
-              className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold text-zinc-300 hover:bg-zinc-800/60 transition-colors"
-            >
-              <span>Season {season}</span>
-              <span className="flex items-center gap-1.5 text-zinc-600 font-normal">
-                <span>{eps.length} ep</span>
-                <ChevronDown size={12} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-              </span>
-            </button>
-            {isOpen && (
-              <div className="border-t border-zinc-800 divide-y divide-zinc-800/60">
-                {eps.map((ep: any) => {
-                  const dur = formatDuration(ep.info?.duration_secs);
-                  return (
-                    <div key={ep.id} className="flex items-center gap-2 px-3 py-1.5">
-                      <span className="text-[10px] font-mono text-zinc-600 w-6 shrink-0 text-right">
-                        {ep.episode_num}
-                      </span>
-                      <span className="flex-1 text-[11px] text-zinc-300 truncate">{ep.title}</span>
-                      {dur && <span className="text-[10px] text-zinc-600 shrink-0">{dur}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <>
+      <button
+        onClick={() => setShowModal(true)}
+        className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/50 rounded-xl text-xs font-bold text-emerald-400 hover:text-emerald-300 transition-all shadow-[0_0_15px_rgba(16,185,129,0.1)] hover:shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+      >
+        <LayoutList size={14} />
+        View Series Details
+      </button>
+
+      {showModal && (
+        <SeriesDetailsModal
+          playlistId={playlistId}
+          seriesId={seriesId}
+          onClose={() => setShowModal(false)}
+          title={title}
+          onPlay={onPlay}
+          source={source}
+          playlist={playlist}
+        />
+      )}
+    </>
   );
 }
 
@@ -5415,6 +5513,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               <SeriesSeasonsBrowser
                 playlistId={playlistId}
                 seriesId={stream._rawId || String(stream.series_id || stream._uniqueId)}
+                title={stream.name || originalName}
+                onPlay={onPlay}
+                source={source}
+                playlist={playlist}
               />
             </div>
           )}
