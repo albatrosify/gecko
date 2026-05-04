@@ -51,27 +51,102 @@ export function createMappingsRouter() {
       const { updates } = req.body; // Array of { id?, originalId, playlistId, type, ...data }
 
       db.transaction((tx) => {
+        const validIds: string[] = [];
+        const missingIdUpdates: any[] = [];
+
+        for (const update of updates) {
+          const isValidId = update.id && (/^[a-f\d]{24}$/i.test(update.id) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(update.id));
+          if (isValidId) validIds.push(update.id);
+          else missingIdUpdates.push(update);
+        }
+
+        const docsById = new Map();
+        for (let i = 0; i < validIds.length; i += 500) {
+          const chunk = validIds.slice(i, i + 500);
+          const docs = tx.select().from(schemaMappings).where(inArray(schemaMappings.id, chunk)).all();
+          for (const doc of docs) docsById.set(doc.id, doc);
+        }
+
+        const docsByComposite = new Map();
+        // Map from playlistId -> type -> array of originalIds
+        const byPlaylistAndType = new Map<string, Map<string, string[]>>();
+        for (const u of missingIdUpdates) {
+          let typeMap = byPlaylistAndType.get(u.playlistId);
+          if (!typeMap) {
+            typeMap = new Map();
+            byPlaylistAndType.set(u.playlistId, typeMap);
+          }
+          let originalIds = typeMap.get(u.type);
+          if (!originalIds) {
+            originalIds = [];
+            typeMap.set(u.type, originalIds);
+          }
+          originalIds.push(u.originalId);
+        }
+
+        for (const [playlistId, typeMap] of byPlaylistAndType.entries()) {
+          for (const [type, originalIds] of typeMap.entries()) {
+            for (let i = 0; i < originalIds.length; i += 500) {
+              const chunk = originalIds.slice(i, i + 500);
+              const existing = tx.select().from(schemaMappings).where(
+                and(
+                  eq(schemaMappings.playlistId, playlistId),
+                  eq(schemaMappings.type, type),
+                  inArray(schemaMappings.originalId, chunk)
+                )
+              ).all();
+              for (const doc of existing) {
+                // Use a safer separator that won't appear in standard UUIDs or hex IDs
+                // actually composite key with JSON.stringify is safer:
+                docsByComposite.set(JSON.stringify([doc.originalId, doc.playlistId, doc.type]), doc);
+              }
+            }
+          }
+        }
+
+        const inserts: any[] = [];
+        const insertedByComposite = new Map(); // to prevent duplicate inserts in the same batch
+
         for (const update of updates) {
           const { id, originalId, playlistId, type, ...extra } = update;
-          // Use id-based update only when id is a valid 24-char hex ObjectId string OR a uuid
           const isValidId = id && (/^[a-f\d]{24}$/i.test(id) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
           if (isValidId) {
-            const doc = tx.select().from(schemaMappings).where(eq(schemaMappings.id, id)).get();
+            const doc = docsById.get(id);
             if (doc) {
+               const newExtra = { ...(doc.extra as any || {}), ...extra };
                tx.update(schemaMappings).set({
                  playlistId: playlistId !== undefined ? playlistId : doc.playlistId,
                  type: type !== undefined ? type : doc.type,
                  originalId: originalId !== undefined ? originalId : doc.originalId,
-                 extra: { ...(doc.extra as any || {}), ...extra }
+                 extra: newExtra
                }).where(eq(schemaMappings.id, id)).run();
+               doc.extra = newExtra; // update locally in case of consecutive updates
             }
           } else {
-            const existing = tx.select().from(schemaMappings).where(and(eq(schemaMappings.originalId, originalId), eq(schemaMappings.playlistId, playlistId), eq(schemaMappings.type, type))).get();
+            const compositeKey = JSON.stringify([originalId, playlistId, type]);
+            const existing = docsByComposite.get(compositeKey);
             if (existing) {
-               tx.update(schemaMappings).set({ extra: { ...(existing.extra as any || {}), ...extra } }).where(eq(schemaMappings.id, existing.id)).run();
+               const newExtra = { ...(existing.extra as any || {}), ...extra };
+               tx.update(schemaMappings).set({ extra: newExtra }).where(eq(schemaMappings.id, existing.id)).run();
+               existing.extra = newExtra; // update locally in case of consecutive updates
             } else {
-               tx.insert(schemaMappings).values({ id: generateId(), playlistId, type, originalId, extra }).run();
+               const newlyInserted = insertedByComposite.get(compositeKey);
+               if (newlyInserted) {
+                 // if we already queued an insert for this in the current batch, update the queued insert
+                 newlyInserted.extra = { ...newlyInserted.extra, ...extra };
+               } else {
+                 const newInsert = { id: generateId(), playlistId, type, originalId, extra };
+                 inserts.push(newInsert);
+                 insertedByComposite.set(compositeKey, newInsert);
+               }
             }
+          }
+        }
+
+        if (inserts.length > 0) {
+          for (let i = 0; i < inserts.length; i += 500) {
+            tx.insert(schemaMappings).values(inserts.slice(i, i + 500)).run();
           }
         }
       });
@@ -131,25 +206,97 @@ export function createMappingsRouter() {
     const { updates } = req.body;
 
     db.transaction((tx) => {
+      const validIds: string[] = [];
+      const missingIdUpdates: any[] = [];
+
+      for (const update of updates) {
+        if (update.id) validIds.push(update.id);
+        else missingIdUpdates.push(update);
+      }
+
+      const docsById = new Map();
+      for (let i = 0; i < validIds.length; i += 500) {
+        const chunk = validIds.slice(i, i + 500);
+        const docs = tx.select().from(schemaCategoryMappings).where(inArray(schemaCategoryMappings.id, chunk)).all();
+        for (const doc of docs) docsById.set(doc.id, doc);
+      }
+
+      const docsByComposite = new Map();
+      // Map from playlistId -> type -> array of originalIds
+      const byPlaylistAndType = new Map<string, Map<string, string[]>>();
+      for (const u of missingIdUpdates) {
+        let typeMap = byPlaylistAndType.get(u.playlistId);
+        if (!typeMap) {
+          typeMap = new Map();
+          byPlaylistAndType.set(u.playlistId, typeMap);
+        }
+        let originalIds = typeMap.get(u.type);
+        if (!originalIds) {
+          originalIds = [];
+          typeMap.set(u.type, originalIds);
+        }
+        originalIds.push(u.originalId);
+      }
+
+      for (const [playlistId, typeMap] of byPlaylistAndType.entries()) {
+        for (const [type, originalIds] of typeMap.entries()) {
+          for (let i = 0; i < originalIds.length; i += 500) {
+            const chunk = originalIds.slice(i, i + 500);
+            const existing = tx.select().from(schemaCategoryMappings).where(
+              and(
+                eq(schemaCategoryMappings.playlistId, playlistId),
+                eq(schemaCategoryMappings.type, type),
+                inArray(schemaCategoryMappings.originalId, chunk)
+              )
+            ).all();
+            for (const doc of existing) {
+              docsByComposite.set(JSON.stringify([doc.originalId, doc.playlistId, doc.type]), doc);
+            }
+          }
+        }
+      }
+
+      const inserts: any[] = [];
+      const insertedByComposite = new Map();
+
       for (const update of updates) {
         const { id, originalId, playlistId, type, ...extra } = update;
+
         if (id) {
-          const doc = tx.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.id, id)).get();
+          const doc = docsById.get(id);
           if (doc) {
+             const newExtra = { ...(doc.extra as any || {}), ...extra };
              tx.update(schemaCategoryMappings).set({
                playlistId: playlistId !== undefined ? playlistId : doc.playlistId,
                type: type !== undefined ? type : doc.type,
                originalId: originalId !== undefined ? originalId : doc.originalId,
-               extra: { ...(doc.extra as any || {}), ...extra }
+               extra: newExtra
              }).where(eq(schemaCategoryMappings.id, id)).run();
+             doc.extra = newExtra;
           }
         } else {
-          const existing = tx.select().from(schemaCategoryMappings).where(and(eq(schemaCategoryMappings.originalId, originalId), eq(schemaCategoryMappings.playlistId, playlistId), eq(schemaCategoryMappings.type, type))).get();
+          const compositeKey = JSON.stringify([originalId, playlistId, type]);
+          const existing = docsByComposite.get(compositeKey);
           if (existing) {
-             tx.update(schemaCategoryMappings).set({ extra: { ...(existing.extra as any || {}), ...extra } }).where(eq(schemaCategoryMappings.id, existing.id)).run();
+             const newExtra = { ...(existing.extra as any || {}), ...extra };
+             tx.update(schemaCategoryMappings).set({ extra: newExtra }).where(eq(schemaCategoryMappings.id, existing.id)).run();
+             existing.extra = newExtra;
           } else {
-             tx.insert(schemaCategoryMappings).values({ id: generateId(), playlistId, type, originalId, extra }).run();
+             const newlyInserted = insertedByComposite.get(compositeKey);
+             if (newlyInserted) {
+               newlyInserted.extra = { ...newlyInserted.extra, ...extra };
+             } else {
+               const newInsert = { id: generateId(), playlistId, type, originalId, extra };
+               inserts.push(newInsert);
+               insertedByComposite.set(compositeKey, newInsert);
+             }
           }
+        }
+      }
+
+      if (inserts.length > 0) {
+        for (let i = 0; i < inserts.length; i += 500) {
+          tx.insert(schemaCategoryMappings).values(inserts.slice(i, i + 500)).run();
         }
       }
     });
