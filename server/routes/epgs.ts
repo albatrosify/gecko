@@ -96,16 +96,21 @@ export function createEpgsRouter() {
       }
     };
 
-    const xmlSources: { xml: string; sourceName: string }[] = [];
-
-    // Custom EPG sources
     const epgIds: string[] = pExtra.epgIds || [];
     log(`[EPG] Playlist ${playlistId}: ${epgIds.length} custom EPG(s), sourceIds=${sourceIds.length}`);
+
+    // Collect all fetch promises to run concurrently
+    const fetchPromises: Promise<{ xml: string; sourceName: string }>[] = [];
+
+    // Custom EPG sources
     if (epgIds.length) {
       const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
       log(`[EPG] Resolved ${epgDocs.length}/${epgIds.length} custom EPG docs from DB`);
       for (const e of epgDocs) {
-        if (e.url) xmlSources.push({ xml: await fetchXmlHead(e.url, e.name || e.url), sourceName: e.name || e.url });
+        if (e.url) {
+          const sourceName = e.name || e.url;
+          fetchPromises.push(fetchXmlHead(e.url, sourceName).then(xml => ({ xml, sourceName })));
+        }
       }
     }
 
@@ -118,9 +123,12 @@ export function createEpgsRouter() {
       const sExtra = (s.extra as any) || {};
       if (sExtra.useUpstreamEpg && s.url && s.username) {
         const url = `${s.url}/xmltv.php?username=${encodeURIComponent(s.username)}&password=${encodeURIComponent(s.password!)}`;
-        xmlSources.push({ xml: await fetchXmlHead(url, `Upstream: ${s.name || s.url}`), sourceName: `Upstream: ${s.name || s.url}` });
+        const sourceName = `Upstream: ${s.name || s.url}`;
+        fetchPromises.push(fetchXmlHead(url, sourceName).then(xml => ({ xml, sourceName })));
       }
     }
+
+    const xmlSources: { xml: string; sourceName: string }[] = await Promise.all(fetchPromises);
 
     // Parse <channel> elements, tag each with its source name
     const channels: {id: string; name: string; icon?: string; source: string}[] = [];
