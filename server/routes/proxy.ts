@@ -1315,6 +1315,7 @@ export function createProxyRouter() {
       };
 
       const xmlParts: string[] = [];
+      const fetchPromises: Promise<void>[] = [];
 
       const { epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
       const { inArray } = await import('drizzle-orm');
@@ -1325,8 +1326,9 @@ export function createProxyRouter() {
         const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
         for (const epgDoc of epgDocs) {
           if (!epgDoc.url) continue;
-          const xml = await fetchXml(epgDoc.url);
-          if (xml) xmlParts.push(xml);
+          fetchPromises.push(fetchXml(epgDoc.url).then(xml => {
+            if (xml) xmlParts.push(xml);
+          }));
         }
       }
 
@@ -1345,9 +1347,12 @@ export function createProxyRouter() {
         if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
         const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
         log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
-        const xml = await fetchXml(upstreamEpgUrl);
-        if (xml) xmlParts.push(xml);
+        fetchPromises.push(fetchXml(upstreamEpgUrl).then(xml => {
+          if (xml) xmlParts.push(xml);
+        }));
       }
+
+      await Promise.all(fetchPromises);
 
       if (!xmlParts.length) {
         return res.send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
