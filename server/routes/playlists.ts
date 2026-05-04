@@ -99,9 +99,21 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       const catMappings = db.select().from(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlistId)).all();
       if (catMappings.length > 0) {
         log(`[Clone] Found ${catMappings.length} category mappings to duplicate.`);
+        const newCatMappings = catMappings.map(m => ({
+          id: generateId(),
+          playlistId: newPlaylistId,
+          type: m.type,
+          originalId: m.originalId,
+          extra: m.extra
+        }));
+
         db.transaction((tx) => {
-          for (const m of catMappings) {
-            tx.insert(schemaCategoryMappings).values({ id: generateId(), playlistId: newPlaylistId, type: m.type, originalId: m.originalId, extra: m.extra }).run();
+          const CHUNK_SIZE = 500;
+          for (let i = 0; i < newCatMappings.length; i += CHUNK_SIZE) {
+            const chunk = newCatMappings.slice(i, i + CHUNK_SIZE);
+            if (chunk.length > 0) {
+              tx.insert(schemaCategoryMappings).values(chunk).run();
+            }
           }
         });
       }
@@ -130,13 +142,21 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           }
         }
 
+        const newStreamMappings = streamMappings.map(m => {
+          const extra = { ...(m.extra as any || {}) };
+          if (sourceUsername && sourcePassword && oldUser && oldPass && extra.url) {
+            extra.url = replaceUrlCredentials(extra.url, oldUser, oldPass, sourceUsername, sourcePassword);
+          }
+          return { id: generateId(), playlistId: newPlaylistId, type: m.type, originalId: m.originalId, extra };
+        });
+
         db.transaction((tx) => {
-          for (const m of streamMappings) {
-            const extra = { ...(m.extra as any || {}) };
-            if (sourceUsername && sourcePassword && oldUser && oldPass && extra.url) {
-              extra.url = replaceUrlCredentials(extra.url, oldUser, oldPass, sourceUsername, sourcePassword);
+          const CHUNK_SIZE = 500;
+          for (let i = 0; i < newStreamMappings.length; i += CHUNK_SIZE) {
+            const chunk = newStreamMappings.slice(i, i + CHUNK_SIZE);
+            if (chunk.length > 0) {
+              tx.insert(schemaMappings).values(chunk).run();
             }
-            tx.insert(schemaMappings).values({ id: generateId(), playlistId: newPlaylistId, type: m.type, originalId: m.originalId, extra }).run();
           }
         });
         log(`[Clone] Stream mappings duplicated successfully.`);
