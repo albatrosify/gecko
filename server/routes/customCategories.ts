@@ -53,11 +53,20 @@ export function createCustomCategoriesRouter() {
     const db = getDb();
     const { id } = req.params;
 
-    const doc = db.select().from(customCategories).where(eq(customCategories.id, id)).get();
-    if (!doc) return res.status(404).json({ error: "Not found" });
+    const result = db.select({
+      doc: customCategories,
+      playlist: playlists
+    })
+    .from(customCategories)
+    .leftJoin(playlists, eq(playlists.id, customCategories.playlistId))
+    .where(eq(customCategories.id, id))
+    .get();
+
+    if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
+
+    const { doc, playlist } = result;
 
     // Ownership check via playlist
-    const playlist = db.select().from(playlists).where(eq(playlists.id, doc.playlistId)).get();
     if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
       return res.status(403).json({ error: "Forbidden" });
     }
@@ -76,10 +85,19 @@ export function createCustomCategoriesRouter() {
     const db = getDb();
     const { id } = req.params;
 
-    const doc = db.select().from(customCategories).where(eq(customCategories.id, id)).get();
-    if (!doc) return res.status(404).json({ error: "Not found" });
+    const result = db.select({
+      doc: customCategories,
+      playlist: playlists
+    })
+    .from(customCategories)
+    .leftJoin(playlists, eq(playlists.id, customCategories.playlistId))
+    .where(eq(customCategories.id, id))
+    .get();
 
-    const playlist = db.select().from(playlists).where(eq(playlists.id, doc.playlistId)).get();
+    if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
+
+    const { doc, playlist } = result;
+
     if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
       return res.status(403).json({ error: "Forbidden" });
     }
@@ -146,10 +164,19 @@ export function createCustomCategoriesRouter() {
     const db = getDb();
     const { id } = req.params;
 
-    const doc = db.select().from(customCategoryItems).where(eq(customCategoryItems.id, id)).get();
-    if (!doc) return res.status(404).json({ error: "Not found" });
+    const result = db.select({
+      doc: customCategoryItems,
+      playlist: playlists
+    })
+    .from(customCategoryItems)
+    .leftJoin(playlists, eq(playlists.id, customCategoryItems.playlistId))
+    .where(eq(customCategoryItems.id, id))
+    .get();
 
-    const playlist = db.select().from(playlists).where(eq(playlists.id, doc.playlistId)).get();
+    if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
+
+    const { doc, playlist } = result;
+
     if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
       return res.status(403).json({ error: "Forbidden" });
     }
