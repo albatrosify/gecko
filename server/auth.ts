@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getDb, docWithId } from './db.ts';
+import { createRateLimiter } from './rate-limit.ts';
 
 const JWT_SECRET = () => {
   const secret = process.env.JWT_SECRET;
@@ -19,8 +20,14 @@ export interface AuthRequest extends Request {
 export function createAuthRouter(): Router {
   const router = Router();
 
+  const authLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 requests per `window`
+    message: 'Too many authentication attempts, please try again later.',
+  });
+
   // Register
-  router.post('/register', async (req: Request, res: Response) => {
+  router.post('/register', authLimiter, async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
@@ -72,7 +79,7 @@ export function createAuthRouter(): Router {
   });
 
   // Login
-  router.post('/login', async (req: Request, res: Response) => {
+  router.post('/login', authLimiter, async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
