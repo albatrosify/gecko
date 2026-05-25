@@ -133,7 +133,7 @@ export function createMappingsRouter() {
             } else {
                const newlyInserted = insertedByComposite.get(compositeKey);
                if (newlyInserted) {
-                 // if we already queued an insert for this in the current batch, update the queued insert
+                 // Update the queued insert if we already queued one in the current batch
                  newlyInserted.extra = { ...newlyInserted.extra, ...extra };
                } else {
                  const newInsert = { id: generateId(), playlistId, type, originalId, extra };
