@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import express, { Router } from "express";
 import axios from "axios";
 import http from "http";
@@ -13,6 +14,8 @@ import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
+
+const limit = pLimit(5);
 
 const isForbiddenIP = (ip: string): boolean => {
   const normalizedIP = ip.toLowerCase();
@@ -407,17 +410,17 @@ export function createProxyRouter() {
     // Dynamic Sync: block until all sources are synced before serving.
     // refreshSource has a 5-min cooldown, so upstream is only hit at most once per 5 minutes.
     if (action === 'get_live_streams' && hasSyncOnDemandLive)
-      await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'live').catch(() => {})));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'live').catch(() => {}))));
     if (action === 'get_vod_streams' && hasSyncOnDemandVod)
-      await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'vod').catch(() => {})));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'vod').catch(() => {}))));
     if (action === 'get_series' && hasSyncOnDemandSeries)
-      await Promise.all(playlist.sourceIds.map((sid: string) => refreshSource(sid, 'series').catch(() => {})));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'series').catch(() => {}))));
 
     try {
       let data;
       switch (action) {
         case 'get_live_categories': {
-          const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+          const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             const catsCached = getCached(`${sid}_categories`);
             let cats: any[];
             if (catsCached?.data?.liveCats) {
@@ -428,7 +431,7 @@ export function createProxyRouter() {
               cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
             }
             return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-          }));
+          })));
 
           data = allResults.flat();
 
@@ -468,14 +471,14 @@ export function createProxyRouter() {
          case 'get_live_streams': {
            const categoryId = req.query.category_id as string;
            const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'live'))).all();
-           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_live`);
                const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-           }));
+           })));
 
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
@@ -502,7 +505,7 @@ export function createProxyRouter() {
 
            // Build category order map using PREFIXED category IDs for consistency
            const catOrderMap = new Map();
-           const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const allCatsResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
              const catsCached = getCached(`${sid}_categories`);
              let cats: any[];
              if (catsCached?.data?.liveCats) {
@@ -513,7 +516,7 @@ export function createProxyRouter() {
                cats = await new XtreamClient(sDoc as any).getLiveCategories().catch(() => []);
              }
              return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-           }));
+           })));
            const deduplicatedCats = allCatsResults.flat();
 
            // Store order by PREFIXED category ID
@@ -609,7 +612,7 @@ export function createProxyRouter() {
            break;
          }
           case 'get_vod_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
               const catsCached = getCached(`${sid}_categories`);
               let cats: any[];
               if (catsCached?.data?.vodCats) {
@@ -620,7 +623,7 @@ export function createProxyRouter() {
                 cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
               }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
+            })));
 
             data = allResults.flat();
 
@@ -659,14 +662,14 @@ export function createProxyRouter() {
           case 'get_vod_streams': {
             const categoryId = req.query.category_id as string;
            const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'vod'))).all();
-           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_vod`);
                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-           }));
+           })));
 
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
@@ -692,7 +695,7 @@ export function createProxyRouter() {
 
             // Build category order map using PREFIXED category IDs
             const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const allCatsResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
               const catsCached = getCached(`${sid}_categories`);
               let cats: any[];
               if (catsCached?.data?.vodCats) {
@@ -703,7 +706,7 @@ export function createProxyRouter() {
                 cats = await new XtreamClient(sDoc as any).getVodCategories().catch(() => []);
               }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
+            })));
             const deduplicatedCats = allCatsResults.flat();
 
             // Store order by PREFIXED category ID
@@ -785,7 +788,7 @@ export function createProxyRouter() {
             break;
           }
           case 'get_series_categories': {
-            const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
               const catsCached = getCached(`${sid}_categories`);
               let cats: any[];
               if (catsCached?.data?.seriesCats) {
@@ -796,7 +799,7 @@ export function createProxyRouter() {
                 cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
               }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
+            })));
 
             data = allResults.flat();
 
@@ -835,14 +838,14 @@ export function createProxyRouter() {
           case 'get_series': {
             const categoryId = req.query.category_id as string;
            const mappingDocs = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlist.id), eq(schemaMappings.type, 'series'))).all();
-           const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+           const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
                const streamsCached = getCached(`${sid}_streams_series`);
                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-           }));
+           })));
 
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
@@ -868,7 +871,7 @@ export function createProxyRouter() {
 
             // Build category order map using PREFIXED category IDs
             const catOrderMap = new Map();
-            const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const allCatsResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
               const catsCached = getCached(`${sid}_categories`);
               let cats: any[];
               if (catsCached?.data?.seriesCats) {
@@ -879,7 +882,7 @@ export function createProxyRouter() {
                 cats = await new XtreamClient(sDoc as any).getSeriesCategories().catch(() => []);
               }
               return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-            }));
+            })));
             const deduplicatedCats = allCatsResults.flat();
 
             // Store order by PREFIXED category ID
@@ -964,12 +967,12 @@ export function createProxyRouter() {
             // Try streamId first (new integer ID), then fall back to stream_id
             if (!liveStreamId && (req.body as any)?.streamId) liveStreamId = (req.body as any).streamId;
             // Use integer stream ID directly (no underscore prefix)
-            const liveResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const liveResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
              const sDoc = sourcesMap.get(sid);
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
              try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
-           }));
+           })));
            data = liveResults.find(r => r !== null) || {};
            if (data.info?.stream_icon) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
            break;
@@ -981,7 +984,7 @@ export function createProxyRouter() {
             if (!epgStreamId && (req.body as any)?.streamId) epgStreamId = (req.body as any).streamId;
             // Use integer stream ID directly (no underscore prefix)
             const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-            const epgResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+            const epgResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
              const sDoc = sourcesMap.get(sid);
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
@@ -997,7 +1000,7 @@ export function createProxyRouter() {
                }
              } catch { return null; }
             return null;
-          }));
+          })));
           data = epgResults.find(r => r !== null) || { epg_listings: [] };
           break;
         }
@@ -1007,7 +1010,7 @@ export function createProxyRouter() {
           // Try streamId first (new integer ID), then fall back to stream_id
           if (!tableStreamId && (req.body as any)?.streamId) tableStreamId = (req.body as any).streamId;
           // Use integer stream ID directly (no underscore prefix)
-          const tableResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+          const tableResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             const sDoc = sourcesMap.get(sid);
             if (!sDoc) return null;
             const cl = new XtreamClient(sDoc as any);
@@ -1023,7 +1026,7 @@ export function createProxyRouter() {
               }
             } catch { return null; }
             return null;
-          }));
+          })));
           data = tableResults.find(r => r !== null) || { epg_listings: [] };
           break;
         }
@@ -1037,7 +1040,7 @@ export function createProxyRouter() {
             vodId = parts.slice(1).join('_');
           }
 
-          const allVodResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+          const allVodResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
             const sDoc = sourcesMap.get(sid);
             if (!sDoc) return null;
@@ -1049,7 +1052,7 @@ export function createProxyRouter() {
               return null;
             }
             return null;
-          }));
+          })));
           data = allVodResults.find(r => r !== null) || { error: "VOD not found" };
           if (data && !data.error) {
             if (data.info?.movie_image) data.info.movie_image = proxyImageUrl(data.info.movie_image, imgBase);
@@ -1072,7 +1075,7 @@ export function createProxyRouter() {
             seriesId = parts.slice(1).join('_');
           }
 
-          const allSourceResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+          const allSourceResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
             const sDoc = sourcesMap.get(sid);
             if (!sDoc) return null;
@@ -1087,7 +1090,7 @@ export function createProxyRouter() {
               return null;
             }
             return null;
-          }));
+          })));
 
           // Return first one that has actual data
           data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
@@ -1151,7 +1154,7 @@ export function createProxyRouter() {
     try {
       let m3u = "#EXTM3U\n";
 
-      const allResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+      const allResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
         const sDoc = m3uSourcesMap.get(sid);
         if (!sDoc) return [];
         const cl = new XtreamClient(sDoc as any);
@@ -1168,7 +1171,7 @@ export function createProxyRouter() {
           streams = await cl.getLiveStreams().catch(() => []);
         }
         return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
-      }));
+      })));
 
       let rawStreams = allResults.flat();
 
@@ -1193,7 +1196,7 @@ export function createProxyRouter() {
 
       // Build category order map
       const catOrderMap = new Map();
-      const allCatsResults = await Promise.all(playlist.sourceIds.map(async (sid: string, sourceIdx: number) => {
+      const allCatsResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
         const catsCached = getCached(`${sid}_categories`);
         let cats: any[];
         if (catsCached?.data) {
@@ -1208,7 +1211,7 @@ export function createProxyRouter() {
           else cats = await cl.getLiveCategories().catch(() => []);
         }
         return cats.map((c: any) => ({ ...c, _sourceIdx: sourceIdx }));
-      }));
+      })));
       const deduplicatedCats = allCatsResults.flat();
 
       // Build category order map using PREFIXED category IDs
