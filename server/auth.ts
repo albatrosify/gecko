@@ -121,6 +121,17 @@ export function createAuthRouter(): Router {
     res.json({ user: req.user });
   });
 
+  // Get short-lived download ticket
+  router.get('/ticket', requireAuth, (req: AuthRequest, res: Response) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    const ticket = jwt.sign(
+      { id: req.user.id, email: req.user.email, role: req.user.role, purpose: 'download' },
+      JWT_SECRET(),
+      { expiresIn: '5m' }
+    );
+    res.json({ ticket });
+  });
+
   return router;
 }
 
@@ -146,6 +157,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
  */
 export function requireAuthOrQuery(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
+  const isQueryToken = !authHeader?.startsWith('Bearer ') && !!req.query.token;
   const rawToken = authHeader?.startsWith('Bearer ')
     ? authHeader.slice(7)
     : (req.query.token as string | undefined);
@@ -155,6 +167,12 @@ export function requireAuthOrQuery(req: AuthRequest, res: Response, next: NextFu
   }
   try {
     const decoded = jwt.verify(rawToken, JWT_SECRET()) as any;
+
+    // If the token is passed via query parameter, it must be a dedicated download ticket
+    if (isQueryToken && decoded.purpose !== 'download') {
+      return res.status(401).json({ error: 'Invalid token purpose for query parameter' });
+    }
+
     req.user = { id: decoded.id, email: decoded.email, role: decoded.role };
     next();
   } catch {

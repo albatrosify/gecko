@@ -61,7 +61,8 @@ import {
   Copy,
   History,
   Clock,
-  Download
+  Download,
+  Loader
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -4800,6 +4801,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSeason, setSelectedSeason] = useState<string | null>(null);
+  const [downloadingEp, setDownloadingEp] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -4950,14 +4952,29 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                                 <Play size={14} /> Play
                               </button>
                             )}
-                            <a
-                              href={`/api/download/series/${playlistId}/${ep.id}?extension=${ep.container_extension || ep.info?.container_extension || 'mp4'}&token=${localStorage.getItem('auth_token') ?? ''}`}
-                              download
-                              className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                            <button
+                              onClick={async () => {
+                                setDownloadingEp(ep.id);
+                                try {
+                                  const { ticket } = await api.auth.getDownloadTicket();
+                                  const url = `/api/download/series/${playlistId}/${ep.id}?extension=${ep.container_extension || ep.info?.container_extension || 'mp4'}&token=${ticket}`;
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = '';
+                                  a.click();
+                                } catch (err) {
+                                  console.error('Failed to get download ticket:', err);
+                                  alert('Failed to start download. Please try logging in again.');
+                                } finally {
+                                  setDownloadingEp(null);
+                                }
+                              }}
+                              disabled={downloadingEp === ep.id}
+                              className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 text-xs font-bold"
                               title="Download Episode"
                             >
-                              <Download size={14} /> Download
-                            </a>
+                              {downloadingEp === ep.id ? <Loader size={14} className="animate-spin" /> : <Download size={14} />} Download
+                            </button>
                           </div>
                         </div>
                       );
@@ -5022,6 +5039,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   onPlay?: (url: string, title: string) => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
+  const [downloading, setDownloading] = useState(false);
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
   const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || "");
   const [loading, setLoading] = useState(false);
@@ -5253,14 +5271,30 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 
               {/* VOD / Series download */}
               {(type === 'vod' || type === 'series') && (
-                <a
-                   href={`/api/download/${type}/${playlistId}/${stream.streamId || stream.stream_id || mapping?.originalId || stream._uniqueId}?token=${localStorage.getItem('auth_token') ?? ''}`}
-                  download
-                  className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
+                <button
+                  onClick={async () => {
+                    setDownloading(true);
+                    try {
+                      const { ticket } = await api.auth.getDownloadTicket();
+                      const streamId = stream.streamId || stream.stream_id || mapping?.originalId || stream._uniqueId;
+                      const url = `/api/download/${type}/${playlistId}/${streamId}?token=${ticket}`;
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = '';
+                      a.click();
+                    } catch (err) {
+                      console.error('Failed to get download ticket:', err);
+                      alert('Failed to start download. Please try logging in again.');
+                    } finally {
+                      setDownloading(false);
+                    }
+                  }}
+                  disabled={downloading}
+                  className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
                 >
-                  <Download size={13} />
+                  {downloading ? <Loader size={13} className="animate-spin" /> : <Download size={13} />}
                   Download
-                </a>
+                </button>
               )}
 
               {/* Detected Quality */}
