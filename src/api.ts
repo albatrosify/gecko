@@ -78,6 +78,10 @@ export const auth = {
   logout() {
     clearToken();
   },
+
+  async getDownloadTicket() {
+    return request<{ ticket: string }>('/api/auth/ticket');
+  },
 };
 
 // Sources
