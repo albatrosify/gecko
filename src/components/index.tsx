@@ -2682,10 +2682,12 @@ export function PlaylistEditor({ user }: { user: User }) {
         return autoMatchRematch ? true : !m?.epgMapping;
       });
 
-      // Streams already matched but missing icon — only when not doing a full re-match
+      // Streams already matched but missing or stale icon — only when not doing a full re-match
       const streamsToUpdateIcon = autoMatchRematch ? [] : filteredStreams.filter(s => {
         const m = mappings.find(mp => mp.originalId === String(s._rawId || s._uniqueId));
-        return m?.epgMapping && !m?.epgIcon;
+        if (!m?.epgMapping) return false;
+        const epgCh = epgChannels.find(c => c.id === m.epgMapping);
+        return !m.epgIcon || (epgCh && m.epgIcon !== epgCh.icon);
       });
 
       const updates: any[] = [];

@@ -152,6 +152,38 @@ export function createEpgsRouter() {
 
     log(`[EPG] Total channels for playlist ${playlistId}: ${channels.length}`);
     epgChannelCache.set(playlistId as string, { channels, expiresAt: Date.now() + 3600_000 });
+
+    // Refresh stale epgIcon values in mappings — EPG sources may update icon URLs
+    try {
+      const { mappings: schemaMappings } = await import('../schema.ts');
+      const iconLookup = new Map<string, string>(channels.map(ch => [ch.id, ch.icon || '']));
+      const playlistMappings = db.select().from(schemaMappings).where(eq(schemaMappings.playlistId, playlistId as string)).all();
+
+      const staleIds: string[] = [];
+      const staleIcons: string[] = [];
+      for (const m of playlistMappings) {
+        const extra = (m.extra as any) || {};
+        if (!extra.epgMapping || !iconLookup.has(extra.epgMapping)) continue;
+        const freshIcon = iconLookup.get(extra.epgMapping)!;
+        if (extra.epgIcon === freshIcon) continue;
+        staleIds.push(m.id);
+        staleIcons.push(freshIcon);
+      }
+
+      if (staleIds.length > 0) {
+        db.transaction((tx) => {
+          for (let i = 0; i < staleIds.length; i++) {
+            const doc = tx.select().from(schemaMappings).where(eq(schemaMappings.id, staleIds[i])).get();
+            if (!doc) continue;
+            tx.update(schemaMappings).set({ extra: { ...(doc.extra as any || {}), epgIcon: staleIcons[i] } }).where(eq(schemaMappings.id, staleIds[i])).run();
+          }
+        });
+        log(`[EPG] Refreshed epgIcon for ${staleIds.length} stale mapping(s) in playlist ${playlistId}`);
+      }
+    } catch (err: any) {
+      log(`[EPG] Failed to refresh stale epgIcon values: ${err?.message || err}`);
+    }
+
     res.json({ channels });
   });
 
