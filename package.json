@@ -59,6 +59,7 @@
     "@types/react-native": "^0.72.8",
     "autoprefixer": "^10.4.21",
     "drizzle-kit": "^0.31.10",
+    "jsdom": "^29.1.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
