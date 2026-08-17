@@ -4,6 +4,7 @@ import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { XtreamClient } from "./xtream.ts";
 import { getCached, setCache } from "./cache.ts";
+import { parseXtreamExpDate } from "./utils.ts";
 
 // Helper to compare data and generate a changelog
 export function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
@@ -193,6 +194,21 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     const lastUpdated = new Date().toISOString();
     const sourceExtra = (source.extra as any) || {};
     sourceExtra.lastUpdated = lastUpdated;
+
+    // Fetch and update account info (expiry date, status, max connections) for Xtream sources
+    if (source.type === 'xtream' && (type === 'live' || force)) {
+      try {
+        const auth = await client.authenticate();
+        if (auth && auth.user_info) {
+          sourceExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
+          if (auth.user_info.status) sourceExtra.accountStatus = auth.user_info.status;
+          if (auth.user_info.max_connections !== undefined) sourceExtra.maxConnections = auth.user_info.max_connections;
+        }
+      } catch (authErr: any) {
+        log(`[Sync] Note: Could not fetch account auth info for ${source.name}: ${authErr.message}`);
+      }
+    }
+
     db.update(sources).set({ extra: sourceExtra }).where(eq(sources.id, sourceId)).run();
 
     db.insert(source_sync_meta)

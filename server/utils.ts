@@ -77,3 +77,40 @@ export const applyRegex = (name: string, rules: { pattern: string; replacement: 
   }
   return result;
 };
+
+/**
+ * Parse and normalize Xtream/IPTV account expiration date.
+ * Returns an ISO date string or null if unlimited / not set.
+ */
+export function parseXtreamExpDate(rawExpDate: any): string | null {
+  if (rawExpDate === null || rawExpDate === undefined) return null;
+  const str = String(rawExpDate).trim();
+  if (!str || str === '0' || str.toLowerCase() === 'null' || str.toLowerCase() === 'unlimited' || str.toLowerCase() === 'never') {
+    return null;
+  }
+
+  // Check if it is a pure numeric timestamp
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    if (num <= 0) return null;
+    // If timestamp is < 100,000,000,000 (11 digits), it's in seconds.
+    const ms = num < 100000000000 ? num * 1000 : num;
+    const date = new Date(ms);
+    return isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  // Try parsing direct ISO / date string
+  const parsedDirect = new Date(str);
+  if (!isNaN(parsedDirect.getTime())) {
+    return parsedDirect.toISOString();
+  }
+
+  // Try replacing spaces with 'T' for "YYYY-MM-DD HH:mm:ss" formats
+  const parsedIso = new Date(str.replace(' ', 'T'));
+  if (!isNaN(parsedIso.getTime())) {
+    return parsedIso.toISOString();
+  }
+
+  return null;
+}
+

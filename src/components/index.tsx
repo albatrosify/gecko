@@ -61,7 +61,9 @@ import {
   Copy,
   History,
   Clock,
-  Download
+  Download,
+  Calendar,
+  AlertTriangle
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -955,6 +957,73 @@ export function PlaylistManager({ user }: { user: User }) {
   );
 }
 
+export function formatExpiryDate(expiryDate: string | null | undefined): {
+  text: string;
+  status: 'unlimited' | 'expired' | 'expiring_soon' | 'active' | 'unknown';
+  relativeText?: string;
+  daysRemaining?: number;
+} {
+  if (expiryDate === null || (typeof expiryDate === 'string' && expiryDate.toLowerCase() === 'unlimited')) {
+    return { text: 'Unlimited', status: 'unlimited', relativeText: 'No Expiration' };
+  }
+  if (!expiryDate) {
+    return { text: 'Not Available', status: 'unknown' };
+  }
+
+  const date = new Date(expiryDate);
+  if (isNaN(date.getTime())) {
+    return { text: String(expiryDate), status: 'unknown' };
+  }
+
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  const formattedDate = date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+
+  if (diffMs < 0) {
+    const daysAgo = Math.abs(diffDays);
+    return {
+      text: formattedDate,
+      status: 'expired',
+      relativeText: daysAgo === 0 ? 'Expired today' : `Expired ${daysAgo}d ago`,
+      daysRemaining: diffDays,
+    };
+  }
+
+  if (diffDays <= 7) {
+    return {
+      text: formattedDate,
+      status: 'expiring_soon',
+      relativeText: diffDays === 0 ? 'Expires today' : `Expires in ${diffDays}d`,
+      daysRemaining: diffDays,
+    };
+  }
+
+  if (diffDays <= 30) {
+    return {
+      text: formattedDate,
+      status: 'expiring_soon',
+      relativeText: `In ${diffDays} days`,
+      daysRemaining: diffDays,
+    };
+  }
+
+  const months = Math.floor(diffDays / 30);
+  const rel = months > 0 ? (months === 1 ? 'In ~1 month' : `In ~${months} months`) : `In ${diffDays} days`;
+
+  return {
+    text: formattedDate,
+    status: 'active',
+    relativeText: rel,
+    daysRemaining: diffDays,
+  };
+}
+
 export function SourceManager({ user }: { user: User }) {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -1003,7 +1072,7 @@ export function SourceManager({ user }: { user: User }) {
   }, [loadSources]);
 
   const handleRefresh = async (source: UpstreamSource) => {
-    if (!confirm(`Run manual sync for "${source.name}"? This will update any unmodified channel names to match upstream.`)) {
+    if (!confirm(`Run manual sync for "${source.name}"? This will update any unmodified channel names and account details to match upstream.`)) {
       return;
     }
 
@@ -1086,80 +1155,142 @@ export function SourceManager({ user }: { user: User }) {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {sources.map((source) => (
-          <div key={source.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col gap-6">
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-zinc-800 rounded-2xl text-emerald-500">
-                  <Database size={24} />
+        {sources.map((source) => {
+          const expiryInfo = formatExpiryDate(source.expiryDate);
+          return (
+            <div key={source.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between gap-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-zinc-800 rounded-2xl text-emerald-500">
+                      <Database size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-bold">{source.name}</h3>
+                        {source.autoSyncEnabled && (
+                          <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                            <RefreshCw size={8} />
+                            Auto-Sync
+                          </span>
+                        )}
+                        {source.useUpstreamEpg && (
+                          <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[8px] font-black uppercase tracking-tighter">
+                            EPG
+                          </span>
+                        )}
+                        {expiryInfo.status === 'expired' && (
+                          <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                            <AlertTriangle size={8} />
+                            Expired
+                          </span>
+                        )}
+                        {expiryInfo.status === 'expiring_soon' && (
+                          <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                            <Clock size={8} />
+                            Expiring Soon
+                          </span>
+                        )}
+                        {expiryInfo.status === 'unlimited' && (
+                          <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter">
+                            Unlimited
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-zinc-500 font-mono">{source.url}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleShowChangelog(source)}
+                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-blue-500 transition-colors"
+                      title="View Sync History"
+                    >
+                      <History size={20} />
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setEditingSource({ ...source });
+                        setShowEdit(true);
+                      }}
+                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-emerald-500 transition-colors"
+                    >
+                      <Edit3 size={20} />
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(source.id)}
+                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold">{source.name}</h3>
-                    {source.autoSyncEnabled && (
-                      <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
-                        <RefreshCw size={8} />
-                        Auto-Sync
-                      </span>
-                    )}
-                    {source.useUpstreamEpg && (
-                      <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[8px] font-black uppercase tracking-tighter">
-                        EPG
-                      </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
+                      <Calendar size={12} className="text-zinc-500" />
+                      <span>Expiry Date</span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5 flex-wrap">
+                      <p className={clsx(
+                        "text-xs font-semibold",
+                        expiryInfo.status === 'expired' ? "text-red-400 font-bold" :
+                        expiryInfo.status === 'expiring_soon' ? "text-amber-400 font-bold" :
+                        expiryInfo.status === 'unlimited' ? "text-emerald-400" :
+                        "text-zinc-300"
+                      )}>
+                        {expiryInfo.text}
+                      </p>
+                      {expiryInfo.relativeText && (
+                        <span className={clsx(
+                          "text-[10px] font-medium italic",
+                          expiryInfo.status === 'expired' ? "text-red-400/80" :
+                          expiryInfo.status === 'expiring_soon' ? "text-amber-400/80" :
+                          expiryInfo.status === 'unlimited' ? "text-emerald-500/70" :
+                          "text-zinc-500"
+                        )}>
+                          ({expiryInfo.relativeText})
+                        </span>
+                      )}
+                    </div>
+                    {source.maxConnections && (
+                      <p className="text-[10px] text-zinc-500">
+                        Max Connections: <span className="text-zinc-400 font-medium">{source.maxConnections}</span>
+                      </p>
                     )}
                   </div>
-                  <p className="text-xs text-zinc-500 font-mono">{source.url}</p>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
+                      <Clock size={12} className="text-zinc-500" />
+                      <span>Last Synced</span>
+                    </div>
+                    <p className="text-xs text-zinc-400 font-medium italic">
+                      {source.lastUpdated ? new Date(source.lastUpdated).toLocaleString() : 'Never'}
+                    </p>
+                    {syncStatus[source.id] && (
+                      <p className={`text-[10px] font-bold ${syncStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {syncStatus[source.id]}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => handleShowChangelog(source)}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-blue-500 transition-colors"
-                  title="View Sync History"
-                >
-                  <History size={20} />
-                </button>
-                <button 
-                  onClick={() => {
-                    setEditingSource({ ...source });
-                    setShowEdit(true);
-                  }}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-emerald-500 transition-colors"
-                >
-                  <Edit3 size={20} />
-                </button>
-                <button 
-                  onClick={() => handleDelete(source.id)}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 size={20} />
-                </button>
-              </div>
-            </div>
 
-            <div className="bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800 flex items-center justify-between">
-              <div className="space-y-1">
-                <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest">Last Synced</p>
-                <p className="text-xs text-zinc-400 font-medium italic">
-                  {source.lastUpdated ? new Date(source.lastUpdated).toLocaleString() : 'Never'}
-                </p>
-                {syncStatus[source.id] && (
-                  <p className={`text-[10px] font-bold ${syncStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
-                    {syncStatus[source.id]}
-                  </p>
-                )}
+              <div className="flex justify-end items-center">
+                <button 
+                  onClick={() => handleRefresh(source)}
+                  disabled={refreshingSources[source.id]}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={refreshingSources[source.id] ? 'animate-spin' : ''} />
+                  {refreshingSources[source.id] ? 'Syncing...' : 'Sync Now'}
+                </button>
               </div>
-              <button 
-                onClick={() => handleRefresh(source)}
-                disabled={refreshingSources[source.id]}
-                className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={refreshingSources[source.id] ? 'animate-spin' : ''} />
-                {refreshingSources[source.id] ? 'Syncing...' : 'Sync Now'}
-              </button>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Add/Edit Modal */}
@@ -1209,6 +1340,50 @@ export function SourceManager({ user }: { user: User }) {
                   />
                 </div>
               )}
+
+              {/* Expiry Date input */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Expiry Date (Optional)</label>
+                  {(showEdit ? editingSource! : newSource).expiryDate && (
+                    <button
+                      type="button"
+                      onClick={() => showEdit ? setEditingSource({...editingSource!, expiryDate: null}) : setNewSource({...newSource, expiryDate: null})}
+                      className="text-[10px] text-zinc-500 hover:text-emerald-400 transition-colors"
+                    >
+                      Set Unlimited / Clear
+                    </button>
+                  )}
+                </div>
+                <input 
+                  type="date"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                  value={
+                    (() => {
+                      const d = (showEdit ? editingSource! : newSource).expiryDate;
+                      if (!d) return '';
+                      try {
+                        return new Date(d).toISOString().split('T')[0];
+                      } catch {
+                        return '';
+                      }
+                    })()
+                  }
+                  onChange={e => {
+                    const val = e.target.value ? new Date(e.target.value).toISOString() : null;
+                    if (showEdit) {
+                      setEditingSource({...editingSource!, expiryDate: val});
+                    } else {
+                      setNewSource({...newSource, expiryDate: val});
+                    }
+                  }}
+                />
+                <p className="text-[10px] text-zinc-500">
+                  {(showEdit ? editingSource! : newSource).type === 'xtream' 
+                    ? 'For Xtream Codes, this is auto-detected from provider authentication upon saving or syncing.'
+                    : 'For M3U, you can manually set your subscription expiry date.'}
+                </p>
+              </div>
 
               {/* Sync Settings */}
               <div className="pt-4 border-t border-zinc-800 space-y-4">
@@ -2859,22 +3034,37 @@ export function PlaylistEditor({ user }: { user: User }) {
           >
             <h3 className="text-2xl font-bold">Select Upstream Sources</h3>
             <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
-              {allSources.map(source => (
-                <label key={source.id} className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className={clsx("w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all", playlist.sourceIds.includes(source.id) ? "bg-emerald-500 border-emerald-500" : "border-zinc-800")}>
-                      {playlist.sourceIds.includes(source.id) && <RefreshCw size={12} className="text-zinc-950" />}
+              {allSources.map(source => {
+                const expiryInfo = formatExpiryDate(source.expiryDate);
+                return (
+                  <label key={source.id} className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all">
+                    <div className="flex items-center gap-3">
+                      <div className={clsx("w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all", playlist.sourceIds.includes(source.id) ? "bg-emerald-500 border-emerald-500" : "border-zinc-800")}>
+                        {playlist.sourceIds.includes(source.id) && <RefreshCw size={12} className="text-zinc-950" />}
+                      </div>
+                      <div>
+                        <div className="font-medium text-sm">{source.name}</div>
+                        {source.expiryDate !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Expires: <span className={
+                              expiryInfo.status === 'expired' ? "text-red-400 font-bold" :
+                              expiryInfo.status === 'expiring_soon' ? "text-amber-400 font-bold" :
+                              expiryInfo.status === 'unlimited' ? "text-emerald-400 font-medium" :
+                              "text-zinc-400"
+                            }>{expiryInfo.text}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <span className="font-medium">{source.name}</span>
-                  </div>
-                  <input 
-                    type="checkbox" 
-                    className="hidden" 
-                    checked={playlist.sourceIds.includes(source.id)} 
-                    onChange={() => toggleSource(source.id)}
-                  />
-                </label>
-              ))}
+                    <input 
+                      type="checkbox" 
+                      className="hidden" 
+                      checked={playlist.sourceIds.includes(source.id)} 
+                      onChange={() => toggleSource(source.id)}
+                    />
+                  </label>
+                );
+              })}
 
               {playlist.sourceIds.filter(id => !allSources.find(s => s.id === id)).map(missingId => (
                 <label key={missingId} className="flex items-center justify-between p-4 bg-red-500/5 border border-red-500/20 rounded-2xl cursor-pointer hover:border-red-500/50 transition-all group">

@@ -16,6 +16,9 @@ export interface UpstreamSource {
   autoSyncEnabled?: boolean;
   syncCron?: string; // Crontab format
   useUpstreamEpg?: boolean; // Proxy this source's xmltv.php as EPG
+  expiryDate?: string | null; // ISO timestamp string or null for Unlimited
+  accountStatus?: string;     // e.g. "Active", "Expired", "Disabled"
+  maxConnections?: number | string; // e.g. "1", "2"
 }
 
 export interface EPGSource {

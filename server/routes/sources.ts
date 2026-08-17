@@ -5,6 +5,7 @@ import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
+import { parseXtreamExpDate } from "../utils.ts";
 
 export function createSourcesRouter() {
   const router = Router();
@@ -29,10 +30,27 @@ export function createSourcesRouter() {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
     const newId = generateId();
-    const { name, type, url, username, password, autoSyncEnabled, syncCron, ...extra } = req.body;
+    const { name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, ...extra } = req.body;
 
     extra.enabled = true;
     extra.lastUpdated = new Date().toISOString();
+    if (expiryDate !== undefined) {
+      extra.expiryDate = expiryDate;
+    }
+
+    if (type === 'xtream' && url && username && password) {
+      try {
+        const client = new XtreamClient({ url, username, password } as any);
+        const auth = await client.authenticate();
+        if (auth && auth.user_info) {
+          extra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
+          if (auth.user_info.status) extra.accountStatus = auth.user_info.status;
+          if (auth.user_info.max_connections !== undefined) extra.maxConnections = auth.user_info.max_connections;
+        }
+      } catch (e: any) {
+        log(`[Sources] Failed to fetch account info for new source ${name}: ${e.message}`);
+      }
+    }
 
     db.insert(schemaSources).values({
       id: newId, userId: req.user!.id, name, type, url, username, password, autoSyncEnabled, syncCron, extra
@@ -47,11 +65,35 @@ export function createSourcesRouter() {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
     const { eq, and } = await import('drizzle-orm');
-    const { id, name, type, url, username, password, autoSyncEnabled, syncCron, ...extra } = req.body;
+    const { id, name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, ...extra } = req.body;
     const sourceId = req.params.id;
 
     const doc = db.select().from(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).get();
     if (doc) {
+      const mergedExtra = { ...(doc.extra as any || {}), ...extra };
+      if (expiryDate !== undefined) {
+        mergedExtra.expiryDate = expiryDate;
+      }
+
+      const targetType = type !== undefined ? type : doc.type;
+      const targetUrl = url !== undefined ? url : doc.url;
+      const targetUser = username !== undefined ? username : doc.username;
+      const targetPass = password !== undefined ? password : doc.password;
+
+      if (targetType === 'xtream' && targetUrl && targetUser && targetPass) {
+        try {
+          const client = new XtreamClient({ url: targetUrl, username: targetUser, password: targetPass } as any);
+          const auth = await client.authenticate();
+          if (auth && auth.user_info) {
+            mergedExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
+            if (auth.user_info.status) mergedExtra.accountStatus = auth.user_info.status;
+            if (auth.user_info.max_connections !== undefined) mergedExtra.maxConnections = auth.user_info.max_connections;
+          }
+        } catch (e: any) {
+          log(`[Sources] Failed to fetch account info on update for ${sourceId}: ${e.message}`);
+        }
+      }
+
       db.update(schemaSources).set({
         name: name !== undefined ? name : doc.name,
         type: type !== undefined ? type : doc.type,
@@ -60,7 +102,7 @@ export function createSourcesRouter() {
         password: password !== undefined ? password : doc.password,
         autoSyncEnabled: autoSyncEnabled !== undefined ? autoSyncEnabled : doc.autoSyncEnabled,
         syncCron: syncCron !== undefined ? syncCron : doc.syncCron,
-        extra: { ...(doc.extra as any || {}), ...extra }
+        extra: mergedExtra
       }).where(eq(schemaSources.id, sourceId)).run();
 
       const fullSource = db.select().from(schemaSources).where(eq(schemaSources.id, sourceId)).get();
@@ -69,6 +111,7 @@ export function createSourcesRouter() {
 
     res.json({ success: true });
   });
+
 
   router.post("/sources/:id/refresh", requireAuth, async (req: AuthRequest, res) => {
     const sid = req.params.id;
