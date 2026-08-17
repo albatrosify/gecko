@@ -1,8 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, useDragControls } from 'motion/react';
-import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2 } from 'lucide-react';
+import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, Copy, Check } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
+
+export function VlcIcon({ size = 16, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M12 2L9.5 8H14.5L12 2ZM9 9L7.5 13H16.5L15 9H9ZM7.1 14L5.5 18H18.5L16.9 14H7.1ZM3 19L2 21.5C1.8 22 2.2 22.5 2.8 22.5H21.2C21.8 22.5 22.2 22 22 21.5L21 19H3Z" />
+    </svg>
+  );
+}
 
 export interface WebPlayerProps {
   url: string | null;
@@ -20,6 +28,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
+  const [audioCodecWarning, setAudioCodecWarning] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Track states
   const [audioTracks, setAudioTracks] = useState<any[]>([]);
@@ -32,6 +42,31 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
   // Timeout for hiding controls
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const getAbsoluteUrl = () => {
+    if (!url) return '';
+    return url.startsWith('http://') || url.startsWith('https://')
+      ? url
+      : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const handleOpenVlc = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const absUrl = getAbsoluteUrl();
+    if (!absUrl) return;
+    window.location.href = `vlc://${absUrl}`;
+  };
+
+  const handleCopyUrl = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const absUrl = getAbsoluteUrl();
+    if (!absUrl) return;
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(absUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const handleMouseMove = () => {
     setShowControls(true);
@@ -51,6 +86,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
+
+    setAudioCodecWarning(null);
 
     // Cleanup previous players
     if (mpegtsPlayerRef.current) {
@@ -95,6 +132,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           console.warn('mpegts error:', errorType, errorDetail, errorInfo);
           if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
             console.log('Media error, possibly unsupported codec like AC3.');
+            setAudioCodecWarning('Dolby Digital / AC-3 audio is unsupported in this web browser.');
           }
         });
 
@@ -102,6 +140,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         const unhandledRejectionHandler = (e: PromiseRejectionEvent) => {
           if (e.reason && e.reason.name === 'NotSupportedError') {
              e.preventDefault();
+             setAudioCodecWarning('Dolby Digital (AC-3/DTS) audio codec is unsupported by browser MediaSource.');
              if (!forceNoAudio) {
                console.warn("Unsupported audio codec detected. Restarting stream with video only...");
                // Clean up the broken player
@@ -172,9 +211,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           if (playPromise !== undefined) {
             playPromise.catch(e => console.log('Auto-play blocked', e));
           }
-
-          // For Safari native we could try parsing native tracks, but keeping it simple for now
-          // audioTracks / textTracks on video element exist but are complex to map
         });
       }
     };
@@ -230,7 +266,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     };
     video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('addtrack', onLoadedMetadata); // Sometimes tracks are added after
-
 
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -321,10 +356,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     if (hlsPlayerRef.current) {
        hlsPlayerRef.current.subtitleTrack = id;
        setActiveTextTrack(id);
-
-       if (videoRef.current) {
-          // ensure native tracks are off so HLS.js handles it or vice versa
-       }
     }
   };
 
@@ -354,14 +385,58 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         onPointerDown={(e) => dragControls.start(e)}
         style={{ cursor: 'grab' }}
       >
-        <span className="text-white text-xs font-bold truncate pr-4 drop-shadow-md select-none">{title}</span>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto"
-        >
-          <X size={14} />
-        </button>
+        <span className="text-white text-xs font-bold truncate pr-3 drop-shadow-md select-none">{title}</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleOpenVlc}
+            className="flex items-center gap-1 px-2.5 py-1 bg-orange-500/20 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border border-orange-500/30 rounded-lg text-[10px] font-bold transition-all pointer-events-auto"
+            title="Open in VLC (supports Dolby AC-3, EAC-3, DTS, etc.)"
+          >
+            <VlcIcon size={12} />
+            <span>Play in VLC</span>
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
+
+      {/* Codec Warning Banner */}
+      {audioCodecWarning && (
+        <div className="absolute top-11 left-3 right-3 p-2.5 bg-zinc-900/95 border border-amber-500/40 rounded-xl shadow-2xl flex items-center justify-between text-xs z-40 backdrop-blur animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-2 text-amber-400 font-medium truncate pr-2">
+            <AlertTriangle size={15} className="shrink-0 text-amber-400" />
+            <span className="truncate text-[11px]">{audioCodecWarning}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={handleOpenVlc}
+              className="px-2.5 py-1 bg-orange-500 hover:bg-orange-400 text-zinc-950 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-all shadow"
+              title="Open stream in VLC"
+            >
+              <VlcIcon size={11} />
+              Open VLC
+            </button>
+            <button
+              onClick={handleCopyUrl}
+              className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-[10px] flex items-center gap-1 transition-colors"
+              title="Copy Stream URL"
+            >
+              {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              onClick={() => setAudioCodecWarning(null)}
+              className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Settings Panel */}
       {showSettings && (audioTracks.length > 1 || textTracks.length > 0) && (
@@ -421,6 +496,14 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleOpenVlc}
+            className="text-zinc-400 hover:text-orange-400 transition-colors"
+            title="Open in VLC"
+          >
+            <VlcIcon size={16} />
+          </button>
+
           {(audioTracks.length > 1 || textTracks.length > 0) && (
             <button
               onClick={() => setShowSettings(!showSettings)}
@@ -444,3 +527,4 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     </motion.div>
   );
 }
+
