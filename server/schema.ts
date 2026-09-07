@@ -99,3 +99,17 @@ export const source_changelogs = sqliteTable('source_changelogs', {
   sourceId: text('sourceId'),
   extra: text('extra', { mode: 'json' }),
 });
+
+export const source_connection_logs = sqliteTable('source_connection_logs', {
+  id: text('id').primaryKey(),
+  sourceId: text('sourceId').notNull(),
+  timestamp: text('timestamp').notNull(),
+  activeCons: integer('activeCons').notNull().default(0),
+  maxCons: integer('maxCons').notNull().default(1),
+  geckoStreams: integer('geckoStreams').notNull().default(0),
+  status: text('status').notNull().default('ok'),
+  isExternal: integer('isExternal', { mode: 'boolean' }).notNull().default(false),
+  details: text('details'),
+  extra: text('extra', { mode: 'json' }),
+});
+

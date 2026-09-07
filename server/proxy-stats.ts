@@ -7,6 +7,7 @@ export const proxyStats = {
   history: [] as { time: number; bps: number }[],
   connections: new Map<string, {
     id: string;
+    sourceId?: string;
     username: string;
     streamId: string;
     streamName: string;

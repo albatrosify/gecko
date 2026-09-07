@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, useDragControls } from 'motion/react';
-import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, Copy, Check } from 'lucide-react';
+import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, Copy, Check, Download, ChevronDown, Tv } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
+import { downloadStreamM3u, launchExternalPlayer, ExternalPlayerType } from '../playerUtils';
 
 export function VlcIcon({ size = 16, className }: { size?: number; className?: string }) {
   return (
@@ -30,6 +31,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const [showControls, setShowControls] = useState(true);
   const [audioCodecWarning, setAudioCodecWarning] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [showPlayerMenu, setShowPlayerMenu] = useState(false);
 
   // Track states
   const [audioTracks, setAudioTracks] = useState<any[]>([]);
@@ -50,11 +53,19 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
   };
 
-  const handleOpenVlc = (e?: React.MouseEvent) => {
+  const handleOpenExternal = (e?: React.MouseEvent, player: ExternalPlayerType = 'm3u') => {
     if (e) e.stopPropagation();
     const absUrl = getAbsoluteUrl();
     if (!absUrl) return;
-    window.location.href = `vlc://${absUrl}`;
+    setShowPlayerMenu(false);
+
+    if (player === 'm3u') {
+      downloadStreamM3u(absUrl, title);
+      setDownloadNotice(title || 'Stream');
+      setTimeout(() => setDownloadNotice(null), 5000);
+    } else {
+      launchExternalPlayer(absUrl, title, player);
+    }
   };
 
   const handleCopyUrl = async (e?: React.MouseEvent) => {
@@ -386,15 +397,80 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         style={{ cursor: 'grab' }}
       >
         <span className="text-white text-xs font-bold truncate pr-3 drop-shadow-md select-none">{title}</span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleOpenVlc}
-            className="flex items-center gap-1 px-2.5 py-1 bg-orange-500/20 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border border-orange-500/30 rounded-lg text-[10px] font-bold transition-all pointer-events-auto"
-            title="Open in VLC (supports Dolby AC-3, EAC-3, DTS, etc.)"
-          >
-            <VlcIcon size={12} />
-            <span>Play in VLC</span>
-          </button>
+        <div className="flex items-center gap-2 relative">
+          <div className="flex items-center rounded-lg bg-orange-500/20 border border-orange-500/30 overflow-hidden pointer-events-auto">
+            <button
+              onClick={(e) => handleOpenExternal(e, 'm3u')}
+              className="flex items-center gap-1.5 px-2.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 text-[10px] font-bold transition-all"
+              title="Download .m3u to play in VLC / Native Player"
+            >
+              <VlcIcon size={12} />
+              <span>Play in Player</span>
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowPlayerMenu(!showPlayerMenu); }}
+              className="px-1.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border-l border-orange-500/30 text-[10px] transition-all"
+              title="More player options"
+            >
+              <ChevronDown size={11} />
+            </button>
+          </div>
+
+          {showPlayerMenu && (
+            <div className="absolute top-8 right-8 w-56 bg-zinc-900/95 border border-zinc-700 rounded-xl p-1.5 shadow-2xl backdrop-blur z-50 text-xs flex flex-col gap-1 pointer-events-auto">
+              <button
+                onClick={(e) => handleOpenExternal(e, 'm3u')}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-zinc-800 text-zinc-200 transition-colors"
+              >
+                <Download size={13} className="text-orange-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[11px] leading-tight">Download M3U Playlist</span>
+                  <span className="text-[9px] text-zinc-500">Opens in VLC / Default Player</span>
+                </div>
+              </button>
+              <button
+                onClick={(e) => handleOpenExternal(e, 'iina')}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-zinc-800 text-zinc-200 transition-colors"
+              >
+                <Play size={13} className="text-blue-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[11px] leading-tight">Open in IINA</span>
+                  <span className="text-[9px] text-zinc-500">macOS player (iina://)</span>
+                </div>
+              </button>
+              <button
+                onClick={(e) => handleOpenExternal(e, 'vlc')}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-zinc-800 text-zinc-200 transition-colors"
+              >
+                <VlcIcon size={13} className="text-orange-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[11px] leading-tight">VLC Protocol</span>
+                  <span className="text-[9px] text-zinc-500">Requires protocol handler (vlc://)</span>
+                </div>
+              </button>
+              <button
+                onClick={(e) => handleOpenExternal(e, 'potplayer')}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-zinc-800 text-zinc-200 transition-colors"
+              >
+                <Play size={13} className="text-amber-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[11px] leading-tight">PotPlayer</span>
+                  <span className="text-[9px] text-zinc-500">Windows player (potplayer://)</span>
+                </div>
+              </button>
+              <button
+                onClick={handleCopyUrl}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-zinc-800 text-zinc-200 border-t border-zinc-800 mt-0.5 pt-1.5 transition-colors"
+              >
+                <Copy size={13} className="text-emerald-400 shrink-0" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[11px] leading-tight">{copied ? 'Copied!' : 'Copy Stream URL'}</span>
+                  <span className="text-[9px] text-zinc-500">Paste in VLC (Ctrl/Cmd+N)</span>
+                </div>
+              </button>
+            </div>
+          )}
+
           <button
             onClick={onClose}
             className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto"
@@ -413,12 +489,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={handleOpenVlc}
+              onClick={(e) => handleOpenExternal(e, 'm3u')}
               className="px-2.5 py-1 bg-orange-500 hover:bg-orange-400 text-zinc-950 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-all shadow"
-              title="Open stream in VLC"
+              title="Download .m3u to play in VLC / Native Player"
             >
               <VlcIcon size={11} />
-              Open VLC
+              Open in Player (.m3u)
             </button>
             <button
               onClick={handleCopyUrl}
@@ -497,9 +573,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={handleOpenVlc}
+            onClick={(e) => handleOpenExternal(e, 'm3u')}
             className="text-zinc-400 hover:text-orange-400 transition-colors"
-            title="Open in VLC"
+            title="Download .m3u to play in VLC / Native Player"
           >
             <VlcIcon size={16} />
           </button>
@@ -524,6 +600,27 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           </button>
         </div>
       </div>
+
+      {/* Download Notice Toast */}
+      {downloadNotice && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 max-w-[90%] px-3 py-2 bg-zinc-900/95 border border-orange-500/40 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs z-50 backdrop-blur pointer-events-auto">
+          <Download size={15} className="text-orange-400 shrink-0" />
+          <div className="flex flex-col text-left">
+            <span className="text-[11px] font-semibold text-zinc-200 truncate max-w-xs">
+              Downloaded <code className="text-orange-300 font-mono text-[10px]">{downloadNotice}.m3u</code>
+            </span>
+            <span className="text-[9px] text-zinc-400">
+              Click to open in VLC. Tip: Right-click download in Chrome → &quot;Always open files of this type&quot; for instant launch!
+            </span>
+          </div>
+          <button
+            onClick={() => setDownloadNotice(null)}
+            className="ml-1 p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-300"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 }

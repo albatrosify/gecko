@@ -19,6 +19,26 @@ export interface UpstreamSource {
   expiryDate?: string | null; // ISO timestamp string or null for Unlimited
   accountStatus?: string;     // e.g. "Active", "Expired", "Disabled"
   maxConnections?: number | string; // e.g. "1", "2"
+  monitorEnabled?: boolean;   // Enable periodic connection checks
+  monitorInterval?: number;   // Polling interval in seconds (default 60)
+  lastMonitorCheck?: string;  // ISO timestamp of last connection check
+  lastActiveCons?: number;    // Last checked active connections count
+  lastMaxCons?: number;       // Last checked max connections limit
+  lastMonitorStatus?: 'ok' | 'external_activity' | 'error';
+  lastMonitorError?: string;
+}
+
+export interface SourceConnectionLog {
+  id: string;
+  sourceId: string;
+  timestamp: string;
+  activeCons: number;
+  maxCons: number;
+  geckoStreams: number;
+  status: 'ok' | 'external_activity' | 'error';
+  isExternal: boolean;
+  details?: string;
+  extra?: any;
 }
 
 export interface EPGSource {

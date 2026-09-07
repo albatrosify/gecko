@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
-import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping } from '../types';
+import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog } from '../types';
 
 export const copyToClipboard = async (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -63,7 +63,10 @@ import {
   Clock,
   Download,
   Calendar,
-  AlertTriangle
+  AlertTriangle,
+  Radio,
+  ShieldAlert,
+  ShieldCheck
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -75,9 +78,9 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { CSS } from '@dnd-kit/utilities';
 import { FixedSizeList as List } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
-import axios from 'axios';
 import { computeDisplayName, resolutionToLabel } from '../quality';
 import { WebPlayer, VlcIcon } from './WebPlayer';
+import { downloadStreamM3u } from '../playerUtils';
 
 
 function cn(...inputs: ClassValue[]) {
@@ -1024,13 +1027,164 @@ export function formatExpiryDate(expiryDate: string | null | undefined): {
   };
 }
 
+function ConnectionTimelineChart({ 
+  logs, 
+  maxConnections,
+  onHover 
+}: { 
+  logs: SourceConnectionLog[]; 
+  maxConnections: number;
+  onHover?: (log: SourceConnectionLog | null) => void;
+}) {
+  if (!logs || logs.length === 0) return null;
+
+  // Chronological order (oldest to newest)
+  const chronological = [...logs].reverse();
+  const width = 600;
+  const height = 120;
+  const padding = { top: 20, bottom: 25, left: 15, right: 15 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  const maxVal = Math.max(maxConnections || 1, ...chronological.map(l => l.activeCons), 2);
+  const barWidth = Math.max(4, Math.min(22, (chartWidth / chronological.length) - 2));
+
+  return (
+    <div className="relative w-full overflow-hidden bg-zinc-950/70 p-4 rounded-2xl border border-zinc-800">
+      <div className="flex justify-between items-center mb-2 px-1 text-[11px] text-zinc-500 font-bold uppercase tracking-wider">
+        <span className="flex items-center gap-1.5">
+          <Activity size={12} className="text-purple-400" />
+          <span>Timeline Activity ({chronological.length} checks)</span>
+        </span>
+        <div className="flex items-center gap-3 text-[10px] lowercase font-normal">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> 0 active</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> gecko stream</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span> external in-use</span>
+        </div>
+      </div>
+
+      <svg 
+        viewBox={`0 0 ${width} ${height}`} 
+        className="w-full h-28 select-none overflow-visible"
+        onMouseLeave={() => onHover && onHover(null)}
+      >
+        {/* Threshold line for max connections */}
+        <line
+          x1={padding.left}
+          y1={padding.top + chartHeight - ((maxConnections || 1) / maxVal) * chartHeight}
+          x2={width - padding.right}
+          y2={padding.top + chartHeight - ((maxConnections || 1) / maxVal) * chartHeight}
+          stroke="#3f3f46"
+          strokeDasharray="4 4"
+          strokeWidth="1"
+        />
+        <text
+          x={width - padding.right}
+          y={padding.top + chartHeight - ((maxConnections || 1) / maxVal) * chartHeight - 4}
+          fill="#71717a"
+          fontSize="9"
+          textAnchor="end"
+          className="font-mono font-bold"
+        >
+          Max: {maxConnections || 1}
+        </text>
+
+        {/* Base axis */}
+        <line
+          x1={padding.left}
+          y1={padding.top + chartHeight}
+          x2={width - padding.right}
+          y2={padding.top + chartHeight}
+          stroke="#27272a"
+          strokeWidth="1"
+        />
+
+        {/* Bars */}
+        {chronological.map((log, idx) => {
+          const x = padding.left + (idx / Math.max(1, chronological.length - 1)) * (chartWidth - barWidth);
+          const barH = Math.max(4, (log.activeCons / maxVal) * chartHeight);
+          const y = padding.top + chartHeight - barH;
+
+          let fillColor = '#10b981'; // 0 active
+          if (log.status === 'error') {
+            fillColor = '#f59e0b';
+          } else if (log.isExternal) {
+            fillColor = '#ef4444'; // external
+          } else if (log.activeCons > 0) {
+            fillColor = '#3b82f6'; // local gecko
+          }
+
+          return (
+            <g
+              key={log.id || idx}
+              className="cursor-pointer group"
+              onMouseEnter={() => onHover && onHover(log)}
+            >
+              <rect
+                x={x - 2}
+                y={padding.top}
+                width={barWidth + 4}
+                height={chartHeight}
+                fill="transparent"
+              />
+              <rect
+                x={x}
+                y={y}
+                width={barWidth}
+                height={barH}
+                rx={2}
+                fill={fillColor}
+                opacity={log.isExternal ? 1 : 0.85}
+              />
+              {log.isExternal && (
+                <circle
+                  cx={x + barWidth / 2}
+                  y={Math.max(4, y - 4)}
+                  r={2.5}
+                  fill="#ef4444"
+                />
+              )}
+            </g>
+          );
+        })}
+
+        {/* Timestamps */}
+        {chronological.length > 0 && (
+          <>
+            <text
+              x={padding.left}
+              y={height - 4}
+              fill="#71717a"
+              fontSize="9"
+              className="font-mono"
+            >
+              {new Date(chronological[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </text>
+            <text
+              x={width - padding.right}
+              y={height - 4}
+              fill="#71717a"
+              fontSize="9"
+              textAnchor="end"
+              className="font-mono"
+            >
+              {new Date(chronological[chronological.length - 1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </text>
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 export function SourceManager({ user }: { user: User }) {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [newSource, setNewSource] = useState<Partial<UpstreamSource>>({ 
     name: '', type: 'xtream', url: '', username: '', password: '', 
-    autoSyncEnabled: false, syncCron: '0 2 * * *' 
+    autoSyncEnabled: false, syncCron: '0 2 * * *',
+    monitorEnabled: false, monitorInterval: 60
   });
   const [editingSource, setEditingSource] = useState<UpstreamSource | null>(null);
   const [changelogs, setChangelogs] = useState<any[]>([]);
@@ -1039,6 +1193,14 @@ export function SourceManager({ user }: { user: User }) {
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [changelogSearch, setChangelogSearch] = useState('');
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  const [showConnections, setShowConnections] = useState(false);
+  const [selectedConnSource, setSelectedConnSource] = useState<UpstreamSource | null>(null);
+  const [connectionLogs, setConnectionLogs] = useState<SourceConnectionLog[]>([]);
+  const [loadingConnLogs, setLoadingConnLogs] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [connFilter, setConnFilter] = useState<'all' | 'active' | 'external'>('all');
+  const [hoveredLog, setHoveredLog] = useState<SourceConnectionLog | null>(null);
 
   const [syncStatus, setSyncStatus] = useState<Record<string, string>>({});
   const [refreshingSources, setRefreshingSources] = useState<Record<string, boolean>>({});
@@ -1058,6 +1220,51 @@ export function SourceManager({ user }: { user: User }) {
     }
   };
 
+  const handleShowConnections = async (source: UpstreamSource) => {
+    setSelectedConnSource(source);
+    setShowConnections(true);
+    setLoadingConnLogs(true);
+    setConnectionLogs([]);
+    setConnFilter('all');
+    setHoveredLog(null);
+    try {
+      const logs = await api.sources.connections(source.id, 100);
+      setConnectionLogs(logs);
+    } catch (e: unknown) {
+      console.error(e);
+    } finally {
+      setLoadingConnLogs(false);
+    }
+  };
+
+  const handleCheckConnection = async () => {
+    if (!selectedConnSource) return;
+    setCheckingConnection(true);
+    try {
+      const res = await api.sources.checkConnection(selectedConnSource.id);
+      if (res.success && res.log) {
+        setConnectionLogs(prev => [res.log, ...prev]);
+        loadSources();
+      }
+    } catch (e: unknown) {
+      console.error(e);
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
+
+  const handleClearConnections = async () => {
+    if (!selectedConnSource) return;
+    if (!confirm(`Are you sure you want to clear all connection history logs for "${selectedConnSource.name}"?`)) return;
+    try {
+      await api.sources.clearConnections(selectedConnSource.id);
+      setConnectionLogs([]);
+      loadSources();
+    } catch (e: unknown) {
+      console.error(e);
+    }
+  };
+
   const loadSources = useCallback(async () => {
     try {
       const data = await api.sources.list();
@@ -1070,6 +1277,18 @@ export function SourceManager({ user }: { user: User }) {
   useEffect(() => {
     loadSources();
   }, [loadSources]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && (showAdd || showEdit)) {
+        setShowAdd(false);
+        setShowEdit(false);
+        setEditingSource(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAdd, showEdit]);
 
   const handleRefresh = async (source: UpstreamSource) => {
     if (!confirm(`Run manual sync for "${source.name}"? This will update any unmodified channel names and account details to match upstream.`)) {
@@ -1196,11 +1415,43 @@ export function SourceManager({ user }: { user: User }) {
                             Unlimited
                           </span>
                         )}
+                        {source.monitorEnabled && (
+                          source.lastMonitorStatus === 'external_activity' ? (
+                            <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                              <Radio size={8} className="animate-pulse text-red-400" />
+                              External In Use ({source.lastActiveCons || 0})
+                            </span>
+                          ) : source.lastMonitorStatus === 'error' ? (
+                            <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                              <Radio size={8} />
+                              Monitor Error
+                            </span>
+                          ) : (source.lastActiveCons || 0) > 0 ? (
+                            <span className="px-1.5 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                              <Radio size={8} className="animate-pulse text-blue-400" />
+                              Active ({source.lastActiveCons}/{source.lastMaxCons || source.maxConnections || 1})
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
+                              <Radio size={8} />
+                              Monitored (0 in use)
+                            </span>
+                          )
+                        )}
                       </div>
                       <p className="text-xs text-zinc-500 font-mono">{source.url}</p>
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    {source.type === 'xtream' && (
+                      <button 
+                        onClick={() => handleShowConnections(source)}
+                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-purple-400 transition-colors"
+                        title="View Connection Timeline & Usage"
+                      >
+                        <Radio size={20} />
+                      </button>
+                    )}
                     <button 
                       onClick={() => handleShowChangelog(source)}
                       className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-blue-500 transition-colors"
@@ -1276,6 +1527,31 @@ export function SourceManager({ user }: { user: User }) {
                     )}
                   </div>
                 </div>
+
+                {source.monitorEnabled && (
+                  <div className="flex items-center justify-between px-3.5 py-2 bg-zinc-950/60 rounded-2xl border border-zinc-800/80 text-xs">
+                    <div className="flex items-center gap-2">
+                      <Radio size={12} className={source.lastMonitorStatus === 'external_activity' ? 'text-red-400 animate-pulse' : (source.lastActiveCons || 0) > 0 ? 'text-blue-400' : 'text-emerald-400'} />
+                      <span className="text-[11px] text-zinc-400 font-medium">Monitor:</span>
+                      <span className={clsx(
+                        "text-[11px] font-bold",
+                        source.lastMonitorStatus === 'external_activity' ? "text-red-400 font-black" :
+                        (source.lastActiveCons || 0) > 0 ? "text-blue-400" :
+                        "text-emerald-400"
+                      )}>
+                        {source.lastMonitorStatus === 'external_activity' 
+                          ? `${source.lastActiveCons} External Stream(s) In Use` 
+                          : `${source.lastActiveCons || 0} / ${source.lastMaxCons || source.maxConnections || 1} in use`}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleShowConnections(source)}
+                      className="text-[10px] font-bold text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-0.5"
+                    >
+                      Timeline <ChevronRight size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end items-center">
@@ -1295,14 +1571,40 @@ export function SourceManager({ user }: { user: User }) {
 
       {/* Add/Edit Modal */}
       {(showAdd || (showEdit && editingSource)) && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAdd(false);
+              setShowEdit(false);
+              setEditingSource(null);
+            }
+          }}
+        >
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl my-auto overflow-hidden"
           >
-            <h3 className="text-2xl font-bold">{showEdit ? 'Edit Upstream Source' : 'Add Upstream Source'}</h3>
-            <div className="space-y-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-800 shrink-0 bg-zinc-900">
+              <h3 className="text-xl font-bold text-zinc-100">{showEdit ? 'Edit Upstream Source' : 'Add Upstream Source'}</h3>
+              <button 
+                type="button"
+                onClick={() => {
+                  setShowAdd(false);
+                  setShowEdit(false);
+                  setEditingSource(null);
+                }}
+                className="p-1.5 hover:bg-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Scrollable Body */}
+            <div className="px-6 py-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
               <input 
                 placeholder="Source Name" 
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
@@ -1438,23 +1740,67 @@ export function SourceManager({ user }: { user: User }) {
                     )}
                   </div>
                 )}
+
+                {/* Connection Monitoring (Anti-Theft) */}
+                {(showEdit ? editingSource! : newSource).type === 'xtream' && (
+                  <>
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-950"
+                        checked={!!(showEdit ? editingSource! : newSource).monitorEnabled}
+                        onChange={e => showEdit ? setEditingSource({...editingSource!, monitorEnabled: e.target.checked}) : setNewSource({...newSource, monitorEnabled: e.target.checked})}
+                      />
+                      <div className="flex-1">
+                        <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors flex items-center gap-2">
+                          <span>Monitor Connection Usage</span>
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded">Anti-Theft</span>
+                        </div>
+                        <div className="text-[10px] text-zinc-500">Periodically check active streams to detect unauthorized usage outside Gecko</div>
+                      </div>
+                    </label>
+
+                    {(showEdit ? editingSource! : newSource).monitorEnabled && (
+                      <div className="space-y-2 pl-8 animate-in slide-in-from-top-2 duration-200">
+                        <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Check Interval</label>
+                        <select
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                          value={(showEdit ? editingSource! : newSource).monitorInterval || 60}
+                          onChange={e => {
+                            const val = parseInt(e.target.value, 10);
+                            if (showEdit) setEditingSource({...editingSource!, monitorInterval: val});
+                            else setNewSource({...newSource, monitorInterval: val});
+                          }}
+                        >
+                          <option value={30}>Every 30 seconds</option>
+                          <option value={60}>Every 1 minute (Recommended)</option>
+                          <option value={120}>Every 2 minutes</option>
+                          <option value={300}>Every 5 minutes</option>
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
 
-            <div className="flex gap-4">
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 shrink-0 bg-zinc-900/90 backdrop-blur">
               <button 
+                type="button"
                 onClick={() => {
                   setShowAdd(false);
                   setShowEdit(false);
                   setEditingSource(null);
                 }}
-                className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                className="flex-1 py-3 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 hover:text-white transition-all text-sm"
               >
                 Cancel
               </button>
               <button 
+                type="button"
                 onClick={showEdit ? handleUpdate : handleAdd}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm shadow-lg shadow-emerald-500/20"
               >
                 {showEdit ? 'Save Changes' : 'Add Source'}
               </button>
@@ -1602,6 +1948,288 @@ export function SourceManager({ user }: { user: User }) {
               className="w-full py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm"
             >
               Close History
+            </button>
+          </motion.div>
+        </div>
+      )}
+
+      {showConnections && selectedConnSource && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-3xl w-full max-h-[90vh] flex flex-col space-y-6"
+          >
+            {/* Header */}
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-purple-500/10 rounded-2xl text-purple-400">
+                  <Radio size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-2xl font-bold">Connection Timeline & Usage</h3>
+                    {selectedConnSource.monitorEnabled && (
+                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Monitor Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-zinc-500 font-medium">{selectedConnSource.name} <span className="font-mono text-zinc-600">({selectedConnSource.url})</span></p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCheckConnection}
+                  disabled={checkingConnection}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                  title="Run instant upstream check"
+                >
+                  <RefreshCw size={14} className={checkingConnection ? 'animate-spin text-purple-400' : ''} />
+                  {checkingConnection ? 'Checking...' : 'Check Now'}
+                </button>
+                {connectionLogs.length > 0 && (
+                  <button
+                    onClick={handleClearConnections}
+                    className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-red-400 transition-colors"
+                    title="Clear Connection History"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                )}
+                <button 
+                  onClick={() => { setShowConnections(false); setSelectedConnSource(null); setHoveredLog(null); }}
+                  className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Top Stat Cards */}
+            {(() => {
+              const latestLog = connectionLogs[0];
+              const activeCons = latestLog ? latestLog.activeCons : (selectedConnSource.lastActiveCons || 0);
+              const maxCons = latestLog ? latestLog.maxCons : (selectedConnSource.lastMaxCons || Number(selectedConnSource.maxConnections) || 1);
+              const geckoStreams = latestLog ? latestLog.geckoStreams : 0;
+              const extStreams = Math.max(0, activeCons - geckoStreams);
+              const hasAlert = extStreams > 0;
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                    <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Upstream Active</div>
+                    <div className="text-lg font-black text-zinc-100 flex items-baseline gap-1">
+                      <span>{activeCons}</span>
+                      <span className="text-xs text-zinc-500 font-medium">/ {maxCons} max</span>
+                    </div>
+                    <div className="text-[10px] text-zinc-500">reported by provider</div>
+                  </div>
+
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                    <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Via Gecko Proxy</div>
+                    <div className="text-lg font-black text-blue-400">
+                      {geckoStreams}
+                    </div>
+                    <div className="text-[10px] text-zinc-500">proxied streams</div>
+                  </div>
+
+                  <div className={clsx(
+                    "border rounded-2xl p-3.5 space-y-1",
+                    hasAlert 
+                      ? "bg-red-500/10 border-red-500/30 text-red-400" 
+                      : "bg-zinc-950/60 border-zinc-800 text-zinc-100"
+                  )}>
+                    <div className="text-[10px] uppercase font-black tracking-wider flex items-center gap-1">
+                      {hasAlert && <AlertTriangle size={10} className="text-red-400" />}
+                      <span className={hasAlert ? "text-red-400" : "text-zinc-500"}>External / Direct</span>
+                    </div>
+                    <div className={clsx("text-lg font-black", hasAlert ? "text-red-400" : "text-emerald-400")}>
+                      {extStreams}
+                    </div>
+                    <div className="text-[10px] text-zinc-500">
+                      {hasAlert ? "unrecognized client" : "no intruder detected"}
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                    <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Check Interval</div>
+                    <div className="text-lg font-black text-zinc-100">
+                      {selectedConnSource.monitorInterval || 60}s
+                    </div>
+                    <div className="text-[10px] text-zinc-500 truncate">
+                      {selectedConnSource.lastMonitorCheck ? `checked ${new Date(selectedConnSource.lastMonitorCheck).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'never checked'}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Timeline Sparkline / Chart */}
+            {!loadingConnLogs && connectionLogs.length > 0 && (
+              <div className="space-y-2">
+                <ConnectionTimelineChart 
+                  logs={connectionLogs} 
+                  maxConnections={Number(selectedConnSource.maxConnections) || (connectionLogs[0]?.maxCons) || 1} 
+                  onHover={setHoveredLog}
+                />
+
+                {/* Hover detail tooltip bar */}
+                {hoveredLog && (
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800/80 border border-zinc-700 rounded-xl text-xs animate-in fade-in duration-150">
+                    <div className="flex items-center gap-2">
+                      <Clock size={12} className="text-zinc-400" />
+                      <span className="font-mono text-zinc-300">{new Date(hoveredLog.timestamp).toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-zinc-400">Upstream: <b className="text-zinc-200">{hoveredLog.activeCons}/{hoveredLog.maxCons}</b></span>
+                      <span className="text-zinc-400">Gecko: <b className="text-blue-400">{hoveredLog.geckoStreams}</b></span>
+                      {hoveredLog.isExternal ? (
+                        <span className="font-black text-red-400 flex items-center gap-1">
+                          <AlertTriangle size={12} /> {hoveredLog.activeCons - hoveredLog.geckoStreams} External
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400 font-bold">OK</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Filters Bar */}
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setConnFilter('all')}
+                  className={clsx(
+                    "px-3 py-1 rounded-xl text-xs font-bold transition-all",
+                    connFilter === 'all' 
+                      ? "bg-zinc-100 text-zinc-950" 
+                      : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"
+                  )}
+                >
+                  All ({connectionLogs.length})
+                </button>
+                <button
+                  onClick={() => setConnFilter('active')}
+                  className={clsx(
+                    "px-3 py-1 rounded-xl text-xs font-bold transition-all",
+                    connFilter === 'active' 
+                      ? "bg-blue-500 text-white" 
+                      : "bg-zinc-800/60 text-zinc-400 hover:text-zinc-200"
+                  )}
+                >
+                  Active Streams ({connectionLogs.filter(l => l.activeCons > 0).length})
+                </button>
+                <button
+                  onClick={() => setConnFilter('external')}
+                  className={clsx(
+                    "px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1",
+                    connFilter === 'external' 
+                      ? "bg-red-500 text-white" 
+                      : "bg-zinc-800/60 text-zinc-400 hover:text-red-400"
+                  )}
+                >
+                  <AlertTriangle size={12} />
+                  External Alerts ({connectionLogs.filter(l => l.isExternal).length})
+                </button>
+              </div>
+              <div className="text-[11px] text-zinc-500 font-medium">
+                Latest 100 checks
+              </div>
+            </div>
+
+            {/* Log Feed List */}
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-2 custom-scrollbar max-h-64">
+              {loadingConnLogs ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <RefreshCw size={28} className="text-zinc-700 animate-spin" />
+                  <p className="text-xs text-zinc-500 font-bold uppercase tracking-wider">Loading connection history...</p>
+                </div>
+              ) : connectionLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 opacity-60">
+                  <Radio size={32} className="text-zinc-700" />
+                  <p className="text-xs text-zinc-500 font-bold tracking-wider uppercase">No connection history yet</p>
+                  <p className="text-[11px] text-zinc-600">Click &quot;Check Now&quot; above to run your first connection check</p>
+                </div>
+              ) : (
+                (() => {
+                  const filtered = connectionLogs.filter(l => {
+                    if (connFilter === 'active') return l.activeCons > 0;
+                    if (connFilter === 'external') return l.isExternal;
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="text-center py-12 text-zinc-600 text-xs font-bold uppercase tracking-wider">
+                        No logs match the selected filter
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((log) => (
+                    <div 
+                      key={log.id}
+                      className={clsx(
+                        "p-3 rounded-2xl border transition-all flex items-center justify-between text-xs",
+                        log.isExternal
+                          ? "bg-red-500/5 border-red-500/20 text-zinc-200"
+                          : log.activeCons > 0
+                          ? "bg-blue-500/5 border-blue-500/20 text-zinc-200"
+                          : "bg-zinc-950/40 border-zinc-800/80 text-zinc-400"
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={clsx(
+                          "p-2 rounded-xl shrink-0",
+                          log.isExternal ? "bg-red-500/10 text-red-400" :
+                          log.activeCons > 0 ? "bg-blue-500/10 text-blue-400" :
+                          "bg-zinc-800/50 text-zinc-500"
+                        )}>
+                          {log.isExternal ? <AlertTriangle size={16} /> : <Radio size={16} />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={clsx(
+                              "font-bold",
+                              log.isExternal ? "text-red-400" :
+                              log.activeCons > 0 ? "text-blue-400" :
+                              "text-zinc-300"
+                            )}>
+                              {log.details || (log.activeCons === 0 ? 'Idle (0 active)' : `${log.activeCons} active`)}
+                            </span>
+                            {log.extra?.isManual && (
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-zinc-800 text-zinc-400 rounded">Manual</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-zinc-500 font-mono">
+                            {new Date(log.timestamp).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="font-mono font-bold text-zinc-200">
+                          {log.activeCons} / {log.maxCons}
+                        </div>
+                        <div className="text-[10px] text-zinc-500">
+                          {log.geckoStreams} via Gecko
+                        </div>
+                      </div>
+                    </div>
+                  ));
+                })()
+              )}
+            </div>
+
+            <button
+              onClick={() => { setShowConnections(false); setSelectedConnSource(null); setHoveredLog(null); }}
+              className="w-full py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm text-zinc-200"
+            >
+              Close Timeline
             </button>
           </motion.div>
         </div>
@@ -5140,6 +5768,24 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                                 <Play size={14} /> Play
                               </button>
                             )}
+                            {source && playlist && (
+                              <button
+                                onClick={() => {
+                                  const ext = ep.container_extension || ep.info?.container_extension || 'mp4';
+                                  let url;
+                                  if (playlist.directStreams) {
+                                    url = `${source.url.replace(/\/$/, '')}/series/${playlist.sourceOverrides?.[source.id]?.username || source.username}/${playlist.sourceOverrides?.[source.id]?.password || source.password}/${ep.id}.${ext}`;
+                                  } else {
+                                    url = `${window.location.origin}/series/${playlist.username}/${playlist.password}/${ep.id}.${ext}`;
+                                  }
+                                  downloadStreamM3u(url, `${title || 'Series'} - S${ep.season_num || 1}E${ep.episode_num} ${ep.title}`);
+                                }}
+                                className="p-2 rounded-lg bg-zinc-800 text-orange-400 hover:text-orange-300 hover:bg-zinc-700 transition-colors flex items-center gap-1.5 text-xs font-bold"
+                                title="Download .m3u to play in VLC / Native Player"
+                              >
+                                <VlcIcon size={14} /> M3U
+                              </button>
+                            )}
                             <a
                               href={`/api/download/series/${playlistId}/${ep.id}?extension=${ep.container_extension || ep.info?.container_extension || 'mp4'}&token=${localStorage.getItem('auth_token') ?? ''}`}
                               download
@@ -5402,23 +6048,43 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
           </p>
         </div>
-        {!isMulti && onPlay && playlist && source && (
-           <button
-             onClick={() => {
-               let url;
-               if (playlist.directStreams) {
-                 url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
-               } else {
-                 url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
-               }
-               onPlay(url, customName || originalName || "Stream");
-             }}
-             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
-             title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
-           >
-             <Play size={12} fill="currentColor" />
-             Play
-           </button>
+        {!isMulti && playlist && source && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onPlay && (
+              <button
+                onClick={() => {
+                  let url;
+                  if (playlist.directStreams) {
+                    url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+                  } else {
+                    url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+                  }
+                  onPlay(url, customName || originalName || "Stream");
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
+                title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
+              >
+                <Play size={12} fill="currentColor" />
+                Play
+              </button>
+            )}
+            <button
+              onClick={() => {
+                let url;
+                if (playlist.directStreams) {
+                  url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+                } else {
+                  url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+                }
+                downloadStreamM3u(url, customName || originalName || "Stream");
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-orange-500/20 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border border-orange-500/30 rounded-lg font-bold text-xs transition-colors shrink-0"
+              title="Download .m3u to play in VLC / Native Player"
+            >
+              <VlcIcon size={12} />
+              External (.m3u)
+            </button>
+          </div>
         )}
         <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-100 shrink-0">
           <X size={16} />
@@ -5745,7 +6411,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                             <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
                               <Play size={11} />
                             </button>
-                            <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; window.location.href = `vlc://${url}`; }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Upstream in VLC">
+                            <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; downloadStreamM3u(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Upstream in VLC / Native Player (.m3u)">
                               <VlcIcon size={11} />
                             </button>
                           </>
@@ -5768,7 +6434,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                               <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
                                 <Play size={11} />
                               </button>
-                              <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; window.location.href = `vlc://${url}`; }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Proxied Stream in VLC">
+                              <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; downloadStreamM3u(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Proxied Stream in VLC / Native Player (.m3u)">
                                 <VlcIcon size={11} />
                               </button>
                             </>

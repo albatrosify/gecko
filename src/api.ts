@@ -106,6 +106,20 @@ export const sources = {
   async changelog(id: string) {
     return request<any[]>(`/api/sources/${id}/changelog`);
   },
+  async connections(id: string, limit?: number) {
+    const query = limit ? `?limit=${limit}` : '';
+    return request<any[]>(`/api/sources/${id}/connections${query}`);
+  },
+  async checkConnection(id: string) {
+    return request<{ success: boolean; log: any; error?: string }>(`/api/sources/${id}/connections/check`, {
+      method: 'POST',
+    });
+  },
+  async clearConnections(id: string) {
+    return request<{ success: boolean }>(`/api/sources/${id}/connections`, {
+      method: 'DELETE',
+    });
+  },
 };
 
 // EPGs

@@ -6,6 +6,7 @@ import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { parseXtreamExpDate } from "../utils.ts";
+import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
 
 export function createSourcesRouter() {
   const router = Router();
@@ -147,6 +148,49 @@ export function createSourcesRouter() {
     res.json(logs.slice(0, 20).map(l => ({ id: l.id, sourceId: l.sourceId, ...(l.extra as any || {}) })));
   });
 
+  // =====================================
+  // Upstream Connection Monitor Endpoints
+  // =====================================
+  router.get("/sources/:id/connections", requireAuth, async (req: AuthRequest, res) => {
+    const limit = parseInt(req.query.limit as string || '100', 10);
+    const logs = getConnectionLogs(req.params.id, isNaN(limit) ? 100 : limit);
+    res.json(logs);
+  });
+
+  router.post("/sources/:id/connections/check", requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+    const sourceId = req.params.id;
+
+    const doc = db.select().from(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).get();
+    if (!doc) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
+    const source = {
+      id: doc.id,
+      name: doc.name,
+      type: doc.type as any,
+      url: doc.url,
+      username: doc.username || undefined,
+      password: doc.password || undefined,
+      ...(doc.extra as any || {})
+    };
+
+    try {
+      const result = await checkSourceConnection(source, true);
+      res.json({ success: true, log: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.delete("/sources/:id/connections", requireAuth, async (req: AuthRequest, res) => {
+    clearConnectionLogs(req.params.id);
+    res.json({ success: true });
+  });
+
   router.delete("/sources/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
@@ -159,6 +203,7 @@ export function createSourcesRouter() {
       activeCrons.get(sourceId).stop();
       activeCrons.delete(sourceId);
     }
+    clearConnectionLogs(sourceId);
     res.json({ success: true });
   });
 

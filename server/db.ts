@@ -36,6 +36,7 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
     CREATE TABLE IF NOT EXISTS source_changelogs (id TEXT PRIMARY KEY, sourceId TEXT, extra TEXT);
     CREATE TABLE IF NOT EXISTS customCategories (id TEXT PRIMARY KEY, playlistId TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, "order" INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS customCategoryItems (id TEXT PRIMARY KEY, customCategoryId TEXT NOT NULL, playlistId TEXT NOT NULL, type TEXT NOT NULL, upstreamStreamId TEXT NOT NULL, upstreamSourceId TEXT NOT NULL, streamId TEXT NOT NULL, extra TEXT);
+    CREATE TABLE IF NOT EXISTS source_connection_logs (id TEXT PRIMARY KEY, sourceId TEXT NOT NULL, timestamp TEXT NOT NULL, activeCons INTEGER NOT NULL DEFAULT 0, maxCons INTEGER NOT NULL DEFAULT 1, geckoStreams INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ok', isExternal INTEGER NOT NULL DEFAULT 0, details TEXT, extra TEXT);
 
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_sources_userId ON sources(userId);
@@ -51,6 +52,7 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
     CREATE INDEX IF NOT EXISTS idx_customCategories_playlistId ON customCategories(playlistId, type);
     CREATE INDEX IF NOT EXISTS idx_customCategoryItems_customCategoryId ON customCategoryItems(customCategoryId);
     CREATE INDEX IF NOT EXISTS idx_customCategoryItems_playlistId ON customCategoryItems(playlistId, type);
+    CREATE INDEX IF NOT EXISTS idx_source_conn_logs ON source_connection_logs(sourceId, timestamp);
   `);
 
   return db;

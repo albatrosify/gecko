@@ -175,6 +175,7 @@ export function createProxyRouter() {
         const connId = Math.random().toString(36).substring(7);
         const connectionInfo = {
           id: connId,
+          sourceId,
           username,
           streamId,
           streamName,

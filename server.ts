@@ -11,6 +11,7 @@ import { log, LOG_PATH } from "./server/logger.ts";
 import { getClientInfo } from "./server/utils.ts";
 import { initCronManager } from "./server/sync.ts";
 import { initProxyStatsInterval } from "./server/proxy-stats.ts";
+import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { DEFAULT_PORT } from "./server/config.ts";
 
 // Routers
@@ -46,15 +47,18 @@ async function startServer() {
       throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons. Please check your .env file or Docker environment configuration.');
     }
 
-    // Connect to MongoDB
+    // Connect to SQLite DB
     await connectDb();
-    log("Connected to MongoDB");
+    log("Connected to SQLite");
 
     // Initialize cron jobs
     await initCronManager().catch(err => log(`[Cron] Initialization failed: ${err.message}`));
 
     // Initialize proxy stats interval
     initProxyStatsInterval();
+
+    // Initialize upstream connection monitor
+    initConnectionMonitor();
 
     const app = express();
     const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT));
