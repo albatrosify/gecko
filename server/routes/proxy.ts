@@ -133,6 +133,7 @@ export function createProxyRouter() {
 
     // Try each source in order, fall back to the next on failure
     let lastError = '';
+    let lastStatus = 502;
     for (const sourceId of targetSourceIds) {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
@@ -156,6 +157,7 @@ export function createProxyRouter() {
 
         // Treat 4xx/5xx from upstream as a failure — try next source
         if (response.status >= 400) {
+          lastStatus = response.status;
           lastError = `upstream returned ${response.status}`;
           if (response.data?.destroy) response.data.destroy();
           log(`[Proxy] Source ${sourceId} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
@@ -214,13 +216,14 @@ export function createProxyRouter() {
         response.data.on('error', cleanup);
         return; // success — stop trying sources
       } catch (err: any) {
+        lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
         lastError = err.message;
         log(`[Proxy] Source ${sourceId} error for ${type}/${streamId}: ${err.message}, trying next... - ${getClientInfo(req)}`);
       }
     }
 
-    log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} - ${getClientInfo(req)}`);
-    res.status(502).send("All upstream sources failed");
+    log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} (status ${lastStatus}) - ${getClientInfo(req)}`);
+    res.status(lastStatus).send(`All upstream sources failed: ${lastError}`);
   };
 
   // Stream proxy routes — all traffic flows through this server (required for VPN routing)
@@ -262,7 +265,14 @@ export function createProxyRouter() {
         responseType: 'stream',
         timeout: 15000,
         headers: { 'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 IPTV-Proxy/1.0' },
+        validateStatus: () => true,
       });
+
+      if (response.status >= 400) {
+        if (response.data?.destroy) response.data.destroy();
+        log(`[Timeshift] Upstream failed (${response.status}) for ${username} -> ${streamId} - ${getClientInfo(req)}`);
+        return res.status(response.status).send(`Upstream timeshift error: upstream returned ${response.status}`);
+      }
 
       if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
       if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
@@ -271,7 +281,8 @@ export function createProxyRouter() {
       res.on('close', () => { if (response.data?.destroy) response.data.destroy(); });
     } catch (err: any) {
       log(`[Timeshift] Error: ${err.message} - ${getClientInfo(req)}`);
-      res.status(502).send("Upstream timeshift error");
+      const status = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
+      res.status(status).send(`Upstream timeshift error: ${err.message}`);
     }
   });
 
