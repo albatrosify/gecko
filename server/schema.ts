@@ -113,3 +113,10 @@ export const source_connection_logs = sqliteTable('source_connection_logs', {
   extra: text('extra', { mode: 'json' }),
 });
 
+export const source_host_logs = sqliteTable('source_host_logs', {
+  id: text('id').primaryKey(),
+  sourceId: text('sourceId').notNull(),
+  timestamp: text('timestamp').notNull(),
+  results: text('results', { mode: 'json' }),
+});
+

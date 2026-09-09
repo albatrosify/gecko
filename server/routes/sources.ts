@@ -7,6 +7,7 @@ import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { parseXtreamExpDate } from "../utils.ts";
 import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
+import { normalizeHosts, benchmarkSourceHosts, getHostBenchmarkHistory } from "../hosts.ts";
 
 export function createSourcesRouter() {
   const router = Router();
@@ -31,7 +32,7 @@ export function createSourcesRouter() {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
     const newId = generateId();
-    const { name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, ...extra } = req.body;
+    const { name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, hosts, ...extra } = req.body;
 
     extra.enabled = true;
     extra.lastUpdated = new Date().toISOString();
@@ -39,9 +40,17 @@ export function createSourcesRouter() {
       extra.expiryDate = expiryDate;
     }
 
-    if (type === 'xtream' && url && username && password) {
+    let primaryUrl = url;
+    if (type === 'xtream') {
+      if (hosts !== undefined) {
+        primaryUrl = url || (Array.isArray(hosts) && hosts[0]?.url) || (Array.isArray(hosts) && hosts[0]) || '';
+        extra.hosts = normalizeHosts(Array.isArray(hosts) ? hosts : [], primaryUrl);
+      }
+    }
+
+    if (type === 'xtream' && primaryUrl && username && password) {
       try {
-        const client = new XtreamClient({ url, username, password } as any);
+        const client = new XtreamClient({ url: primaryUrl, username, password } as any);
         const auth = await client.authenticate();
         if (auth && auth.user_info) {
           extra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
@@ -54,10 +63,10 @@ export function createSourcesRouter() {
     }
 
     db.insert(schemaSources).values({
-      id: newId, userId: req.user!.id, name, type, url, username, password, autoSyncEnabled, syncCron, extra
+      id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron, extra
     }).run();
 
-    const newSource = { id: newId, userId: req.user!.id, name, type, url, username, password, autoSyncEnabled, syncCron, ...extra };
+    const newSource = { id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron, ...extra };
     scheduleSourceCron(newSource);
     res.status(201).json(newSource);
   });
@@ -66,7 +75,7 @@ export function createSourcesRouter() {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
     const { eq, and } = await import('drizzle-orm');
-    const { id, name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, ...extra } = req.body;
+    const { id, name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, hosts, ...extra } = req.body;
     const sourceId = req.params.id;
 
     const doc = db.select().from(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).get();
@@ -80,6 +89,11 @@ export function createSourcesRouter() {
       const targetUrl = url !== undefined ? url : doc.url;
       const targetUser = username !== undefined ? username : doc.username;
       const targetPass = password !== undefined ? password : doc.password;
+
+      if (targetType === 'xtream' && hosts !== undefined) {
+        const existingHosts = Array.isArray((doc.extra as any)?.hosts) ? (doc.extra as any).hosts : [];
+        mergedExtra.hosts = normalizeHosts(Array.isArray(hosts) ? hosts : [], targetUrl, existingHosts);
+      }
 
       if (targetType === 'xtream' && targetUrl && targetUser && targetPass) {
         try {
@@ -189,6 +203,23 @@ export function createSourcesRouter() {
   router.delete("/sources/:id/connections", requireAuth, async (req: AuthRequest, res) => {
     clearConnectionLogs(req.params.id);
     res.json({ success: true });
+  });
+
+  // =====================================
+  // Host Benchmarking
+  // =====================================
+  router.post("/sources/:id/benchmark", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const result = await benchmarkSourceHosts(req.params.id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.get("/sources/:id/host-benchmarks", requireAuth, async (req: AuthRequest, res) => {
+    const limit = parseInt(req.query.limit as string || '50', 10);
+    res.json(getHostBenchmarkHistory(req.params.id, isNaN(limit) ? 50 : limit));
   });
 
   router.delete("/sources/:id", requireAuth, async (req: AuthRequest, res) => {

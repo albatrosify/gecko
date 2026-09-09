@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
-import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog } from '../types';
+import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost } from '../types';
 
 export const copyToClipboard = async (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -66,7 +66,11 @@ import {
   AlertTriangle,
   Radio,
   ShieldAlert,
-  ShieldCheck
+  ShieldCheck,
+  Gauge,
+  Server,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -1204,6 +1208,8 @@ export function SourceManager({ user }: { user: User }) {
 
   const [syncStatus, setSyncStatus] = useState<Record<string, string>>({});
   const [refreshingSources, setRefreshingSources] = useState<Record<string, boolean>>({});
+  const [benchmarkingSource, setBenchmarkingSource] = useState<Record<string, boolean>>({});
+  const [benchStatus, setBenchStatus] = useState<Record<string, string>>({});
 
   const handleShowChangelog = async (source: any) => {
     setSelectedLogSource(source);
@@ -1346,6 +1352,66 @@ export function SourceManager({ user }: { user: User }) {
     } catch (error) {
       console.error('Failed to update source:', error);
     }
+  };
+
+  const handleBenchmark = async (source: UpstreamSource) => {
+    setBenchmarkingSource(prev => ({ ...prev, [source.id]: true }));
+    setBenchStatus(prev => ({ ...prev, [source.id]: 'Benchmarking...' }));
+    try {
+      const result = await api.sources.benchmark(source.id);
+      if (result.success) {
+        const healthy = result.hosts?.filter((h: any) => h.authOk).length ?? 0;
+        setBenchStatus(prev => ({ ...prev, [source.id]: `Benchmark done: ${healthy}/${result.hosts?.length ?? 0} hosts healthy` }));
+      } else {
+        setBenchStatus(prev => ({ ...prev, [source.id]: `Error: ${result.error || 'Unknown error'}` }));
+      }
+      loadSources();
+    } catch (err) {
+      setBenchStatus(prev => ({ ...prev, [source.id]: `Error: ${(err as Error).message}` }));
+    } finally {
+      setBenchmarkingSource(prev => ({ ...prev, [source.id]: false }));
+      setTimeout(() => {
+        setBenchStatus(prev => {
+          const newState = { ...prev };
+          delete newState[source.id];
+          return newState;
+        });
+      }, 15000);
+    }
+  };
+
+  const getHosts = (): SourceHost[] => {
+    const src = showEdit ? editingSource : newSource;
+    return Array.isArray(src?.hosts) ? (src.hosts as SourceHost[]) : [];
+  };
+
+  const setHosts = (hosts: SourceHost[]) => {
+    if (showEdit) setEditingSource({ ...editingSource!, hosts });
+    else setNewSource({ ...newSource, hosts });
+  };
+
+  const handleAddHost = () => {
+    const hosts = getHosts();
+    setHosts([...hosts, { url: '', label: '', order: hosts.length, uses: 0, failures: 0 }]);
+  };
+
+  const handleUpdateHost = (index: number, field: 'url' | 'label', value: string) => {
+    const hosts = getHosts().map((h, i) => i === index ? { ...h, [field]: value } : h);
+    setHosts(hosts);
+  };
+
+  const handleRemoveHost = (index: number) => {
+    const hosts = getHosts().filter((_, i) => i !== index).map((h, i) => ({ ...h, order: i }));
+    setHosts(hosts);
+  };
+
+  const handleMoveHost = (index: number, dir: -1 | 1) => {
+    const hosts = getHosts();
+    const target = index + dir;
+    if (target < 0 || target >= hosts.length) return;
+    const next = [...hosts];
+    [next[index], next[target]] = [next[target], next[index]];
+    setHosts(next.map((h, i) => ({ ...h, order: i })));
   };
 
   const handleDelete = async (id: string) => {
@@ -1552,9 +1618,62 @@ export function SourceManager({ user }: { user: User }) {
                     </button>
                   </div>
                 )}
+
+                {source.type === 'xtream' && Array.isArray(source.hosts) && source.hosts.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
+                      <Server size={12} className="text-zinc-500" />
+                      <span>Hosts</span>
+                    </div>
+                    {source.hosts.map((h: SourceHost, idx: number) => {
+                      const total = (h.uses || 0) + (h.failures || 0);
+                      const reliability = total > 0 ? Math.round(((h.uses || 0) / total) * 100) : null;
+                      const isActive = h.url === source.url;
+                      return (
+                        <div key={`${h.url}-${idx}`} className="flex items-center justify-between gap-2 px-3 py-1.5 bg-zinc-950/60 rounded-xl border border-zinc-800/80 text-xs">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isActive && (
+                              <span className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0">Active</span>
+                            )}
+                            <span className="text-zinc-300 font-mono truncate" title={h.url}>{h.url}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 text-[10px]">
+                            {h.authOk === true && h.latencyMs != null && (
+                              <span className="text-emerald-400 font-semibold">{h.latencyMs}ms</span>
+                            )}
+                            {h.throughputMbps != null && (
+                              <span className="text-blue-400 font-semibold">{h.throughputMbps.toFixed(1)} Mbps</span>
+                            )}
+                            {h.authOk === false && (
+                              <span className="text-red-400 font-bold">down</span>
+                            )}
+                            {reliability !== null && (
+                              <span className="text-zinc-500">{reliability}% ok</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {benchStatus[source.id] && (
+                      <p className={`text-[10px] font-bold ${benchStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {benchStatus[source.id]}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div className="flex justify-end items-center">
+              <div className="flex justify-end items-center gap-2">
+                {source.type === 'xtream' && (
+                  <button 
+                    onClick={() => handleBenchmark(source)}
+                    disabled={benchmarkingSource[source.id]}
+                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                  >
+                    <Gauge size={14} className={benchmarkingSource[source.id] ? 'animate-pulse' : ''} />
+                    {benchmarkingSource[source.id] ? 'Benchmarking...' : 'Benchmark'}
+                  </button>
+                )}
                 <button 
                   onClick={() => handleRefresh(source)}
                   disabled={refreshingSources[source.id]}
@@ -1640,6 +1759,67 @@ export function SourceManager({ user }: { user: User }) {
                     value={(showEdit ? editingSource! : newSource).password}
                     onChange={e => showEdit ? setEditingSource({...editingSource!, password: e.target.value}) : setNewSource({...newSource, password: e.target.value})}
                   />
+                </div>
+              )}
+
+              {(showEdit ? editingSource! : newSource).type === 'xtream' && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Hosts (Fallback Order)</label>
+                    <button
+                      type="button"
+                      onClick={handleAddHost}
+                      className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1"
+                    >
+                      <Plus size={12} /> Add Host
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500">The primary URL is used first; Gecko benchmarks hosts and falls back through this list in order.</p>
+                  {getHosts().length === 0 && (
+                    <p className="text-[10px] text-zinc-600 italic">No additional hosts. Add one to enable fallback and benchmarking.</p>
+                  )}
+                  {getHosts().map((h, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <div className="flex flex-col gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleMoveHost(idx, -1)}
+                          disabled={idx === 0}
+                          className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        >
+                          <ChevronUp size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveHost(idx, 1)}
+                          disabled={idx === getHosts().length - 1}
+                          className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        >
+                          <ChevronDown size={12} />
+                        </button>
+                      </div>
+                      <input 
+                        placeholder="Host URL (e.g. http://host:8080)" 
+                        className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
+                        value={h.url}
+                        onChange={e => handleUpdateHost(idx, 'url', e.target.value)}
+                      />
+                      <input 
+                        placeholder="Label" 
+                        className="w-28 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all"
+                        value={h.label || ''}
+                        onChange={e => handleUpdateHost(idx, 'label', e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveHost(idx)}
+                        className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-400 transition-colors shrink-0"
+                        title="Remove host"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 

@@ -4,6 +4,22 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface SourceHost {
+  url: string;
+  label?: string;
+  order: number;
+  enabled?: boolean;
+  latencyMs?: number | null;      // Auth latency measured during benchmark
+  authOk?: boolean | null;        // Whether authentication succeeded during benchmark
+  throughputMbps?: number | null; // Stream throughput probe result
+  probeOk?: boolean | null;       // Whether the throughput probe succeeded
+  lastBenchmark?: string | null;  // ISO timestamp of last benchmark for this host
+  uses: number;                   // Successful proxied stream uses
+  failures: number;               // Failed proxied stream attempts
+  lastUsed?: string | null;       // ISO timestamp of last successful use
+  lastError?: string | null;      // Last failure reason
+}
+
 export interface UpstreamSource {
   id: string;
   name: string;
@@ -26,6 +42,7 @@ export interface UpstreamSource {
   lastMaxCons?: number;       // Last checked max connections limit
   lastMonitorStatus?: 'ok' | 'external_activity' | 'error';
   lastMonitorError?: string;
+  hosts?: SourceHost[];       // Ordered list of upstream hosts (fallback + benchmark)
 }
 
 export interface SourceConnectionLog {

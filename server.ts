@@ -12,6 +12,7 @@ import { getClientInfo } from "./server/utils.ts";
 import { initCronManager } from "./server/sync.ts";
 import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
+import { initHostStatsFlusher } from "./server/hosts.ts";
 import { DEFAULT_PORT } from "./server/config.ts";
 
 // Routers
@@ -59,6 +60,9 @@ async function startServer() {
 
     // Initialize upstream connection monitor
     initConnectionMonitor();
+
+    // Initialize host stats flusher (persists per-host usage counters)
+    initHostStatsFlusher();
 
     const app = express();
     const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT));

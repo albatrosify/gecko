@@ -12,6 +12,7 @@ import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
+import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
 
@@ -141,84 +142,93 @@ export function createProxyRouter() {
       const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
       const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
 
-      const upstreamUrl = ext
-        ? `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
-        : `${sourceDoc.url}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
+      // Try each host of this source in order (primary first), falling back on failure
+      const hostUrls = getActiveHostUrls(sourceDoc);
 
-      try {
-        const response = await axios({
-          method: 'get',
-          url: upstreamUrl,
-          responseType: 'stream',
-          timeout: 15000,
-          headers: upstreamHeaders,
-          validateStatus: () => true,
-        });
+      for (const hostUrl of hostUrls) {
+        const upstreamUrl = ext
+          ? `${hostUrl}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
+          : `${hostUrl}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
 
-        // Treat 4xx/5xx from upstream as a failure — try next source
-        if (response.status >= 400) {
-          lastStatus = response.status;
-          lastError = `upstream returned ${response.status}`;
-          if (response.data?.destroy) response.data.destroy();
-          log(`[Proxy] Source ${sourceId} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
-          continue;
-        }
+        try {
+          const response = await axios({
+            method: 'get',
+            url: upstreamUrl,
+            responseType: 'stream',
+            timeout: 15000,
+            headers: upstreamHeaders,
+            validateStatus: () => true,
+          });
 
-        log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} - ${getClientInfo(req)}`);
-
-        // Forward status code (206 for range requests) and headers
-        res.status(response.status);
-        const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
-        for (const h of forwardHeaders) {
-          if (response.headers[h]) res.setHeader(h, response.headers[h]);
-        }
-
-        // Track stats
-        const connId = Math.random().toString(36).substring(7);
-        const connectionInfo = {
-          id: connId,
-          sourceId,
-          username,
-          streamId,
-          streamName,
-          playlistName: (playlist as any).name || username,
-          type,
-          ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
-          startTime: Date.now(),
-          bytesRead: 0,
-          intervalBytes: 0,
-          currentBps: 0,
-          proxied: true,
-        };
-
-        proxyStats.connections.set(connId, connectionInfo);
-        proxyStats.activeStreams++;
-
-        response.data.on('data', (chunk: Buffer) => {
-          proxyStats.totalBytes += chunk.length;
-          proxyStats.intervalBytes += chunk.length;
-          connectionInfo.bytesRead += chunk.length;
-          connectionInfo.intervalBytes += chunk.length;
-        });
-
-        response.data.pipe(res);
-
-        const cleanup = () => {
-          if (proxyStats.connections.has(connId)) {
-            proxyStats.connections.delete(connId);
-            proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+          // Treat 4xx/5xx from upstream as a failure — try next host/source
+          if (response.status >= 400) {
+            lastStatus = response.status;
+            lastError = `upstream returned ${response.status}`;
+            if (response.data?.destroy) response.data.destroy();
+            recordHostUse(sourceId, hostUrl, false, `upstream returned ${response.status}`);
+            log(`[Proxy] Host ${hostUrl} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
+            continue;
           }
-          if (response.data?.destroy) response.data.destroy();
-        };
 
-        res.on('finish', cleanup);
-        res.on('close', cleanup);
-        response.data.on('error', cleanup);
-        return; // success — stop trying sources
-      } catch (err: any) {
-        lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
-        lastError = err.message;
-        log(`[Proxy] Source ${sourceId} error for ${type}/${streamId}: ${err.message}, trying next... - ${getClientInfo(req)}`);
+          log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} - ${getClientInfo(req)}`);
+          recordHostUse(sourceId, hostUrl, true);
+
+          // Forward status code (206 for range requests) and headers
+          res.status(response.status);
+          const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
+          for (const h of forwardHeaders) {
+            if (response.headers[h]) res.setHeader(h, response.headers[h]);
+          }
+
+          // Track stats
+          const connId = Math.random().toString(36).substring(7);
+          const connectionInfo = {
+            id: connId,
+            sourceId,
+            host: hostUrl,
+            username,
+            streamId,
+            streamName,
+            playlistName: (playlist as any).name || username,
+            type,
+            ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+            startTime: Date.now(),
+            bytesRead: 0,
+            intervalBytes: 0,
+            currentBps: 0,
+            proxied: true,
+          };
+
+          proxyStats.connections.set(connId, connectionInfo);
+          proxyStats.activeStreams++;
+
+          response.data.on('data', (chunk: Buffer) => {
+            proxyStats.totalBytes += chunk.length;
+            proxyStats.intervalBytes += chunk.length;
+            connectionInfo.bytesRead += chunk.length;
+            connectionInfo.intervalBytes += chunk.length;
+          });
+
+          response.data.pipe(res);
+
+          const cleanup = () => {
+            if (proxyStats.connections.has(connId)) {
+              proxyStats.connections.delete(connId);
+              proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+            }
+            if (response.data?.destroy) response.data.destroy();
+          };
+
+          res.on('finish', cleanup);
+          res.on('close', cleanup);
+          response.data.on('error', cleanup);
+          return; // success — stop trying sources
+        } catch (err: any) {
+          lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
+          lastError = err.message;
+          recordHostUse(sourceId, hostUrl, false, err.message);
+          log(`[Proxy] Host ${hostUrl} error for ${type}/${streamId}: ${err.message}, trying next... - ${getClientInfo(req)}`);
+        }
       }
     }
 
