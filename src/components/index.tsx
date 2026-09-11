@@ -70,7 +70,10 @@ import {
   Gauge,
   Server,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Cloud,
+  Globe,
+  Network
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -1211,6 +1214,50 @@ export function SourceManager({ user }: { user: User }) {
   const [benchmarkingSource, setBenchmarkingSource] = useState<Record<string, boolean>>({});
   const [benchStatus, setBenchStatus] = useState<Record<string, string>>({});
 
+  // 4K Benchmark Stream Picker states
+  const [showChannelPicker, setShowChannelPicker] = useState(false);
+  const [channelPickerStreams, setChannelPickerStreams] = useState<any[]>([]);
+  const [loadingPickerStreams, setLoadingPickerStreams] = useState(false);
+  const [channelSearchTerm, setChannelSearchTerm] = useState('');
+  const [filter4kOnly, setFilter4kOnly] = useState(true);
+
+  const handleOpenChannelPicker = async () => {
+    const active = showEdit ? editingSource : newSource;
+    if (!active?.url) return;
+    setShowChannelPicker(true);
+    setLoadingPickerStreams(true);
+    setChannelSearchTerm('');
+    setFilter4kOnly(true);
+    try {
+      const res = await api.upstream.fetchStreams(active, 'live');
+      setChannelPickerStreams(res?.streams || []);
+    } catch (e) {
+      console.error('Failed to fetch streams for picker:', e);
+      setChannelPickerStreams([]);
+    } finally {
+      setLoadingPickerStreams(false);
+    }
+  };
+
+  const handleSelectBenchmarkStream = (stream: any) => {
+    const id = stream.stream_id ?? stream.streamId;
+    const name = stream.name || stream.stream_name || `Stream #${id}`;
+    if (showEdit && editingSource) {
+      setEditingSource({ ...editingSource, benchmarkStreamId: id, benchmarkStreamName: name });
+    } else {
+      setNewSource({ ...newSource, benchmarkStreamId: id, benchmarkStreamName: name });
+    }
+    setShowChannelPicker(false);
+  };
+
+  const handleClearBenchmarkStream = () => {
+    if (showEdit && editingSource) {
+      setEditingSource({ ...editingSource, benchmarkStreamId: null, benchmarkStreamName: null });
+    } else {
+      setNewSource({ ...newSource, benchmarkStreamId: null, benchmarkStreamName: null });
+    }
+  };
+
   const handleShowChangelog = async (source: any) => {
     setSelectedLogSource(source);
     setShowChangelog(true);
@@ -1361,7 +1408,10 @@ export function SourceManager({ user }: { user: User }) {
       const result = await api.sources.benchmark(source.id);
       if (result.success) {
         const healthy = result.hosts?.filter((h: any) => h.authOk).length ?? 0;
-        setBenchStatus(prev => ({ ...prev, [source.id]: `Benchmark done: ${healthy}/${result.hosts?.length ?? 0} hosts healthy` }));
+        const streamLabel = result.benchmarkStream?.name
+          ? ` (${result.benchmarkStream.is4k ? '4K: ' : ''}${result.benchmarkStream.name})`
+          : '';
+        setBenchStatus(prev => ({ ...prev, [source.id]: `Benchmark done: ${healthy}/${result.hosts?.length ?? 0} hosts healthy${streamLabel}` }));
       } else {
         setBenchStatus(prev => ({ ...prev, [source.id]: `Error: ${result.error || 'Unknown error'}` }));
       }
@@ -1621,44 +1671,152 @@ export function SourceManager({ user }: { user: User }) {
 
                 {source.type === 'xtream' && Array.isArray(source.hosts) && source.hosts.length > 0 && (
                   <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
-                      <Server size={12} className="text-zinc-500" />
-                      <span>Hosts</span>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
+                        <Server size={12} className="text-zinc-500" />
+                        <span>Hosts</span>
+                        <span className="text-[9px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 rounded-full font-bold">
+                          {source.hosts.length}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <span className="text-zinc-500">Benchmark Stream:</span>
+                        {source.benchmarkStreamName ? (
+                          <span className="inline-flex items-center gap-1 font-semibold text-zinc-300">
+                            {/\b(4k|uhd|2160p)\b/i.test(source.benchmarkStreamName) && (
+                              <span className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[8px] font-black uppercase tracking-tighter">4K</span>
+                            )}
+                            <span className="truncate max-w-[200px]" title={source.benchmarkStreamName}>{source.benchmarkStreamName}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-zinc-400 italic">
+                            <span className="px-1 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-bold not-italic font-sans">Auto</span>
+                            4K Prioritized
+                          </span>
+                        )}
+                      </div>
+
+                      {benchStatus[source.id] && (
+                        <p className={`text-[10px] font-bold ${benchStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {benchStatus[source.id]}
+                        </p>
+                      )}
                     </div>
-                    {source.hosts.map((h: SourceHost, idx: number) => {
-                      const total = (h.uses || 0) + (h.failures || 0);
-                      const reliability = total > 0 ? Math.round(((h.uses || 0) / total) * 100) : null;
-                      const isActive = h.url === source.url;
-                      return (
-                        <div key={`${h.url}-${idx}`} className="flex items-center justify-between gap-2 px-3 py-1.5 bg-zinc-950/60 rounded-xl border border-zinc-800/80 text-xs">
-                          <div className="flex items-center gap-2 min-w-0">
-                            {isActive && (
-                              <span className="px-1 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0">Active</span>
-                            )}
-                            <span className="text-zinc-300 font-mono truncate" title={h.url}>{h.url}</span>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0 text-[10px]">
-                            {h.authOk === true && h.latencyMs != null && (
-                              <span className="text-emerald-400 font-semibold">{h.latencyMs}ms</span>
-                            )}
-                            {h.throughputMbps != null && (
-                              <span className="text-blue-400 font-semibold">{h.throughputMbps.toFixed(1)} Mbps</span>
-                            )}
-                            {h.authOk === false && (
-                              <span className="text-red-400 font-bold">down</span>
-                            )}
-                            {reliability !== null && (
-                              <span className="text-zinc-500">{reliability}% ok</span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {benchStatus[source.id] && (
-                      <p className={`text-[10px] font-bold ${benchStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
-                        {benchStatus[source.id]}
-                      </p>
-                    )}
+
+                    <div className="overflow-x-auto rounded-xl border border-zinc-800/80 bg-zinc-950/60 shadow-inner">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-zinc-800/80 bg-zinc-900/50 text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">
+                            <th className="py-2.5 px-3">Endpoint / Host</th>
+                            <th className="py-2.5 px-2.5 w-32">Network</th>
+                            <th className="py-2.5 px-2.5 text-right w-24">Latency</th>
+                            <th className="py-2.5 px-2.5 text-right w-28">Speed</th>
+                            <th className="py-2.5 px-3 text-right w-24">Reliability</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800/40 text-xs font-mono">
+                          {source.hosts.map((h: SourceHost, idx: number) => {
+                            const total = (h.uses || 0) + (h.failures || 0);
+                            const reliability = total > 0 ? Math.round(((h.uses || 0) / total) * 100) : null;
+                            const isActive = h.url === source.url;
+                            const isCdn = h.networkType === 'cdn' || (!h.networkType && (h.url.includes('cf.') || !!h.cdnProvider));
+                            const cdnName = h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : 'CDN');
+
+                            return (
+                              <tr
+                                key={`${h.url}-${idx}`}
+                                className={clsx(
+                                  "transition-colors hover:bg-zinc-900/40",
+                                  isActive && "bg-emerald-500/[0.04]"
+                                )}
+                              >
+                                <td className="py-2 px-3">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {isActive && (
+                                      <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans">
+                                        Active
+                                      </span>
+                                    )}
+                                    <span className="text-zinc-200 truncate max-w-xs sm:max-w-sm md:max-w-md" title={h.url}>
+                                      {h.url}
+                                    </span>
+                                    {h.label && (
+                                      <span className="text-[10px] text-zinc-500 font-sans shrink-0">
+                                        ({h.label})
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-2 px-2.5 whitespace-nowrap font-sans">
+                                  {isCdn ? (
+                                    <span
+                                      className={clsx(
+                                        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                                        cdnName.toLowerCase().includes('cloudflare')
+                                          ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                                          : "bg-purple-500/10 text-purple-400 border-purple-500/30"
+                                      )}
+                                      title={h.resolvedIp ? `Resolved: ${h.resolvedIp}` : undefined}
+                                    >
+                                      <Cloud size={10} className="shrink-0" />
+                                      <span>{cdnName}</span>
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                                      title={h.resolvedIp ? `IP: ${h.resolvedIp}` : undefined}
+                                    >
+                                      <Network size={10} className="shrink-0" />
+                                      <span>Direct</span>
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                                  {h.authOk === false ? (
+                                    <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[9px] font-black uppercase tracking-tighter font-sans">
+                                      Down
+                                    </span>
+                                  ) : h.latencyMs != null ? (
+                                    <span className={clsx(
+                                      "font-semibold text-xs",
+                                      h.latencyMs < 100 ? "text-emerald-400" :
+                                      h.latencyMs < 200 ? "text-amber-400" : "text-rose-400"
+                                    )}>
+                                      {h.latencyMs}ms
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-600 text-xs">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                                  {h.throughputMbps != null ? (
+                                    <span className="text-blue-400 font-semibold text-xs">
+                                      {h.throughputMbps.toFixed(1)} <span className="text-[10px] text-blue-400/70 font-normal">Mbps</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-600 text-xs">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-right whitespace-nowrap">
+                                  {reliability !== null ? (
+                                    <span className={clsx(
+                                      "text-xs font-semibold",
+                                      reliability >= 90 ? "text-zinc-300" :
+                                      reliability >= 60 ? "text-amber-400" : "text-red-400"
+                                    )}>
+                                      {reliability}% <span className="text-[10px] text-zinc-500 font-normal">ok</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-600 text-xs">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1804,9 +1962,23 @@ export function SourceManager({ user }: { user: User }) {
                         value={h.url}
                         onChange={e => handleUpdateHost(idx, 'url', e.target.value)}
                       />
+                      {h.url && (
+                        <span className={clsx(
+                          "px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0",
+                          (h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
+                            ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : '')).toLowerCase().includes('cloudflare')
+                              ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                              : "bg-purple-500/10 text-purple-400 border-purple-500/25"
+                            : "bg-cyan-500/10 text-cyan-400 border-cyan-500/25"
+                        )}>
+                          {(h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
+                            ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : 'CDN'))
+                            : 'Direct'}
+                        </span>
+                      )}
                       <input 
                         placeholder="Label" 
-                        className="w-28 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all"
+                        className="w-24 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all"
                         value={h.label || ''}
                         onChange={e => handleUpdateHost(idx, 'label', e.target.value)}
                       />
@@ -1820,6 +1992,57 @@ export function SourceManager({ user }: { user: User }) {
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Benchmark Stream Section */}
+              {(showEdit ? editingSource! : newSource).type === 'xtream' && (
+                <div className="space-y-2 pt-1 border-t border-zinc-800/60">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Benchmark Stream (4K / High Bitrate)</label>
+                    {(showEdit ? editingSource! : newSource).benchmarkStreamId ? (
+                      <button
+                        type="button"
+                        onClick={handleClearBenchmarkStream}
+                        className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors"
+                      >
+                        Reset to Auto 4K
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400/80 font-medium">Auto: Prioritizes 4K channels</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs flex items-center justify-between">
+                      {(showEdit ? editingSource! : newSource).benchmarkStreamName ? (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {/\b(4k|uhd|2160p)\b/i.test((showEdit ? editingSource! : newSource).benchmarkStreamName || '') && (
+                            <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-black uppercase shrink-0">4K</span>
+                          )}
+                          <span className="text-zinc-200 font-medium truncate">
+                            {(showEdit ? editingSource! : newSource).benchmarkStreamName}
+                          </span>
+                          <span className="text-[10px] text-zinc-600 font-mono shrink-0">
+                            (ID: {(showEdit ? editingSource! : newSource).benchmarkStreamId})
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-500 italic text-xs truncate">
+                          Auto: scans for 4K / UHD channels first
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenChannelPicker}
+                      className="px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-colors shrink-0 flex items-center gap-1.5"
+                    >
+                      <Tv size={13} /> Select 4K Channel
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-500">
+                    Flagging a 4K channel tests hosts against high-bitrate video (25-50+ Mbps) without 512KB slow-start bottlenecks.
+                  </p>
                 </div>
               )}
 
@@ -1983,6 +2206,156 @@ export function SourceManager({ user }: { user: User }) {
                 className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm shadow-lg shadow-emerald-500/20"
               >
                 {showEdit ? 'Save Changes' : 'Add Source'}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* 4K Benchmark Channel Picker Modal */}
+      {showChannelPicker && (
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[60]"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowChannelPicker(false);
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 max-w-xl w-full max-h-[85vh] flex flex-col space-y-4 shadow-2xl"
+          >
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/10 rounded-2xl text-amber-400 border border-amber-500/20">
+                  <Tv size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                    Select Benchmark Channel
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[10px] font-black uppercase">4K / UHD</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400">Choose a high-bitrate stream for accurate throughput benchmarking</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowChannelPicker(false)}
+                className="p-1.5 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-200 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search channels (e.g. 4K, Sky, ESPN, UHD)..."
+                  value={channelSearchTerm}
+                  onChange={e => setChannelSearchTerm(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilter4kOnly(!filter4kOnly)}
+                className={clsx(
+                  "px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5",
+                  filter4kOnly
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                    : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200"
+                )}
+              >
+                <Star size={12} className={filter4kOnly ? "fill-amber-300" : ""} />
+                4K Only
+              </button>
+            </div>
+
+            {/* Channels List */}
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1 min-h-[300px] max-h-[50vh] divide-y divide-zinc-800/30">
+              {loadingPickerStreams ? (
+                <div className="flex flex-col items-center justify-center py-16 text-zinc-500 gap-2">
+                  <RefreshCw size={20} className="animate-spin text-emerald-400" />
+                  <span className="text-xs">Loading live channels from upstream...</span>
+                </div>
+              ) : (() => {
+                const filtered = channelPickerStreams.filter((s: any) => {
+                  const name = (s.name || s.stream_name || '').toLowerCase();
+                  const is4k = /\b(4k|uhd|2160p)\b/i.test(name);
+                  if (filter4kOnly && !is4k) return false;
+                  if (channelSearchTerm && !name.includes(channelSearchTerm.toLowerCase())) return false;
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-zinc-500 text-xs">
+                      {filter4kOnly ? (
+                        <div>
+                          <p>No channels matching 4K / UHD found.</p>
+                          <button
+                            type="button"
+                            onClick={() => setFilter4kOnly(false)}
+                            className="mt-2 text-emerald-400 hover:underline font-bold"
+                          >
+                            Show all channels
+                          </button>
+                        </div>
+                      ) : (
+                        <p>No channels found matching &quot;{channelSearchTerm}&quot;.</p>
+                      )}
+                    </div>
+                  );
+                }
+
+                return filtered.map((s: any) => {
+                  const id = s.stream_id ?? s.streamId;
+                  const name = s.name || s.stream_name || `Stream #${id}`;
+                  const is4k = /\b(4k|uhd|2160p)\b/i.test(name);
+
+                  return (
+                    <div
+                      key={id}
+                      className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-zinc-800/50 transition-colors group cursor-pointer"
+                      onClick={() => handleSelectBenchmarkStream(s)}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {is4k ? (
+                          <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-black uppercase shrink-0">4K</span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 bg-zinc-800 text-zinc-400 rounded text-[9px] font-bold uppercase shrink-0">HD</span>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-zinc-200 truncate group-hover:text-white transition-colors">{name}</p>
+                          <p className="text-[10px] text-zinc-500 font-mono">Stream ID: {id}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectBenchmarkStream(s);
+                        }}
+                        className="px-2.5 py-1 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 rounded-lg text-xs font-bold transition-all shrink-0"
+                      >
+                        Select
+                      </button>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="flex justify-between items-center pt-2 border-t border-zinc-800 text-xs text-zinc-500">
+              <span>{channelPickerStreams.length} total channels</span>
+              <button
+                type="button"
+                onClick={() => setShowChannelPicker(false)}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl font-bold transition-colors"
+              >
+                Done
               </button>
             </div>
           </motion.div>

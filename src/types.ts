@@ -13,6 +13,9 @@ export interface SourceHost {
   authOk?: boolean | null;        // Whether authentication succeeded during benchmark
   throughputMbps?: number | null; // Stream throughput probe result
   probeOk?: boolean | null;       // Whether the throughput probe succeeded
+  networkType?: 'cdn' | 'direct' | null; // Detected network routing (CDN vs Direct)
+  cdnProvider?: string | null;    // Detected CDN provider (e.g. Cloudflare, CloudFront, Fastly)
+  resolvedIp?: string | null;     // Resolved IP address
   lastBenchmark?: string | null;  // ISO timestamp of last benchmark for this host
   uses: number;                   // Successful proxied stream uses
   failures: number;               // Failed proxied stream attempts
@@ -42,6 +45,8 @@ export interface UpstreamSource {
   lastMaxCons?: number;       // Last checked max connections limit
   lastMonitorStatus?: 'ok' | 'external_activity' | 'error';
   lastMonitorError?: string;
+  benchmarkStreamId?: string | number | null; // Selected stream for benchmarking (e.g. a 4K channel)
+  benchmarkStreamName?: string | null;       // Display name of selected benchmark channel
   hosts?: SourceHost[];       // Ordered list of upstream hosts (fallback + benchmark)
 }
 

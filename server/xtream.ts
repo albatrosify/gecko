@@ -4,6 +4,7 @@ import { log } from './logger.ts';
 
 export class XtreamClient {
   private source: UpstreamSource;
+  public lastResponseHeaders: any = null;
 
   constructor(source: UpstreamSource) {
     this.source = source;
@@ -41,6 +42,7 @@ export class XtreamClient {
           'Connection': 'keep-alive'
         }
       });
+      this.lastResponseHeaders = response.headers;
       const duration = Date.now() - start;
       log(`[Xtream] GET ${action || 'authenticate'} - ${response.status} (${duration}ms)`);
       log(`[Xtream]   Payload type: ${typeof response.data}`);
@@ -58,6 +60,7 @@ export class XtreamClient {
       
       return response.data;
     } catch (error: any) {
+      this.lastResponseHeaders = error.response?.headers || null;
       const duration = Date.now() - start;
       log(`[Xtream] ERROR ${action || 'authenticate'} after ${duration}ms: ${error.message}`);
       if (error.code === 'ECONNABORTED') {
