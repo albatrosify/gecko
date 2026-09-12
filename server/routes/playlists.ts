@@ -458,24 +458,31 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
       if (!validSources.length) return res.status(400).json({ error: 'No sources found' });
 
-      // Use first available source; get container_extension from stream cache
-      const sourceDoc = validSources[0]!;
-      const cached = getCached(`${sourceDoc.id}_streams_${type}`);
-      const streamData = (cached?.data as any[] | undefined)?.find(
-        (s: any) => String(s.stream_id ?? s.series_id) === streamId
-      );
-      // For series episodes, we don't know the extension since they aren't in the streams list. Default to mp4.
-      // Also the episode name is not easily known, so we fallback to streamId.
-      let extension = streamData?.container_extension || 'mp4';
-      let title = streamData?.name || streamData?.title || `Episode_${streamId}`;
+      // Find source and streamData across all playlist sources
+      let sourceDoc = validSources[0]!;
+      let streamData: any = null;
 
-      // Check query params if they exist for title and extension (optional enhancement, but we'll stick to mp4 and streamId fallback)
-      if (req.query.extension && typeof req.query.extension === 'string') {
-        extension = req.query.extension;
+      for (const src of validSources) {
+        const cached = getCached(`${src.id}_streams_${type}`);
+        const found = (cached?.data as any[] | undefined)?.find(
+          (s: any) => String(s.stream_id ?? s.series_id) === streamId
+        );
+        if (found) {
+          streamData = found;
+          sourceDoc = src;
+          break;
+        }
       }
 
-      let url = '';
-      url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
+      let extension = (typeof req.query.extension === 'string' && req.query.extension)
+        ? req.query.extension
+        : (streamData?.container_extension || 'mp4');
+
+      let title = (typeof req.query.title === 'string' && req.query.title)
+        ? req.query.title
+        : (streamData?.name || streamData?.title || `Stream_${streamId}`);
+
+      let url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
 
       // Proxy the upstream response as a file download
       const upstreamRes = await axios.get(url, {

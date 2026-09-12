@@ -6606,11 +6606,12 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             {onPlay && (
               <button
                 onClick={() => {
+                  const ext = type === 'live' ? 'ts' : (stream.container_extension || 'mp4');
                   let url;
                   if (playlist.directStreams) {
-                    url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+                    url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}.${ext}`;
                   } else {
-                    url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+                    url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}.${ext}`;
                   }
                   onPlay(url, customName || originalName || "Stream");
                 }}
@@ -6623,11 +6624,12 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             )}
             <button
               onClick={() => {
+                const ext = type === 'live' ? 'ts' : (stream.container_extension || 'mp4');
                 let url;
                 if (playlist.directStreams) {
-                  url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`;
+                  url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}.${ext}`;
                 } else {
-                  url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`;
+                  url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}.${ext}`;
                 }
                 downloadStreamM3u(url, customName || originalName || "Stream");
               }}
@@ -6663,8 +6665,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               {/* VOD / Series download */}
               {(type === 'vod' || type === 'series') && (
                 <a
-                   href={`/api/download/${type}/${playlistId}/${stream.streamId || stream.stream_id || mapping?.originalId || stream._uniqueId}?token=${localStorage.getItem('auth_token') ?? ''}`}
-                  download
+                  href={`/api/download/${type}/${playlistId}/${stream.streamId || stream.stream_id || mapping?.originalId || stream._uniqueId}?extension=${stream.container_extension || 'mp4'}&token=${localStorage.getItem('auth_token') ?? ''}`}
+                  download={`${(customName || originalName || 'Stream').replace(/[^\w\s.-]/g, '_')}.${stream.container_extension || 'mp4'}`}
                   className="flex items-center gap-1.5 w-full justify-center py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-xl text-xs font-bold text-zinc-300 hover:text-white transition-all"
                 >
                   <Download size={13} />
@@ -6950,56 +6952,62 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   <div className="text-zinc-600 col-span-1 truncate">Category: {stream.category_name || (stream._originalCategoryId || stream.category_id)}</div>
                   <div className="text-zinc-600 col-span-1 truncate text-right">ID: {stream.streamId || stream.stream_id || stream.series_id || stream._originalId || 'N/A'}</div>
                 </div>
-                {source && (
-                  <div className="space-y-2">
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
-                      <div className="flex gap-1.5">
-                        <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
-                          {source.url.replace(/\/$/, '')}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/{(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/{stream._originalId || (stream.stream_id || stream.series_id)}{type === 'live' ? '.ts' : '.mp4'}
-                        </code>
-                        {/* Play Upstream URL */}
-                        {onPlay && (
-                          <>
-                            <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
-                              <Play size={11} />
-                            </button>
-                            <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; downloadStreamM3u(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Upstream in VLC / Native Player (.m3u)">
-                              <VlcIcon size={11} />
-                            </button>
-                          </>
-                        )}
-                        <button onClick={() => { const url = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}${type === 'live' ? '.ts' : '.mp4'}`; copyToClipboard(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
-                          <ExternalLink size={11} />
-                        </button>
-                      </div>
-                    </div>
-                    {playlist && (
+                {source && (() => {
+                  const ext = type === 'live' ? 'ts' : (stream.container_extension || 'mp4');
+                  const upstreamUrl = `${source.url.replace(/\/$/, '')}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${(playlist as any)?.sourceOverrides?.[source.id]?.username || source.username}/${(playlist as any)?.sourceOverrides?.[source.id]?.password || source.password}/${stream._originalId || (stream.stream_id || stream.series_id)}.${ext}`;
+                  const proxyUrl = playlist ? `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}.${ext}` : '';
+
+                  return (
+                    <div className="space-y-2">
                       <div className="space-y-1">
-                        <label className="text-[9px] uppercase font-bold text-zinc-600">Proxy URL</label>
+                        <label className="text-[9px] uppercase font-bold text-zinc-600">Upstream URL</label>
                         <div className="flex gap-1.5">
-                          <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-emerald-500/70 break-all font-mono border border-emerald-500/10">
-                            {window.location.origin}/{type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/{playlist.username}/{playlist.password}/{stream.stream_id || stream.series_id}{type === 'live' ? '.ts' : '.mp4'}
+                          <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-zinc-400 break-all font-mono border border-zinc-800">
+                            {upstreamUrl}
                           </code>
-                          {/* Play Proxy URL */}
+                          {/* Play Upstream URL */}
                           {onPlay && (
                             <>
-                              <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; onPlay(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
+                              <button onClick={() => { onPlay(upstreamUrl, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Upstream Stream">
                                 <Play size={11} />
                               </button>
-                              <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; downloadStreamM3u(url, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Proxied Stream in VLC / Native Player (.m3u)">
+                              <button onClick={() => { downloadStreamM3u(upstreamUrl, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Upstream in VLC / Native Player (.m3u)">
                                 <VlcIcon size={11} />
                               </button>
                             </>
                           )}
-                          <button onClick={() => { const url = `${window.location.origin}/${type === 'live' ? 'live' : type === 'vod' ? 'movie' : 'series'}/${playlist.username}/${playlist.password}/${stream.stream_id || stream.series_id}${type === 'live' ? '.ts' : '.mp4'}`; copyToClipboard(url); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
+                          <button onClick={() => { copyToClipboard(upstreamUrl); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
                             <ExternalLink size={11} />
                           </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                      {playlist && (
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold text-zinc-600">Proxy URL</label>
+                          <div className="flex gap-1.5">
+                            <code className="flex-1 bg-zinc-900 p-1.5 rounded text-[9px] text-emerald-500/70 break-all font-mono border border-emerald-500/10">
+                              {proxyUrl}
+                            </code>
+                            {/* Play Proxy URL */}
+                            {onPlay && (
+                              <>
+                                <button onClick={() => { onPlay(proxyUrl, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Play Proxied Stream">
+                                  <Play size={11} />
+                                </button>
+                                <button onClick={() => { downloadStreamM3u(proxyUrl, customName || originalName || "Stream"); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-orange-400 hover:border-orange-500/30 transition-colors shrink-0" title="Play Proxied Stream in VLC / Native Player (.m3u)">
+                                  <VlcIcon size={11} />
+                                </button>
+                              </>
+                            )}
+                            <button onClick={() => { copyToClipboard(proxyUrl); }} className="p-1.5 bg-zinc-900 border border-zinc-800 rounded hover:text-emerald-500 transition-colors shrink-0" title="Copy URL">
+                              <ExternalLink size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
