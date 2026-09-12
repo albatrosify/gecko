@@ -1303,7 +1303,8 @@ export function createProxyRouter() {
           else url = stream._client.getLiveStreamUrl(streamId);
         } else {
           const pathType = m3uType === 'vod' ? 'movie' : m3uType === 'series' ? 'series' : 'live';
-          url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${streamId}.ts`;
+          const streamExt = m3uType === 'live' ? 'ts' : (stream.container_extension || 'mp4');
+          url = `${proxyBaseUrl}/${pathType}/${playlist.username}/${playlist.password}/${streamId}.${streamExt}`;
         }
 
         m3u += `#EXTINF:-1 tvg-id="${epgId || ''}" tvg-name="${stream.name || stream.title || ''}" tvg-logo="${logo || ''}" group-title="${categoryName || ''}",${name}\n`;
