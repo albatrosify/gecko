@@ -22,7 +22,7 @@ export class XtreamClient {
   }
 
 
-  private async request(action?: string, extraParams: any = {}) {
+  private async request(action?: string, extraParams: any = {}, timeoutMs: number = 25000) {
     const params = { ...this.authParams, ...(action ? { action } : {}), ...extraParams };
     const url = `${this.baseUrl}/player_api.php`;
     
@@ -30,7 +30,9 @@ export class XtreamClient {
     try {
       const response = await axios.get(url, { 
         params,
-        timeout: 15000, // 15s timeout
+        timeout: timeoutMs,
+        maxContentLength: 200 * 1024 * 1024,
+        maxBodyLength: 200 * 1024 * 1024,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept': 'application/json, text/plain, */*',
@@ -64,30 +66,30 @@ export class XtreamClient {
       const duration = Date.now() - start;
       log(`[Xtream] ERROR ${action || 'authenticate'} after ${duration}ms: ${error.message}`);
       if (error.code === 'ECONNABORTED') {
-        throw new Error(`Connection timed out after 10s to ${url}`);
+        throw new Error(`Connection timed out after ${Math.round(timeoutMs / 1000)}s to ${url}`);
       }
       throw error;
     }
   }
 
   async authenticate() {
-    return this.request();
+    return this.request(undefined, {}, 15000);
   }
 
   async getLiveCategories() {
-    return this.request('get_live_categories');
+    return this.request('get_live_categories', {}, 30000);
   }
 
   async getLiveStreams() {
-    return this.request('get_live_streams');
+    return this.request('get_live_streams', {}, 45000);
   }
 
   async getVodCategories() {
-    return this.request('get_vod_categories');
+    return this.request('get_vod_categories', {}, 30000);
   }
 
   async getVodStreams() {
-    return this.request('get_vod_streams');
+    return this.request('get_vod_streams', {}, 90000);
   }
 
   async getMovies() {
@@ -95,11 +97,11 @@ export class XtreamClient {
   }
 
   async getSeriesCategories() {
-    return this.request('get_series_categories');
+    return this.request('get_series_categories', {}, 30000);
   }
 
   async getSeries() {
-    return this.request('get_series');
+    return this.request('get_series', {}, 90000);
   }
 
   async getLiveInfo(streamId: string) {
