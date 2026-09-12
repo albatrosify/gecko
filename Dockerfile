@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=node:node package.json package-lock.json* ./
-RUN npm install --legacy-peer-deps
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps
 
 COPY --chown=node:node . .
 ARG VITE_APP_VERSION=${VITE_APP_VERSION:-unknown}
