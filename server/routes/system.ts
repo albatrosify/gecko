@@ -104,9 +104,12 @@ export function createSystemRouter() {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
     }
 
+    const currentSettings = db.select().from(settings).where(eq(settings.id, 'global')).get();
+    const mergedExtra = { ...(currentSettings?.extra as any || {}), qualityLabelFormat };
+
     db.insert(settings)
-      .values({ id: 'global', extra: { qualityLabelFormat } })
-      .onConflictDoUpdate({ target: settings.id, set: { extra: { qualityLabelFormat } } })
+      .values({ id: 'global', extra: mergedExtra })
+      .onConflictDoUpdate({ target: settings.id, set: { extra: mergedExtra } })
       .run();
 
     invalidateQualityFormatCache();

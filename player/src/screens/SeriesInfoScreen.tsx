@@ -29,21 +29,46 @@ export default function SeriesInfoScreen() {
   }, [navigation, seriesName]);
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
+    let isCancelled = false;
+
     api.getSeriesInfo(seriesId)
-      .then(data => setSeriesInfo(data))
+      .then(data => {
+        if (!isCancelled) setSeriesInfo(data);
+      })
       .catch(err => {
+        if (isCancelled) return;
         console.error('Failed to fetch series info', err);
         Alert.alert('Error', 'Failed to load series details.');
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
   }, [api, seriesId]);
 
   const handleEpisodeSelect = (episode: any) => {
+    if (!geckoUrl || !selectedPlaylist?.username) {
+      Alert.alert('Error', 'Missing playlist credentials. Please sign in again.');
+      return;
+    }
+
     const ext = episode.container_extension || 'mp4';
-    const streamUrl = `${geckoUrl}/series/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${episode.id}.${ext}`;
+    const episodeId = episode.id;
+    if (!episodeId) {
+      Alert.alert('Error', 'Invalid episode identifier.');
+      return;
+    }
+
+    const streamUrl = `${geckoUrl}/series/${encodeURIComponent(selectedPlaylist.username)}/${encodeURIComponent(selectedPlaylist.password || '')}/${encodeURIComponent(episodeId)}.${encodeURIComponent(ext)}`;
 
     navigation.navigate('Player', { streamUrl, title: episode.title });
   };
@@ -56,7 +81,7 @@ export default function SeriesInfoScreen() {
     );
   }
 
-  if (!seriesInfo || !seriesInfo.episodes) {
+  if (!seriesInfo || !seriesInfo.episodes || typeof seriesInfo.episodes !== 'object') {
     return (
       <View style={styles.center}>
         <Text style={styles.itemText}>No episodes found.</Text>
@@ -66,22 +91,27 @@ export default function SeriesInfoScreen() {
 
   return (
     <ScrollView style={styles.container}>
-      {Object.keys(seriesInfo.episodes).map((season: string) => (
-        <View key={season}>
-          <View style={styles.seasonHeader}>
-            <Text style={styles.seasonTitle}>Season {season}</Text>
+      {Object.keys(seriesInfo.episodes).map((season: string) => {
+        const episodeList = Array.isArray(seriesInfo.episodes[season]) ? seriesInfo.episodes[season] : [];
+        if (!episodeList.length) return null;
+
+        return (
+          <View key={season}>
+            <View style={styles.seasonHeader}>
+              <Text style={styles.seasonTitle}>Season {season}</Text>
+            </View>
+            {episodeList.map((ep: any, index: number) => (
+              <TouchableOpacity
+                key={String(ep.id ?? `${season}-${ep.episode_num ?? index}`)}
+                style={styles.item}
+                onPress={() => handleEpisodeSelect(ep)}
+              >
+                <Text style={styles.itemText}>Episode {ep.episode_num}: {ep.title}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
-          {seriesInfo.episodes[season].map((ep: any) => (
-            <TouchableOpacity
-              key={ep.id}
-              style={styles.item}
-              onPress={() => handleEpisodeSelect(ep)}
-            >
-              <Text style={styles.itemText}>Episode {ep.episode_num}: {ep.title}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }

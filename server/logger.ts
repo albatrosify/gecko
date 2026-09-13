@@ -11,5 +11,7 @@ export function log(msg: string) {
     const dir = path.dirname(LOG_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(LOG_PATH, entry);
-  } catch (e) {}
+  } catch (e: any) {
+    console.error(`Failed to append to log file: ${e?.message || e}`);
+  }
 }

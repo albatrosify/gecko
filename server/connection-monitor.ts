@@ -19,15 +19,14 @@ export async function checkSourceConnection(
   isManual: boolean = false
 ): Promise<SourceConnectionLog> {
   const sourceId = source.id;
-  const now = new Date().toISOString();
-  const db = getDb();
-
   // Prevent overlapping checks for the same source
   if (isCheckingMap.get(sourceId)) {
     throw new Error('A connection check is already in progress for this source.');
   }
-
   isCheckingMap.set(sourceId, true);
+
+  const now = new Date().toISOString();
+  const db = getDb();
 
   try {
     if (source.type !== 'xtream' || !source.url || !source.username || !source.password) {
@@ -136,11 +135,12 @@ export async function checkSourceConnection(
 
       log(`[Monitor] Source "${source.name}": ${details} (${isManual ? 'manual' : 'auto'})`);
       return logEntry;
-    } else if (status === 'error') {
+    } else {
       const geckoStreams = Array.from(proxyStats.connections.values()).filter(
         c => c.sourceId === sourceId
       ).length;
 
+      const finalErrorMessage = errorMessage || 'Unexpected or empty response format from upstream server.';
       const logId = generateId();
       const logEntry: SourceConnectionLog = {
         id: logId,
@@ -151,8 +151,8 @@ export async function checkSourceConnection(
         geckoStreams,
         status: 'error',
         isExternal: false,
-        details: details || 'Failed to authenticate with upstream',
-        extra: { error: errorMessage, isManual }
+        details: details || `Upstream error: ${finalErrorMessage}`,
+        extra: { error: finalErrorMessage, isManual }
       };
 
       db.insert(source_connection_logs).values({
@@ -174,15 +174,13 @@ export async function checkSourceConnection(
           ...(sourceDoc.extra as any || {}),
           lastMonitorCheck: now,
           lastMonitorStatus: 'error',
-          lastMonitorError: errorMessage,
+          lastMonitorError: finalErrorMessage,
         };
         db.update(sources).set({ extra: mergedExtra }).where(eq(sources.id, sourceId)).run();
       }
 
       return logEntry;
     }
-
-    throw new Error('Unexpected response format from upstream server.');
   } finally {
     isCheckingMap.delete(sourceId);
   }
@@ -275,6 +273,9 @@ async function runMonitorCycle(): Promise<void> {
       const elapsedSec = (Date.now() - lastCheckTime) / 1000;
 
       if (elapsedSec >= intervalSec) {
+        if (isCheckingMap.get(source.id)) {
+          continue;
+        }
         // Run check asynchronously so one source's delay does not block others
         checkSourceConnection(source, false).catch(err => {
           log(`[Monitor] Auto-check failed for ${source.name}: ${err.message}`);
@@ -297,4 +298,12 @@ export function initConnectionMonitor(): void {
   log('Initializing Upstream Connection Monitor...');
   // Tick every 15 seconds to check if any source's interval has expired
   monitorIntervalTimer = setInterval(runMonitorCycle, 15000);
+  monitorIntervalTimer.unref?.();
+}
+
+export function stopConnectionMonitor(): void {
+  if (monitorIntervalTimer) {
+    clearInterval(monitorIntervalTimer);
+    monitorIntervalTimer = null;
+  }
 }

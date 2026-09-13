@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Button } from 'react-native';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
@@ -16,26 +16,68 @@ export default function PlaylistSelectScreen() {
   const { geckoUrl, jwtToken, selectPlaylist, logout } = useAuth();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    fetchPlaylists();
-  }, []);
-
-  const fetchPlaylists = async () => {
-    try {
-      const res = await axios.get(`${geckoUrl}/api/playlists`, {
-        headers: { Authorization: `Bearer ${jwtToken}` },
-      });
-      setPlaylists(res.data);
-    } catch (e: any) {
-      Alert.alert('Error', e.response?.data?.error || e.message);
-    } finally {
+  const fetchPlaylists = async (signal?: AbortSignal) => {
+    if (!geckoUrl || !jwtToken) {
       setIsLoading(false);
+      return;
+    }
+    try {
+      setIsLoading(true);
+      setFetchError(null);
+      const res = await axios.get<Playlist[]>(`${geckoUrl}/api/playlists`, {
+        headers: { Authorization: `Bearer ${jwtToken}` },
+        signal,
+      });
+      setPlaylists(Array.isArray(res.data) ? res.data : []);
+    } catch (e: unknown) {
+      if (axios.isCancel(e) || (e instanceof Error && e.name === 'CanceledError')) {
+        return;
+      }
+      const message = axios.isAxiosError(e)
+        ? e.response?.data?.error || e.message
+        : 'Failed to load playlists';
+      setFetchError(message);
+      Alert.alert('Error', message);
+    } finally {
+      if (!signal?.aborted) {
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleSelect = (item: Playlist) => {
-    selectPlaylist(item.username, item.password);
+  useEffect(() => {
+    if (!geckoUrl || !jwtToken) {
+      setIsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    fetchPlaylists(controller.signal);
+    return () => {
+      controller.abort();
+    };
+  }, [geckoUrl, jwtToken]);
+
+  const handleRetry = () => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    fetchPlaylists(controller.signal);
+  };
+
+  const handleSelect = async (item: Playlist) => {
+    if (!item?.username) {
+      Alert.alert('Error', 'Invalid playlist configuration: missing username.');
+      return;
+    }
+    try {
+      await selectPlaylist(item.username, item.password || '');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to select playlist.');
+    }
   };
 
   if (isLoading) {
@@ -52,6 +94,12 @@ export default function PlaylistSelectScreen() {
         <Text style={styles.title}>Select a Playlist</Text>
         <Button title="Logout" onPress={logout} color="#ef4444" />
       </View>
+      {fetchError && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{fetchError}</Text>
+          <Button title="Retry" onPress={handleRetry} color="#6366f1" />
+        </View>
+      )}
       <FlatList
         data={playlists}
         keyExtractor={(item) => item.id}
@@ -111,5 +159,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#a1a1aa',
     marginTop: 40,
+  },
+  errorContainer: {
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#ef4444',
+    textAlign: 'center',
+    marginBottom: 8,
   },
 });

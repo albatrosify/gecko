@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb } from "../db.ts";
 import { generateId } from "../db.ts";
 import { log } from "../logger.ts";
+import { isValidHttpUrl } from "../utils.ts";
 
 export function createEpgsRouter() {
   const router = Router();
@@ -19,26 +20,36 @@ export function createEpgsRouter() {
 
     const formatted = docs.map(d => {
       const extra = (d.extra as any) || {};
-      return { id: d.id, userId: d.userId, name: d.name, url: d.url, ...extra };
+      return { ...extra, id: d.id, userId: d.userId, name: d.name, url: d.url };
     });
     res.json(formatted);
   });
 
   router.post("/epgs", requireAuth, async (req: AuthRequest, res) => {
+    const { name, url, ...extra } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: "EPG name is required" });
+    }
+    if (!url || typeof url !== 'string' || !isValidHttpUrl(url)) {
+      return res.status(400).json({ error: "Valid HTTP(S) URL is required" });
+    }
+
+    delete (extra as any).id;
+    delete (extra as any).userId;
+
     const db = getDb();
     const { epgs: schemaEpgs } = await import('../schema.ts');
     const newId = generateId();
-    const { name, url, ...extra } = req.body;
 
     db.insert(schemaEpgs).values({
       id: newId,
       userId: req.user!.id,
-      name,
-      url,
+      name: name.trim(),
+      url: url.trim(),
       extra: { ...extra, enabled: true }
     }).run();
 
-    res.status(201).json({ id: newId, userId: req.user!.id, name, url, ...extra, enabled: true });
+    res.status(201).json({ ...extra, id: newId, userId: req.user!.id, name: name.trim(), url: url.trim(), enabled: true });
   });
 
   router.delete("/epgs/:id", requireAuth, async (req: AuthRequest, res) => {
@@ -66,21 +77,35 @@ export function createEpgsRouter() {
     const { playlistId } = req.query;
     if (!playlistId) return res.status(400).json({ error: 'playlistId required' });
 
-    const cached = epgChannelCache.get(playlistId as string);
-    if (cached && Date.now() < cached.expiresAt) return res.json({ channels: cached.channels });
-
     const db = getDb();
     const { playlists: schemaPlaylists, epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
     const { eq, inArray, and } = await import('drizzle-orm');
 
-    const playlistDoc = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.id, playlistId as string)).get();
+    const playlistDoc = db.select().from(schemaPlaylists).where(
+      req.user?.role === 'admin'
+        ? eq(schemaPlaylists.id, playlistId as string)
+        : and(eq(schemaPlaylists.id, playlistId as string), eq(schemaPlaylists.userId, req.user!.id))
+    ).get();
     if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
+
+    const cached = epgChannelCache.get(playlistId as string);
+    if (cached && Date.now() < cached.expiresAt) return res.json({ channels: cached.channels });
+
     const pExtra = (playlistDoc.extra as any) || {};
     const sourceIds: string[] = Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : [];
 
     const fetchXmlHead = async (url: string, sourceName: string): Promise<string> => {
       try {
-        log(`[EPG] Fetching channels from "${sourceName}" (${url.slice(0, 80)}...)`);
+        if (!isValidHttpUrl(url)) {
+          log(`[EPG] Skipping invalid URL for "${sourceName}"`);
+          return '';
+        }
+        let safeLogUrl = url;
+        try {
+          const parsed = new URL(url);
+          safeLogUrl = `${parsed.origin}${parsed.pathname}`;
+        } catch {}
+        log(`[EPG] Fetching channels from "${sourceName}" (${safeLogUrl})`);
         const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
         let data = Buffer.from(response.data);
         if (url.endsWith('.gz') || response.headers['content-encoding'] === 'gzip') {
@@ -104,7 +129,11 @@ export function createEpgsRouter() {
 
     // Custom EPG sources
     if (epgIds.length) {
-      const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
+      const epgDocs = db.select().from(schemaEpgs).where(
+        req.user?.role === 'admin'
+          ? inArray(schemaEpgs.id, epgIds)
+          : and(inArray(schemaEpgs.id, epgIds), eq(schemaEpgs.userId, req.user!.id))
+      ).all();
       log(`[EPG] Resolved ${epgDocs.length}/${epgIds.length} custom EPG docs from DB`);
       for (const e of epgDocs) {
         if (e.url) {
@@ -116,7 +145,11 @@ export function createEpgsRouter() {
 
     // Upstream sources with useUpstreamEpg
     const sourceDocs = sourceIds.length > 0
-      ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
+      ? db.select().from(schemaSources).where(
+          req.user?.role === 'admin'
+            ? inArray(schemaSources.id, sourceIds)
+            : and(inArray(schemaSources.id, sourceIds), eq(schemaSources.userId, req.user!.id))
+        ).all()
       : [];
 
     for (const s of sourceDocs) {

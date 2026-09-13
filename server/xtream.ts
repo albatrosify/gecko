@@ -47,17 +47,13 @@ export class XtreamClient {
       this.lastResponseHeaders = response.headers;
       const duration = Date.now() - start;
       log(`[Xtream] GET ${action || 'authenticate'} - ${response.status} (${duration}ms)`);
-      log(`[Xtream]   Payload type: ${typeof response.data}`);
-      if (typeof response.data === 'string') {
-        log(`[Xtream]   String preview: ${response.data.substring(0, 500)}`);
-      } else if (Array.isArray(response.data)) {
-        log(`[Xtream]   Array size: ${response.data.length} items`);
-        if (response.data.length > 0) {
-          log(`[Xtream]   First item preview: ${JSON.stringify(response.data[0]).substring(0, 200)}`);
+      if (process.env.DEBUG_XTREAM === 'true') {
+        log(`[Xtream]   Payload type: ${typeof response.data}`);
+        if (typeof response.data === 'string') {
+          log(`[Xtream]   String preview: ${response.data.substring(0, 100)}...`);
+        } else if (Array.isArray(response.data)) {
+          log(`[Xtream]   Array size: ${response.data.length} items`);
         }
-      } else if (response.data && typeof response.data === 'object') {
-        const keys = Object.keys(response.data);
-        log(`[Xtream]   Object keys: ${keys.slice(0, 10).join(', ')}${keys.length > 10 ? '...' : ''} (${keys.length} total)`);
       }
       
       return response.data;
@@ -66,7 +62,7 @@ export class XtreamClient {
       const duration = Date.now() - start;
       log(`[Xtream] ERROR ${action || 'authenticate'} after ${duration}ms: ${error.message}`);
       if (error.code === 'ECONNABORTED') {
-        throw new Error(`Connection timed out after ${Math.round(timeoutMs / 1000)}s to ${url}`);
+        throw new Error(`Connection timed out after ${Math.round(timeoutMs / 1000)}s to ${this.baseUrl} (action=${action || 'authenticate'})`);
       }
       throw error;
     }
@@ -125,14 +121,16 @@ export class XtreamClient {
   }
 
   getLiveStreamUrl(streamId: string | number) {
-    return `${this.baseUrl}/live/${this.source.username}/${this.source.password}/${streamId}.ts`;
+    return `${this.baseUrl}/live/${encodeURIComponent(this.source.username || '')}/${encodeURIComponent(this.source.password || '')}/${encodeURIComponent(String(streamId))}.ts`;
   }
 
   getVodStreamUrl(streamId: string | number, extension: string = "mp4") {
-    return `${this.baseUrl}/movie/${this.source.username}/${this.source.password}/${streamId}.${extension}`;
+    const safeExt = encodeURIComponent(extension || 'mp4');
+    return `${this.baseUrl}/movie/${encodeURIComponent(this.source.username || '')}/${encodeURIComponent(this.source.password || '')}/${encodeURIComponent(String(streamId))}.${safeExt}`;
   }
 
   getSeriesStreamUrl(streamId: string | number, extension: string = "mp4") {
-    return `${this.baseUrl}/series/${this.source.username}/${this.source.password}/${streamId}.${extension}`;
+    const safeExt = encodeURIComponent(extension || 'mp4');
+    return `${this.baseUrl}/series/${encodeURIComponent(this.source.username || '')}/${encodeURIComponent(this.source.password || '')}/${encodeURIComponent(String(streamId))}.${safeExt}`;
   }
 }

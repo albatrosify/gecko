@@ -65,13 +65,14 @@ async function startServer() {
     initHostStatsFlusher();
 
     const app = express();
+    app.set('trust proxy', 1);
     const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT));
 
     // Security middleware
     app.use(helmet({
       contentSecurityPolicy: false,
     }));
-    app.use(cors());
+    app.use(cors(process.env.CORS_ORIGIN ? { origin: process.env.CORS_ORIGIN.split(',').map(s => s.trim()) } : undefined));
 
     app.use(express.json({ limit: '50mb' }));
     // Disable ETag-based caching for all API responses so clients always get
@@ -161,7 +162,7 @@ async function startServer() {
 }
 
 process.on('uncaughtException', (err) => {
-  log('Uncaught Exception: ' + err.message);
+  log('Uncaught Exception: ' + (err instanceof Error ? err.stack || err.message : String(err)));
 });
 
 process.on('unhandledRejection', (reason, promise) => {

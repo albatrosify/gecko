@@ -1,9 +1,12 @@
 node_modules
 dist
 .env
-.env.local
+.env.*
+*.pem
+*.key
+id_rsa*
 .git
 .gitignore
 *.md
-data/cache
-startup.log
+data
+*.log

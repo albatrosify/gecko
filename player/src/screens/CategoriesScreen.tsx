@@ -25,21 +25,34 @@ export default function CategoriesScreen() {
   }, [geckoUrl, selectedPlaylist]);
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
+    let cancelled = false;
+
     let fetchPromise;
     if (type === 'live') fetchPromise = api.getLiveCategories();
     else if (type === 'vod') fetchPromise = api.getVodCategories();
     else fetchPromise = api.getSeriesCategories();
 
-    fetchPromise
-      .then(data => setCategories(data))
-      .catch(err => {
+    (async () => {
+      try {
+        const data = await fetchPromise;
+        if (!cancelled) setCategories(Array.isArray(data) ? data : []);
+      } catch (err) {
         console.error('Failed to fetch categories', err);
-        Alert.alert('Error', `Failed to load ${type} categories.`);
-      })
-      .finally(() => setIsLoading(false));
+        if (!cancelled) Alert.alert('Error', `Failed to load ${type} categories.`);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [api, type]);
 
   const handleCategorySelect = (categoryId: string, categoryName: string) => {

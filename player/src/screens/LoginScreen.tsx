@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import axios from 'axios';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, normalizeBaseUrl } from '../context/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function LoginScreen() {
@@ -18,7 +18,13 @@ export default function LoginScreen() {
       return;
     }
 
-    const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+    let cleanUrl = '';
+    try {
+      cleanUrl = normalizeBaseUrl(url);
+    } catch {
+      Alert.alert('Error', 'Server URL must start with http:// or https://');
+      return;
+    }
 
     try {
       setIsLoading(true);

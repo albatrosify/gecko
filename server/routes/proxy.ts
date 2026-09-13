@@ -146,9 +146,13 @@ export function createProxyRouter() {
       const hostUrls = getActiveHostUrls(sourceDoc);
 
       for (const hostUrl of hostUrls) {
-        const upstreamUrl = ext
-          ? `${hostUrl}/${type}/${overrideUsername}/${overridePassword}/${originalId}.${ext}`
-          : `${hostUrl}/${type}/${overrideUsername}/${overridePassword}/${originalId}`;
+        const safeExt = ext && /^[a-zA-Z0-9]{1,8}$/.test(ext) ? ext : null;
+        const encUser = encodeURIComponent(overrideUsername);
+        const encPass = encodeURIComponent(overridePassword);
+        const encId = encodeURIComponent(originalId);
+        const upstreamUrl = safeExt
+          ? `${hostUrl}/${type}/${encUser}/${encPass}/${encId}.${safeExt}`
+          : `${hostUrl}/${type}/${encUser}/${encPass}/${encId}`;
 
         try {
           const response = await axios({
@@ -265,7 +269,13 @@ export function createProxyRouter() {
     const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
     const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
 
-    const upstreamUrl = `${sourceDoc.url}/timeshift/${overrideUsername}/${overridePassword}/${duration}/${start}/${streamId}.${ext}`;
+    const hostUrls = getActiveHostUrls(sourceDoc);
+    const baseUrl = hostUrls[0] || (sourceDoc.url ? (sourceDoc.url.startsWith('http') ? sourceDoc.url.replace(/\/+$/, '') : `http://${sourceDoc.url.replace(/\/+$/, '')}`) : '');
+    if (!baseUrl) {
+      return res.status(400).send("No source host configured");
+    }
+    const safeExt = /^[a-zA-Z0-9]{1,8}$/.test(ext) ? ext : 'ts';
+    const upstreamUrl = `${baseUrl}/timeshift/${encodeURIComponent(overrideUsername)}/${encodeURIComponent(overridePassword)}/${duration}/${start}/${encodeURIComponent(streamId)}.${safeExt}`;
     log(`[Timeshift] ${username} -> ${streamId} start=${start} dur=${duration}m - ${getClientInfo(req)}`);
 
     try {
@@ -322,8 +332,13 @@ export function createProxyRouter() {
         httpAgent: safeHttpAgent,
         httpsAgent: safeHttpsAgent,
         beforeRedirect: (options: any) => {
-          const redirectHostname = (options.hostname || options.host || '').replace(/^\[|\]$/g, '');
-          if (isForbiddenIP(redirectHostname)) {
+          let host = options.hostname;
+          if (!host && options.host) {
+            const match = options.host.match(/^\[([^\]]+)\](?::\d+)?$/) || options.host.match(/^([^:]+)(?::\d+)?$/);
+            host = match ? match[1] : options.host;
+          }
+          const redirectHostname = (host || '').replace(/^\[|\]$/g, '');
+          if (!redirectHostname || isForbiddenIP(redirectHostname)) {
             throw new Error('Access to local network is forbidden');
           }
         }
@@ -985,15 +1000,17 @@ export function createProxyRouter() {
             break;
           }
       case 'get_live_info': {
-            let liveStreamId = req.query.stream_id as string;
-            // Try streamId first (new integer ID), then fall back to stream_id
-            if (!liveStreamId && (req.body as any)?.streamId) liveStreamId = (req.body as any).streamId;
+            let liveStreamId = (req.query.stream_id || (req.body as any)?.streamId) as string | undefined;
+            if (!liveStreamId || typeof liveStreamId !== 'string') {
+              data = { error: "stream_id required" };
+              break;
+            }
             // Use integer stream ID directly (no underscore prefix)
             const liveResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
              const sDoc = sourcesMap.get(sid);
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
-             try { return await cl.getLiveInfo(liveStreamId); } catch { return null; }
+             try { return await cl.getLiveInfo(liveStreamId!); } catch { return null; }
            })));
            data = liveResults.find(r => r !== null) || {};
            if (data.info?.stream_icon) data.info.stream_icon = proxyImageUrl(data.info.stream_icon, imgBase);
@@ -1001,9 +1018,11 @@ export function createProxyRouter() {
          }
 
          case 'get_short_epg': {
-            let epgStreamId = req.query.stream_id as string;
-            // Try streamId first (new integer ID), then fall back to stream_id
-            if (!epgStreamId && (req.body as any)?.streamId) epgStreamId = (req.body as any).streamId;
+            let epgStreamId = (req.query.stream_id || (req.body as any)?.streamId) as string | undefined;
+            if (!epgStreamId || typeof epgStreamId !== 'string') {
+              data = { epg_listings: [] };
+              break;
+            }
             // Use integer stream ID directly (no underscore prefix)
             const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
             const epgResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
@@ -1011,7 +1030,7 @@ export function createProxyRouter() {
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
              try {
-               const r = await cl.getShortEpg(epgStreamId, epgLimit);
+               const r = await cl.getShortEpg(epgStreamId!, epgLimit);
                if (r && (r.epg_listings?.length || r.length)) {
                  if (Array.isArray(r.epg_listings)) {
                    r.epg_listings.forEach((listing: any) => {
@@ -1028,16 +1047,18 @@ export function createProxyRouter() {
         }
 
         case 'get_simple_data_table': {
-          let tableStreamId = req.query.stream_id as string;
-          // Try streamId first (new integer ID), then fall back to stream_id
-          if (!tableStreamId && (req.body as any)?.streamId) tableStreamId = (req.body as any).streamId;
+          let tableStreamId = (req.query.stream_id || (req.body as any)?.streamId) as string | undefined;
+          if (!tableStreamId || typeof tableStreamId !== 'string') {
+            data = { epg_listings: [] };
+            break;
+          }
           // Use integer stream ID directly (no underscore prefix)
           const tableResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             const sDoc = sourcesMap.get(sid);
             if (!sDoc) return null;
             const cl = new XtreamClient(sDoc as any);
             try {
-              const r = await cl.getSimpleDataTable(tableStreamId);
+              const r = await cl.getSimpleDataTable(tableStreamId!);
               if (r && (r.epg_listings?.length || r.length)) {
                 if (Array.isArray(r.epg_listings)) {
                   r.epg_listings.forEach((listing: any) => {
@@ -1054,7 +1075,11 @@ export function createProxyRouter() {
         }
 
         case 'get_vod_info': {
-          let vodId = req.query.vod_id as string;
+          let vodId = req.query.vod_id as string | undefined;
+          if (!vodId || typeof vodId !== 'string') {
+            data = { error: "vod_id required" };
+            break;
+          }
           let targetSIdx: number | null = null;
           if (vodId.includes('_')) {
             const parts = vodId.split('_');
@@ -1068,7 +1093,7 @@ export function createProxyRouter() {
             if (!sDoc) return null;
             const cl = new XtreamClient(sDoc as any);
             try {
-              const info = await cl.getVodInfo(vodId);
+              const info = await cl.getVodInfo(vodId!);
               if (info && (info.info || info.movie_data)) return info;
             } catch (e) {
               return null;
@@ -1089,7 +1114,11 @@ export function createProxyRouter() {
         }
 
         case 'get_series_info': {
-          let seriesId = req.query.series_id as string;
+          let seriesId = req.query.series_id as string | undefined;
+          if (!seriesId || typeof seriesId !== 'string') {
+            data = { error: "series_id required" };
+            break;
+          }
           let targetSIdx: number | null = null;
           if (seriesId.includes('_')) {
             const parts = seriesId.split('_');
@@ -1103,7 +1132,7 @@ export function createProxyRouter() {
             if (!sDoc) return null;
             const cl = new XtreamClient(sDoc as any);
             try {
-              const info = await cl.getSeriesInfo(seriesId);
+              const info = await cl.getSeriesInfo(seriesId!);
               // Xtream API returns an object with "seasons" and "info" if found
               if (info && (info.seasons || info.episodes || info.info)) {
                 return info;

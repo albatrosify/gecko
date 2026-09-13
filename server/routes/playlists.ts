@@ -118,11 +118,44 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         });
       }
 
-      // Helper to replace credentials in URLs
-      const replaceUrlCredentials = (url: string, oldUser: string, oldPass: string, newUser: string, newPass: string) => {
-        if (!url) return url;
-        return url.split(`username=${oldUser}`).join(`username=${newUser}`)
-                  .split(`password=${oldPass}`).join(`password=${newPass}`);
+      // Helper to replace credentials in URLs (supports query params and path-based Xtream URLs)
+      const replaceUrlCredentials = (rawUrl: string, oldUser: string, oldPass: string, newUser: string, newPass: string): string => {
+        if (!rawUrl || !oldUser || !oldPass) return rawUrl;
+        try {
+          const parsed = new URL(rawUrl);
+          let modified = false;
+
+          // 1. Search params (e.g. get.php?username=...&password=...)
+          if (parsed.searchParams.has('username') && parsed.searchParams.get('username') === oldUser) {
+            parsed.searchParams.set('username', newUser);
+            modified = true;
+          }
+          if (parsed.searchParams.has('password') && parsed.searchParams.get('password') === oldPass) {
+            parsed.searchParams.set('password', newPass);
+            modified = true;
+          }
+
+          // 2. Path segments (e.g. /live/username/password/stream.ext)
+          const segments = parsed.pathname.split('/');
+          for (let i = 0; i < segments.length - 1; i++) {
+            let segUser = segments[i];
+            let segPass = segments[i + 1];
+            try { segUser = decodeURIComponent(segUser); } catch {}
+            try { segPass = decodeURIComponent(segPass); } catch {}
+
+            if (segUser === oldUser && segPass === oldPass) {
+              segments[i] = encodeURIComponent(newUser);
+              segments[i + 1] = encodeURIComponent(newPass);
+              parsed.pathname = segments.join('/');
+              modified = true;
+              break;
+            }
+          }
+
+          return modified ? parsed.toString() : rawUrl;
+        } catch {
+          return rawUrl;
+        }
       };
 
       // 3. Clone Stream Mappings
@@ -238,7 +271,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       sourceIds: sourceIds !== undefined ? sourceIds : existing.sourceIds,
       directStreams: directStreams !== undefined ? directStreams : existing.directStreams,
       extra: { ...currentExtra, ...extra }
-    }).where(eq(schemaPlaylists.id, req.params.id)).run();
+    }).where(and(eq(schemaPlaylists.id, req.params.id), eq(schemaPlaylists.userId, req.user!.id))).run();
 
     if (epgsRouter && (epgsRouter as any).invalidateEpgChannelCache) {
       (epgsRouter as any).invalidateEpgChannelCache(req.params.id);
@@ -256,11 +289,15 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
     const { id } = req.params;
 
     const doc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, id), eq(schemaPlaylists.userId, req.user!.id))).get();
-    if (doc) {
-      const extra = { ...(doc.extra as any || {}), isSynced: true };
-      db.update(schemaPlaylists).set({ extra }).where(eq(schemaPlaylists.id, id)).run();
-      db.delete(schemaMappings).where(eq(schemaMappings.playlistId, id)).run();
+    if (!doc) {
+      return res.status(404).json({ error: "Playlist not found" });
     }
+
+    const extra = { ...(doc.extra as any || {}), isSynced: true };
+    db.transaction((tx) => {
+      tx.update(schemaPlaylists).set({ extra }).where(and(eq(schemaPlaylists.id, id), eq(schemaPlaylists.userId, req.user!.id))).run();
+      tx.delete(schemaMappings).where(eq(schemaMappings.playlistId, id)).run();
+    });
 
     res.json({ success: true, message: "Playlist marked as synced. Re-import streams to apply." });
   });
@@ -270,6 +307,11 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
     const { playlists: schemaPlaylists, mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
     const { eq, and } = await import('drizzle-orm');
     const playlistId = req.params.id;
+
+    const playlist = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).get();
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found" });
+    }
 
     db.transaction((tx) => {
       tx.delete(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).run();
@@ -474,33 +516,66 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         }
       }
 
-      let extension = (typeof req.query.extension === 'string' && req.query.extension)
+      const rawExt = (typeof req.query.extension === 'string' && req.query.extension)
         ? req.query.extension
         : (streamData?.container_extension || 'mp4');
+      const safeExt = /^[a-zA-Z0-9]{1,8}$/.test(rawExt) ? rawExt.toLowerCase() : 'mp4';
 
-      let title = (typeof req.query.title === 'string' && req.query.title)
+      const title = (typeof req.query.title === 'string' && req.query.title)
         ? req.query.title
         : (streamData?.name || streamData?.title || `Stream_${streamId}`);
 
-      let url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', extension);
+      const url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', safeExt);
 
       // Proxy the upstream response as a file download
       const upstreamRes = await axios.get(url, {
         responseType: 'stream',
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0' },
-        timeout: 10_000,
+        timeout: 15_000,
       });
 
-      const filename = `${title.replace(/[^\w\s.-]/g, '_')}.${extension}`;
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      const filename = `${title.replace(/[^\w\s.-]/g, '_')}.${safeExt}`;
+      const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_');
+      res.setHeader('Content-Disposition', `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
       res.setHeader('Content-Type', upstreamRes.headers['content-type'] || 'application/octet-stream');
       if (upstreamRes.headers['content-length']) {
         res.setHeader('Content-Length', upstreamRes.headers['content-length']);
       }
-      (upstreamRes.data as NodeJS.ReadableStream).pipe(res);
-    } catch (e: any) {
-      if (!res.headersSent) res.status(502).json({ error: `Upstream error: ${e.message}` });
 
+      const stream = upstreamRes.data as NodeJS.ReadableStream;
+      let settled = false;
+
+      const safeEnd = () => {
+        if (!settled) {
+          settled = true;
+          if (!res.headersSent) {
+            res.status(502).json({ error: 'Upstream stream error' });
+          } else if (!res.writableEnded) {
+            res.end();
+          }
+        }
+      };
+
+      stream.on('error', (err: any) => {
+        log(`[Download Proxy] Stream error for stream ${streamId}: ${err.message}`);
+        safeEnd();
+      });
+
+      res.on('close', () => {
+        settled = true;
+        if ((stream as any).destroy) {
+          (stream as any).destroy();
+        }
+      });
+
+      stream.pipe(res);
+    } catch (e: any) {
+      log(`[Download Proxy] Failed for playlist ${playlistId}, stream ${streamId}: ${e.message}`);
+      if (!res.headersSent) {
+        res.status(502).json({ error: `Upstream error: ${e.message}` });
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     }
   });
 

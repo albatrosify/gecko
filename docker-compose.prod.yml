@@ -12,8 +12,15 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-nordvpn}
       - VPN_TYPE=${VPN_TYPE:-wireguard}
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:-}
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:?WIREGUARD_PRIVATE_KEY is required}
       - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Netherlands}
+      - HTTP_CONTROL_SERVER_ADDRESS=:8000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - app-net
     restart: unless-stopped
@@ -23,10 +30,11 @@ services:
     image: ghcr.io/albatrosify/gecko:${GECKO_VERSION:-latest}
     network_mode: "service:gluetun"
     depends_on:
-      - gluetun
+      gluetun:
+        condition: service_healthy
     environment:
       - SQLITE_PATH=/app/data/gecko.db
-      - JWT_SECRET=${JWT_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
       - PORT=${PORT:-3000}
       - NODE_ENV=production
       - APP_URL=${APP_URL:-}

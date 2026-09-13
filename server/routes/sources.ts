@@ -5,7 +5,7 @@ import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
-import { parseXtreamExpDate } from "../utils.ts";
+import { parseXtreamExpDate, isValidHttpUrl } from "../utils.ts";
 import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
 import { normalizeHosts, benchmarkSourceHosts, getHostBenchmarkHistory } from "../hosts.ts";
 
@@ -21,9 +21,9 @@ export function createSourcesRouter() {
     const { eq } = await import('drizzle-orm');
     const docs = db.select().from(schemaSources).where(eq(schemaSources.userId, req.user!.id)).all();
     const formatted = docs.map(d => ({
+      ...(d.extra as any || {}),
       id: d.id, userId: d.userId, name: d.name, type: d.type, url: d.url,
       username: d.username, password: d.password, autoSyncEnabled: d.autoSyncEnabled, syncCron: d.syncCron,
-      ...(d.extra as any || {})
     }));
     res.json(formatted);
   });
@@ -33,6 +33,9 @@ export function createSourcesRouter() {
     const { sources: schemaSources } = await import('../schema.ts');
     const newId = generateId();
     const { name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, hosts, ...extra } = req.body;
+
+    delete (extra as any).id;
+    delete (extra as any).userId;
 
     extra.enabled = true;
     extra.lastUpdated = new Date().toISOString();
@@ -44,8 +47,18 @@ export function createSourcesRouter() {
     if (type === 'xtream') {
       if (hosts !== undefined) {
         primaryUrl = url || (Array.isArray(hosts) && hosts[0]?.url) || (Array.isArray(hosts) && hosts[0]) || '';
-        extra.hosts = normalizeHosts(Array.isArray(hosts) ? hosts : [], primaryUrl);
+        const normalized = normalizeHosts(Array.isArray(hosts) ? hosts : [], primaryUrl);
+        for (const h of normalized) {
+          if (!isValidHttpUrl(h.url)) {
+            return res.status(400).json({ error: `Invalid host URL: ${h.url}. Must start with http:// or https://` });
+          }
+        }
+        extra.hosts = normalized;
       }
+    }
+
+    if (!primaryUrl || !isValidHttpUrl(primaryUrl)) {
+      return res.status(400).json({ error: "Invalid URL. Must start with http:// or https://" });
     }
 
     if (type === 'xtream' && primaryUrl && username && password) {
@@ -66,7 +79,7 @@ export function createSourcesRouter() {
       id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron, extra
     }).run();
 
-    const newSource = { id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron, ...extra };
+    const newSource = { ...(extra || {}), id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron };
     scheduleSourceCron(newSource);
     res.status(201).json(newSource);
   });
@@ -78,51 +91,74 @@ export function createSourcesRouter() {
     const { id, name, type, url, username, password, autoSyncEnabled, syncCron, expiryDate, hosts, ...extra } = req.body;
     const sourceId = req.params.id;
 
+    delete (extra as any).id;
+    delete (extra as any).userId;
+
     const doc = db.select().from(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).get();
-    if (doc) {
-      const mergedExtra = { ...(doc.extra as any || {}), ...extra };
-      if (expiryDate !== undefined) {
-        mergedExtra.expiryDate = expiryDate;
-      }
+    if (!doc) {
+      return res.status(404).json({ error: "Source not found" });
+    }
 
-      const targetType = type !== undefined ? type : doc.type;
-      const targetUrl = url !== undefined ? url : doc.url;
-      const targetUser = username !== undefined ? username : doc.username;
-      const targetPass = password !== undefined ? password : doc.password;
+    const mergedExtra = { ...(doc.extra as any || {}), ...extra };
+    if (expiryDate !== undefined) {
+      mergedExtra.expiryDate = expiryDate;
+    }
 
-      if (targetType === 'xtream' && hosts !== undefined) {
-        const existingHosts = Array.isArray((doc.extra as any)?.hosts) ? (doc.extra as any).hosts : [];
-        mergedExtra.hosts = normalizeHosts(Array.isArray(hosts) ? hosts : [], targetUrl, existingHosts);
-      }
+    const targetType = type !== undefined ? type : doc.type;
+    const targetUrl = url !== undefined ? url : doc.url;
+    const targetUser = username !== undefined ? username : doc.username;
+    const targetPass = password !== undefined ? password : doc.password;
 
-      if (targetType === 'xtream' && targetUrl && targetUser && targetPass) {
-        try {
-          const client = new XtreamClient({ url: targetUrl, username: targetUser, password: targetPass } as any);
-          const auth = await client.authenticate();
-          if (auth && auth.user_info) {
-            mergedExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
-            if (auth.user_info.status) mergedExtra.accountStatus = auth.user_info.status;
-            if (auth.user_info.max_connections !== undefined) mergedExtra.maxConnections = auth.user_info.max_connections;
-          }
-        } catch (e: any) {
-          log(`[Sources] Failed to fetch account info on update for ${sourceId}: ${e.message}`);
+    if (url !== undefined && !isValidHttpUrl(targetUrl)) {
+      return res.status(400).json({ error: "Invalid URL. Must start with http:// or https://" });
+    }
+
+    if (targetType === 'xtream' && hosts !== undefined) {
+      const existingHosts = Array.isArray((doc.extra as any)?.hosts) ? (doc.extra as any).hosts : [];
+      const normalized = normalizeHosts(Array.isArray(hosts) ? hosts : [], targetUrl, existingHosts);
+      for (const h of normalized) {
+        if (!isValidHttpUrl(h.url)) {
+          return res.status(400).json({ error: `Invalid host URL: ${h.url}. Must start with http:// or https://` });
         }
       }
-
-      db.update(schemaSources).set({
-        name: name !== undefined ? name : doc.name,
-        type: type !== undefined ? type : doc.type,
-        url: url !== undefined ? url : doc.url,
-        username: username !== undefined ? username : doc.username,
-        password: password !== undefined ? password : doc.password,
-        autoSyncEnabled: autoSyncEnabled !== undefined ? autoSyncEnabled : doc.autoSyncEnabled,
-        syncCron: syncCron !== undefined ? syncCron : doc.syncCron,
-        extra: mergedExtra
-      }).where(eq(schemaSources.id, sourceId)).run();
-
-      const fullSource = db.select().from(schemaSources).where(eq(schemaSources.id, sourceId)).get();
-      if (fullSource) scheduleSourceCron({ ...fullSource, ...(fullSource.extra as any || {}) });
+      mergedExtra.hosts = normalized;
     }
+
+    if (targetType === 'xtream' && targetUrl && targetUser && targetPass) {
+      try {
+        const client = new XtreamClient({ url: targetUrl, username: targetUser, password: targetPass } as any);
+        const auth = await client.authenticate();
+        if (auth && auth.user_info) {
+          mergedExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
+          if (auth.user_info.status) mergedExtra.accountStatus = auth.user_info.status;
+          if (auth.user_info.max_connections !== undefined) mergedExtra.maxConnections = auth.user_info.max_connections;
+        }
+      } catch (e: any) {
+        log(`[Sources] Failed to fetch account info on update for ${sourceId}: ${e.message}`);
+      }
+    }
+
+    db.update(schemaSources).set({
+      name: name !== undefined ? name : doc.name,
+      type: type !== undefined ? type : doc.type,
+      url: url !== undefined ? url : doc.url,
+      username: username !== undefined ? username : doc.username,
+      password: password !== undefined ? password : doc.password,
+      autoSyncEnabled: autoSyncEnabled !== undefined ? autoSyncEnabled : doc.autoSyncEnabled,
+      syncCron: syncCron !== undefined ? syncCron : doc.syncCron,
+      extra: mergedExtra
+    }).where(
+      req.user?.role === 'admin'
+        ? eq(schemaSources.id, sourceId)
+        : and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))
+    ).run();
+
+    const fullSource = db.select().from(schemaSources).where(
+      req.user?.role === 'admin'
+        ? eq(schemaSources.id, sourceId)
+        : and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))
+    ).get();
+    if (fullSource) scheduleSourceCron({ ...(fullSource.extra as any || {}), ...fullSource });
 
     res.json({ success: true });
   });
@@ -130,6 +166,17 @@ export function createSourcesRouter() {
 
   router.post("/sources/:id/refresh", requireAuth, async (req: AuthRequest, res) => {
     const sid = req.params.id;
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, sid), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
     log(`[Manual Sync] Starting manual total synchronization for source ID ${sid}`);
 
     const results = await Promise.all([
@@ -149,8 +196,15 @@ export function createSourcesRouter() {
 
   router.get("/sources/:id/changelog", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
-    const { source_changelogs: schemaChangelogs } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
+    const { sources: schemaSources, source_changelogs: schemaChangelogs } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
 
     const logs = db.select().from(schemaChangelogs).where(eq(schemaChangelogs.sourceId, req.params.id)).all();
     logs.sort((a, b) => {
@@ -166,6 +220,17 @@ export function createSourcesRouter() {
   // Upstream Connection Monitor Endpoints
   // =====================================
   router.get("/sources/:id/connections", requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
     const limit = parseInt(req.query.limit as string || '100', 10);
     const logs = getConnectionLogs(req.params.id, isNaN(limit) ? 100 : limit);
     res.json(logs);
@@ -201,6 +266,17 @@ export function createSourcesRouter() {
   });
 
   router.delete("/sources/:id/connections", requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
     clearConnectionLogs(req.params.id);
     res.json({ success: true });
   });
@@ -209,6 +285,17 @@ export function createSourcesRouter() {
   // Host Benchmarking
   // =====================================
   router.post("/sources/:id/benchmark", requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
     try {
       const result = await benchmarkSourceHosts(req.params.id);
       res.json(result);
@@ -218,6 +305,17 @@ export function createSourcesRouter() {
   });
 
   router.get("/sources/:id/host-benchmarks", requireAuth, async (req: AuthRequest, res) => {
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const source = db.select().from(schemaSources)
+      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!source) {
+      return res.status(404).json({ error: "Source not found" });
+    }
+
     const limit = parseInt(req.query.limit as string || '50', 10);
     res.json(getHostBenchmarkHistory(req.params.id, isNaN(limit) ? 50 : limit));
   });
@@ -241,22 +339,44 @@ export function createSourcesRouter() {
   // =====================================
   // Upstream data fetch (with disk cache)
   // =====================================
-  router.post("/fetch-upstream", requireAuth, async (req, res) => {
+  router.post("/fetch-upstream", requireAuth, async (req: AuthRequest, res) => {
     const { source, sourceIndex, forceRefresh } = req.body;
     if (!source?.id) return res.status(400).json({ error: "Missing source ID" });
 
-    log(`Fetching categories for source ${source.name} (id: ${source.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
-    const cacheKey = `${source.id}_categories`;
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const verifiedSourceDoc = db.select().from(schemaSources)
+      .where(req.user?.role === 'admin'
+        ? eq(schemaSources.id, source.id)
+        : and(eq(schemaSources.id, source.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!verifiedSourceDoc) return res.status(404).json({ error: "Source not found" });
+
+    const verifiedSource = {
+      ...(verifiedSourceDoc.extra as any || {}),
+      id: verifiedSourceDoc.id,
+      userId: verifiedSourceDoc.userId,
+      name: verifiedSourceDoc.name,
+      type: verifiedSourceDoc.type,
+      url: verifiedSourceDoc.url,
+      username: verifiedSourceDoc.username,
+      password: verifiedSourceDoc.password,
+    };
+
+    log(`Fetching categories for source ${verifiedSource.name} (id: ${verifiedSource.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
+    const cacheKey = `${verifiedSource.id}_categories`;
 
     let data;
     const cached = !forceRefresh ? getCached(cacheKey) : null;
     if (cached) {
-      log(`  Cache hit for categories: ${source.id}`);
+      log(`  Cache hit for categories: ${verifiedSource.id}`);
       data = { ...cached.data, cached: true, lastUpdated: cached.lastUpdated };
     } else {
-      log(`  Cache miss for categories: ${source.id}. Fetching from ${source.url}`);
-      if (source.type === 'xtream') {
-        const client = new XtreamClient(source);
+      log(`  Cache miss for categories: ${verifiedSource.id}. Fetching from ${verifiedSource.url}`);
+      if (verifiedSource.type === 'xtream') {
+        const client = new XtreamClient(verifiedSource as any);
         try {
           log(`  Requesting categories from Xtream API...`);
           const [liveCats, vodCats, seriesCats] = await Promise.all([
@@ -271,11 +391,11 @@ export function createSourcesRouter() {
           setCache(cacheKey, data);
           data = { ...data, cached: false, lastUpdated: new Date().toISOString() };
         } catch (error: any) {
-          log(`  ERROR fetching categories for ${source.id}: ${error.message}`);
+          log(`  ERROR fetching categories for ${verifiedSource.id}: ${error.message}`);
           return res.status(500).json({ error: "Failed to fetch categories: " + error.message });
         }
       } else {
-        return res.status(400).json({ error: `Source type '${source.type}' does not support category fetching` });
+        return res.status(400).json({ error: `Source type '${verifiedSource.type}' does not support category fetching` });
       }
     }
 
@@ -295,21 +415,43 @@ export function createSourcesRouter() {
     res.json({ ...data, liveCats, vodCats, seriesCats });
   });
 
-  router.post("/fetch-streams", requireAuth, async (req, res) => {
+  router.post("/fetch-streams", requireAuth, async (req: AuthRequest, res) => {
     const { source, type, sourceIndex, forceRefresh } = req.body;
     if (!source?.id || !type) return res.status(400).json({ error: "Missing source ID or type" });
 
-    log(`Fetching streams [${type}] for source ${source.name} (id: ${source.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
-    const cacheKey = `${source.id}_streams_${type}`;
+    const db = getDb();
+    const { sources: schemaSources } = await import('../schema.ts');
+    const { eq, and } = await import('drizzle-orm');
+
+    const verifiedSourceDoc = db.select().from(schemaSources)
+      .where(req.user?.role === 'admin'
+        ? eq(schemaSources.id, source.id)
+        : and(eq(schemaSources.id, source.id), eq(schemaSources.userId, req.user!.id)))
+      .get();
+    if (!verifiedSourceDoc) return res.status(404).json({ error: "Source not found" });
+
+    const verifiedSource = {
+      ...(verifiedSourceDoc.extra as any || {}),
+      id: verifiedSourceDoc.id,
+      userId: verifiedSourceDoc.userId,
+      name: verifiedSourceDoc.name,
+      type: verifiedSourceDoc.type,
+      url: verifiedSourceDoc.url,
+      username: verifiedSourceDoc.username,
+      password: verifiedSourceDoc.password,
+    };
+
+    log(`Fetching streams [${type}] for source ${verifiedSource.name} (id: ${verifiedSource.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
+    const cacheKey = `${verifiedSource.id}_streams_${type}`;
 
     let data;
     const cached = !forceRefresh ? getCached(cacheKey) : null;
     if (cached) {
-      log(`  Cache hit for streams [${type}]: ${source.id}`);
+      log(`  Cache hit for streams [${type}]: ${verifiedSource.id}`);
       data = { streams: cached.data, cached: true, lastUpdated: cached.lastUpdated };
     } else {
-      log(`  Cache miss for streams [${type}]: ${source.id}. Fetching from ${source.url}`);
-      const client = new XtreamClient(source);
+      log(`  Cache miss for streams [${type}]: ${verifiedSource.id}. Fetching from ${verifiedSource.url}`);
+      const client = new XtreamClient(verifiedSource as any);
       try {
         let streams;
         log(`  Requesting streams [${type}] from Xtream API...`);
@@ -321,7 +463,7 @@ export function createSourcesRouter() {
         setCache(cacheKey, streams);
         data = { streams, cached: false, lastUpdated: new Date().toISOString() };
       } catch (error: any) {
-        log(`  ERROR fetching streams [${type}] for ${source.id}: ${error.message}`);
+        log(`  ERROR fetching streams [${type}] for ${verifiedSource.id}: ${error.message}`);
         return res.status(500).json({ error: "Failed to fetch streams: " + error.message });
       }
     }

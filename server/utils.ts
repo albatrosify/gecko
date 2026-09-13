@@ -114,3 +114,11 @@ export function parseXtreamExpDate(rawExpDate: any): string | null {
   return null;
 }
 
+export function isValidHttpUrl(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}

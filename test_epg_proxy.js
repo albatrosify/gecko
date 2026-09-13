@@ -15,8 +15,12 @@ async function sequential(sourceDocs) {
         if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
         const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
 
-        const xml = await testFetchXml(upstreamEpgUrl);
-        if (xml) xmlParts.push(xml);
+        try {
+            const xml = await testFetchXml(upstreamEpgUrl);
+            if (xml) xmlParts.push(xml);
+        } catch (err) {
+            console.error(`Failed to fetch sequential EPG for ${sourceRow.url}:`, err);
+        }
     }
     return xmlParts;
 }
@@ -33,9 +37,13 @@ async function parallel(sourceDocs) {
         const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
 
         promises.push(
-            testFetchXml(upstreamEpgUrl).then(xml => {
-                if (xml) xmlParts.push(xml);
-            })
+            testFetchXml(upstreamEpgUrl)
+                .then(xml => {
+                    if (xml) xmlParts.push(xml);
+                })
+                .catch(err => {
+                    console.error(`Failed to fetch parallel EPG for ${sourceRow.url}:`, err);
+                })
         );
     }
     await Promise.all(promises);

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb } from "../db.ts";
+import { log } from "../logger.ts";
 
 export function createMigrationsRouter() {
   const router = Router();
@@ -9,38 +10,51 @@ export function createMigrationsRouter() {
   // Migration: strip sourceIdx prefix from originalId
   // =====================================
   router.post("/migrate/strip-id-prefixes", requireAuth, async (req: AuthRequest, res) => {
-    const db = getDb();
-    const { mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
-    const { eq } = await import('drizzle-orm');
-    const prefixPattern = /^(\d+)_(.+)$/;
-    let updated = 0;
-
-    const tables = [schemaMappings, schemaCategoryMappings];
-    for (const table of tables) {
-      const docs = db.select().from(table).all();
-      db.transaction((tx) => {
-        for (const doc of docs) {
-          const match = String(doc.originalId || '').match(prefixPattern);
-          if (!match) continue;
-          const sourceIdx = parseInt(match[1]);
-          const rawId = match[2];
-
-          const extra = (doc.extra as any) || {};
-          if (extra.sourceIdx == null) extra.sourceIdx = sourceIdx;
-
-          tx.update(table).set({ originalId: rawId, extra }).where(eq(table.id, doc.id)).run();
-          updated++;
-        }
-      });
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: "Admin access required" });
     }
 
-    res.json({ success: true, updated });
+    try {
+      const db = getDb();
+      const { mappings: schemaMappings, categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+      const { eq } = await import('drizzle-orm');
+      const prefixPattern = /^(\d+)_(.+)$/;
+      let updated = 0;
+
+      const tables = [schemaMappings, schemaCategoryMappings];
+      db.transaction((tx) => {
+        for (const table of tables) {
+          const docs = tx.select().from(table).all();
+          for (const doc of docs) {
+            const match = String(doc.originalId || '').match(prefixPattern);
+            if (!match) continue;
+            const sourceIdx = parseInt(match[1]);
+            const rawId = match[2];
+
+            const extra = (doc.extra as any) || {};
+            if (extra.sourceIdx == null) extra.sourceIdx = sourceIdx;
+
+            tx.update(table).set({ originalId: rawId, extra }).where(eq(table.id, doc.id)).run();
+            updated++;
+          }
+        }
+      });
+
+      res.json({ success: true, updated });
+    } catch (err: any) {
+      log(`[strip-id-prefixes migration] error: ${err?.message || err}`);
+      res.status(500).json({ success: false, error: "Migration failed" });
+    }
   });
 
   // =====================================
   // Migration: move detectedMeta from orphan (prefixed) docs to real mappings
   // =====================================
   router.post("/migrate/fix-detectedmeta-orphans", requireAuth, async (req: AuthRequest, res) => {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
     try {
       const db = getDb();
       const { mappings: schemaMappings } = await import('../schema.ts');

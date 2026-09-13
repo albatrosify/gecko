@@ -1,10 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export type SelectedPlaylist = { username: string; password?: string };
+
 type AuthContextType = {
   geckoUrl: string | null;
   jwtToken: string | null;
-  selectedPlaylist: { username: string; password?: string } | null;
+  selectedPlaylist: SelectedPlaylist | null;
   login: (url: string, token: string) => Promise<void>;
   logout: () => Promise<void>;
   selectPlaylist: (username: string, password?: string) => Promise<void>;
@@ -13,24 +15,37 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+export function normalizeBaseUrl(url: string): string {
+  const trimmed = url.trim();
+  const match = trimmed.match(/^(https?:\/\/)([^/?#]+)(.*)$/i);
+  if (!match) {
+    throw new Error('Invalid URL: scheme must be http or https');
+  }
+  const protocol = match[1].toLowerCase();
+  const hostAndPort = match[2];
+  const path = (match[3] || '').replace(/\/+$/, '');
+  return `${protocol}${hostAndPort}${path}`;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [geckoUrl, setGeckoUrl] = useState<string | null>(null);
   const [jwtToken, setJwtToken] = useState<string | null>(null);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<{ username: string; password?: string } | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<SelectedPlaylist | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
     async function loadAuth() {
       try {
-        const url = await AsyncStorage.getItem('geckoUrl');
-        const token = await AsyncStorage.getItem('jwtToken');
-        const playlistJson = await AsyncStorage.getItem('selectedPlaylist');
-
-        if (url) setGeckoUrl(url);
-        if (token) setJwtToken(token);
-        if (playlistJson) setSelectedPlaylist(JSON.parse(playlistJson));
+        const [savedUrl, savedToken, savedPlaylist] = await AsyncStorage.multiGet([
+          'geckoUrl',
+          'jwtToken',
+          'selectedPlaylist',
+        ]);
+        if (savedUrl[1]) setGeckoUrl(savedUrl[1]);
+        if (savedToken[1]) setJwtToken(savedToken[1]);
+        if (savedPlaylist[1]) setSelectedPlaylist(JSON.parse(savedPlaylist[1]));
       } catch (e) {
-        console.error('Failed to load auth state', e);
+        console.error('Failed to load auth credentials', e);
       } finally {
         setIsLoading(false);
       }
@@ -39,31 +54,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = async (url: string, token: string) => {
-    // Basic URL cleanup
-    const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+    const cleanUrl = normalizeBaseUrl(url);
 
-    await AsyncStorage.setItem('geckoUrl', cleanUrl);
-    await AsyncStorage.setItem('jwtToken', token);
-    setGeckoUrl(cleanUrl);
-    setJwtToken(token);
+    try {
+      await AsyncStorage.multiSet([
+        ['geckoUrl', cleanUrl],
+        ['jwtToken', token],
+      ]);
+      setGeckoUrl(cleanUrl);
+      setJwtToken(token);
+    } catch (e) {
+      console.error('Failed to save auth credentials', e);
+      throw e;
+    }
   };
 
   const logout = async () => {
-    await AsyncStorage.multiRemove(['geckoUrl', 'jwtToken', 'selectedPlaylist']);
-    setGeckoUrl(null);
-    setJwtToken(null);
-    setSelectedPlaylist(null);
+    try {
+      await AsyncStorage.multiRemove(['geckoUrl', 'jwtToken', 'selectedPlaylist']);
+    } catch (e) {
+      console.error('Failed to remove auth credentials', e);
+    } finally {
+      setGeckoUrl(null);
+      setJwtToken(null);
+      setSelectedPlaylist(null);
+    }
   };
 
   const selectPlaylist = async (username: string, password?: string) => {
     const playlist = { username, password };
-    await AsyncStorage.setItem('selectedPlaylist', JSON.stringify(playlist));
-    setSelectedPlaylist(playlist);
+    try {
+      await AsyncStorage.setItem('selectedPlaylist', JSON.stringify(playlist));
+    } catch (e) {
+      console.error('Failed to save selected playlist', e);
+    } finally {
+      setSelectedPlaylist(playlist);
+    }
   };
 
   const clearPlaylist = async () => {
-    await AsyncStorage.removeItem('selectedPlaylist');
-    setSelectedPlaylist(null);
+    try {
+      await AsyncStorage.removeItem('selectedPlaylist');
+    } catch (e) {
+      console.error('Failed to clear selected playlist', e);
+    } finally {
+      setSelectedPlaylist(null);
+    }
   };
 
   if (isLoading) return null;

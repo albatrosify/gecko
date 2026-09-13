@@ -37,9 +37,15 @@ async function request<T>(
   });
 
   if (res.status === 401) {
+    const hadToken = !!token;
     clearToken();
-    window.location.reload();
-    throw new Error('Authentication expired');
+    if (hadToken && path !== '/api/auth/login' && path !== '/api/auth/register') {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
+    }
+    const body = await res.json().catch(() => ({ error: 'Authentication expired' }));
+    throw new Error(body.error || 'Authentication expired');
   }
 
   if (!res.ok) {
@@ -252,10 +258,11 @@ export const customCategoryItems = {
       body: JSON.stringify(data),
     });
   },
-  async batchCreate(items: any[]) {
-    return request<any>('/api/custom-category-items/batch', {
+  async batchCreate(items: any[], playlistId?: string) {
+    const pId = playlistId || items[0]?.playlistId;
+    return request<any>(`/api/custom-category-items/batch${pId ? `?playlistId=${encodeURIComponent(pId)}` : ''}`, {
       method: 'POST',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, playlistId: pId }),
     });
   },
   async remove(id: string) {

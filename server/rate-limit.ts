@@ -13,7 +13,7 @@ export function createRateLimiter(options: {
   const store = new Map<string, RateLimitRecord>();
 
   // Periodic cleanup of expired entries to prevent memory exhaustion
-  setInterval(() => {
+  const cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [ip, record] of store.entries()) {
       if (now > record.resetTime) {
@@ -21,8 +21,9 @@ export function createRateLimiter(options: {
       }
     }
   }, Math.max(options.windowMs, 60000)); // Cleanup at least every minute
+  cleanupTimer.unref?.();
 
-  return (req: Request, res: Response, next: NextFunction) => {
+  const middleware = (req: Request, res: Response, next: NextFunction) => {
     // Rely on req.ip (Ensure app.set('trust proxy', 1) is configured in server.ts as per memory)
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     const now = Date.now();
@@ -49,4 +50,11 @@ export function createRateLimiter(options: {
 
     next();
   };
+
+  (middleware as any).destroy = () => {
+    clearInterval(cleanupTimer);
+    store.clear();
+  };
+
+  return middleware;
 }

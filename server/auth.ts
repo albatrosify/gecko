@@ -15,6 +15,7 @@ const TOKEN_EXPIRY = '7d';
 
 export interface AuthRequest extends Request {
   user?: { id: string; email: string; role: string };
+  verifiedPlaylistId?: string;
 }
 
 export function createAuthRouter(): Router {
@@ -42,35 +43,49 @@ export function createAuthRouter(): Router {
       const { users } = await import('./schema.ts');
       const { generateId } = await import('./db.ts');
 
-      const existing = db.select().from(users).where(eq(users.email, email)).get();
-      if (existing) {
-        return res.status(409).json({ error: 'Email already registered' });
-      }
-
-      // First user becomes admin
-      const resultCount = db.select({ value: count() }).from(users).get();
-      const role = (resultCount?.value || 0) === 0 ? 'admin' : 'user';
-
       const hashedPassword = await bcrypt.hash(password, 12);
       const newId = generateId();
 
-      db.insert(users).values({
-        id: newId,
-        email,
-        password: hashedPassword,
-        role,
-        createdAt: new Date(),
-      }).run();
+      let assignedRole = 'user';
+      try {
+        db.transaction((tx) => {
+          const existing = tx.select().from(users).where(eq(users.email, email)).get();
+          if (existing) {
+            throw new Error('EMAIL_EXISTS');
+          }
+
+          // First user becomes admin
+          const resultCount = tx.select({ value: count() }).from(users).get();
+          assignedRole = (resultCount?.value || 0) === 0 ? 'admin' : 'user';
+
+          tx.insert(users).values({
+            id: newId,
+            email,
+            password: hashedPassword,
+            role: assignedRole,
+            createdAt: new Date(),
+          }).run();
+        });
+      } catch (txError: any) {
+        if (
+          txError?.message === 'EMAIL_EXISTS' ||
+          txError?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+          txError?.message?.includes('UNIQUE constraint failed: users.email')
+        ) {
+          return res.status(409).json({ error: 'Email already registered' });
+        }
+        throw txError;
+      }
 
       const token = jwt.sign(
-        { id: newId, email, role },
+        { id: newId, email, role: assignedRole },
         JWT_SECRET(),
         { expiresIn: TOKEN_EXPIRY }
       );
 
       res.status(201).json({
         token,
-        user: { id: newId, email, role },
+        user: { id: newId, email, role: assignedRole },
       });
     } catch (error) {
       console.error('Register error:', error);
@@ -153,6 +168,12 @@ export function requireAuthOrQuery(req: AuthRequest, res: Response, next: NextFu
   if (!rawToken) {
     return res.status(401).json({ error: 'Authentication required' });
   }
+
+  if (req.query.token) {
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cache-Control', 'no-store');
+  }
+
   try {
     const decoded = jwt.verify(rawToken, JWT_SECRET()) as any;
     req.user = { id: decoded.id, email: decoded.email, role: decoded.role };

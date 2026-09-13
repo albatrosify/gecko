@@ -29,27 +29,46 @@ export default function StreamsScreen() {
   }, [navigation, categoryName]);
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
+    let isCancelled = false;
+
     let fetchPromise;
     if (type === 'live') fetchPromise = api.getLiveStreams(categoryId);
     else if (type === 'vod') fetchPromise = api.getVodStreams(categoryId);
     else fetchPromise = api.getSeries(categoryId);
 
     fetchPromise
-      .then(data => setItems(data))
+      .then(data => {
+        if (!isCancelled) setItems(Array.isArray(data) ? data : []);
+      })
       .catch(err => {
+        if (isCancelled) return;
         console.error('Failed to fetch items', err);
         Alert.alert('Error', 'Failed to load streams.');
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
   }, [api, type, categoryId]);
 
   const handleItemSelect = (item: any) => {
     if (type === 'series') {
       navigation.navigate('SeriesInfo', { seriesId: item.series_id, seriesName: item.name });
     } else {
+      if (!geckoUrl || !selectedPlaylist?.username) {
+        Alert.alert('Error', 'Missing playlist credentials. Please sign in again.');
+        return;
+      }
+
       let ext = 'm3u8';
       let idProp = 'stream_id';
       let pathType = 'live';
@@ -59,7 +78,13 @@ export default function StreamsScreen() {
         pathType = 'movie';
       }
 
-      const streamUrl = `${geckoUrl}/${pathType}/${selectedPlaylist?.username}/${selectedPlaylist?.password}/${item[idProp]}.${ext}`;
+      const streamId = item[idProp];
+      if (!streamId) {
+        Alert.alert('Error', 'Invalid stream identifier.');
+        return;
+      }
+
+      const streamUrl = `${geckoUrl}/${pathType}/${encodeURIComponent(selectedPlaylist.username)}/${encodeURIComponent(selectedPlaylist.password || '')}/${encodeURIComponent(streamId)}.${encodeURIComponent(ext)}`;
 
       // Navigate to the global Player modal
       navigation.navigate('Player', { streamUrl, title: item.name });

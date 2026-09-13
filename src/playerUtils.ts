@@ -43,7 +43,7 @@ export function getPlayerSchemeUrl(url: string, player: ExternalPlayerType): str
  * IINA, QuickTime, or whatever native media player is registered on the device.
  */
 export function downloadStreamM3u(url: string, title: string = 'stream') {
-  if (!url || typeof document === 'undefined') return;
+  if (!url || typeof document === 'undefined' || typeof window === 'undefined') return;
   const absUrl = url.startsWith('http://') || url.startsWith('https://')
     ? url
     : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
@@ -75,7 +75,7 @@ export function launchExternalPlayer(url: string, title: string = 'stream', play
   }
 
   const schemeUrl = getPlayerSchemeUrl(url, player);
-  if (schemeUrl && typeof window !== 'undefined') {
+  if (schemeUrl && typeof window !== 'undefined' && /^(iina|vlc|potplayer):\/\//i.test(schemeUrl)) {
     window.location.href = schemeUrl;
   }
 }

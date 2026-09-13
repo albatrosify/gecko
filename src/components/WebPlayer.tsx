@@ -24,6 +24,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mpegtsPlayerRef = useRef<any>(null);
   const hlsPlayerRef = useRef<Hls | null>(null);
+  const rejectionHandlerRef = useRef<((e: PromiseRejectionEvent) => void) | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -150,26 +151,35 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         // Prevent uncaught promise rejections on appendBuffer failures and attempt to recover without audio
         const unhandledRejectionHandler = (e: PromiseRejectionEvent) => {
           if (e.reason && e.reason.name === 'NotSupportedError') {
-             e.preventDefault();
-             setAudioCodecWarning('Dolby Digital (AC-3/DTS) audio codec is unsupported by browser MediaSource.');
-             if (!forceNoAudio) {
-               console.warn("Unsupported audio codec detected. Restarting stream with video only...");
-               // Clean up the broken player
-               if (mpegtsPlayerRef.current) {
-                 try { mpegtsPlayerRef.current.destroy(); } catch (e) {}
-                 mpegtsPlayerRef.current = null;
+              const msg = String(e.reason.message || '');
+              const lower = msg.toLowerCase();
+              // Only handle MediaSource / audio / codec unsupported errors originating from media playback
+              if (lower.includes('audio') || lower.includes('mediasource') || lower.includes('sourcebuffer')) {
+               e.preventDefault();
+               setAudioCodecWarning('Dolby Digital (AC-3/DTS) audio codec is unsupported by browser MediaSource.');
+               if (!forceNoAudio) {
+                 console.warn("Unsupported audio codec detected. Restarting stream with video only...");
+                 // Clean up the broken player
+                 if (mpegtsPlayerRef.current) {
+                   try { mpegtsPlayerRef.current.destroy(); } catch (e) {}
+                   mpegtsPlayerRef.current = null;
+                 }
+                 if (rejectionHandlerRef.current) {
+                   window.removeEventListener('unhandledrejection', rejectionHandlerRef.current);
+                   rejectionHandlerRef.current = null;
+                 }
+                 // Re-initialize without audio
+                 initMpegts(true);
                }
-               // Remove this specific listener so it doesn't leak or fire twice
-               window.removeEventListener('unhandledrejection', unhandledRejectionHandler);
-               // Re-initialize without audio
-               initMpegts(true);
              }
           }
         };
-        window.addEventListener('unhandledrejection', unhandledRejectionHandler);
 
-        // Save reference to handler to remove it later on unmount
-        (player as any)._customRejectionHandler = unhandledRejectionHandler;
+        if (rejectionHandlerRef.current) {
+          window.removeEventListener('unhandledrejection', rejectionHandlerRef.current);
+        }
+        rejectionHandlerRef.current = unhandledRejectionHandler;
+        window.addEventListener('unhandledrejection', unhandledRejectionHandler);
 
         mpegtsPlayerRef.current = player;
         player.attachMediaElement(video);
@@ -286,10 +296,11 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       video.removeEventListener('pause', onPause);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('addtrack', onLoadedMetadata);
+      if (rejectionHandlerRef.current) {
+        window.removeEventListener('unhandledrejection', rejectionHandlerRef.current);
+        rejectionHandlerRef.current = null;
+      }
       if (mpegtsPlayerRef.current) {
-        if ((mpegtsPlayerRef.current as any)._customRejectionHandler) {
-          window.removeEventListener('unhandledrejection', (mpegtsPlayerRef.current as any)._customRejectionHandler);
-        }
         try {
           mpegtsPlayerRef.current.destroy();
         } catch (e) {}

@@ -22,9 +22,12 @@ export const proxyStats = {
   }>()
 };
 
+let statsInterval: NodeJS.Timeout | null = null;
+
 // Update bits per second regularly and keep a history
 export function initProxyStatsInterval() {
-  setInterval(() => {
+  if (statsInterval) clearInterval(statsInterval);
+  statsInterval = setInterval(() => {
     const now = Date.now();
     const elapsed = (now - proxyStats.lastCheck) / 1000;
     if (elapsed > 0) {
@@ -43,4 +46,12 @@ export function initProxyStatsInterval() {
       if (proxyStats.history.length > 60) proxyStats.history.shift();
     }
   }, 2000);
+  statsInterval.unref?.();
+}
+
+export function stopProxyStatsInterval() {
+  if (statsInterval) {
+    clearInterval(statsInterval);
+    statsInterval = null;
+  }
 }

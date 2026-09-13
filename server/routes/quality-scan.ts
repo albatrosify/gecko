@@ -62,6 +62,10 @@ export function createQualityScanRouter() {
       results: [],
     };
     scanJobs.set(jobId, job);
+    // Hard TTL cleanup timer to guarantee eviction even if job hangs
+    const hardCleanupTimer = setTimeout(() => scanJobs.delete(jobId), 60 * 60 * 1000);
+    hardCleanupTimer.unref?.();
+
     res.json({ jobId });
 
     // Run in background — do not await
@@ -141,11 +145,13 @@ export function createQualityScanRouter() {
       }
 
       if (job.status !== 'cancelled') job.status = 'done';
-      // Auto-clean job after 10 minutes
-      setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
     })().catch((e) => {
       log(`[QualityScan] Job ${jobId} crashed: ${e.message}`);
       job.status = 'done';
+    }).finally(() => {
+      // Auto-clean job after 10 minutes
+      const cleanupTimer = setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
+      cleanupTimer.unref?.();
     });
   });
 

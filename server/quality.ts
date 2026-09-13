@@ -27,31 +27,47 @@ export async function probeStream(
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
-    const timer = setTimeout(() => {
+    let settled = false;
+    let timer: NodeJS.Timeout;
+
+    const safeReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(err);
+    };
+    const safeResolve = (result: DetectedStreamMeta) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+
+    timer = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error('ffprobe timeout'));
+      safeReject(new Error('ffprobe timeout'));
     }, timeoutMs);
 
     proc.on('close', (code) => {
+      if (settled) return;
       clearTimeout(timer);
       if (code !== 0 && !stdout) {
-        return reject(new Error(`ffprobe exited ${code}: ${stderr.slice(0, 300)}`));
+        return safeReject(new Error(`ffprobe exited ${code}: ${stderr.slice(0, 300)}`));
       }
       try {
         const data = JSON.parse(stdout);
         const result = parseProbeResult(data);
         if (!result.resolution && !result.videoCodec && !result.audioCodec) {
-          return reject(new Error('No stream data detected — stream may be inaccessible or taking too long to respond'));
+          return safeReject(new Error('No stream data detected — stream may be inaccessible or taking too long to respond'));
         }
-        resolve(result);
+        safeResolve(result);
       } catch {
-        reject(new Error('Failed to parse ffprobe JSON output'));
+        safeReject(new Error('Failed to parse ffprobe JSON output'));
       }
     });
 
     proc.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new Error(`ffprobe spawn error: ${err.message}`));
+      safeReject(new Error(`ffprobe spawn error: ${err.message}`));
     });
   });
 }

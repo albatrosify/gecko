@@ -57,25 +57,24 @@ export function setCache(key: string, data: any): void {
   const expiresAt = Date.now() + CACHE_TTL_MS;
 
   try {
-    const dataStr = JSON.stringify(data);
     db.insert(cache)
       .values({
         key,
-        data: dataStr,
+        data,
         updatedAt: lastUpdated,
         expiresAt
       })
       .onConflictDoUpdate({
         target: cache.key,
         set: {
-          data: dataStr,
+          data,
           updatedAt: lastUpdated,
           expiresAt
         }
       })
       .run();
 
-    // Update memory cache
+    // Update memory cache after DB write succeeds
     memoryCache.set(key, {
       data,
       lastUpdated,

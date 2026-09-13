@@ -1,20 +1,43 @@
 import React from 'react';
-import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+
+type PlayerRouteParams = {
+  Player: {
+    streamUrl?: string;
+    title?: string;
+  };
+};
 
 export default function PlayerScreen() {
-  const route = useRoute<any>();
+  const route = useRoute<RouteProp<PlayerRouteParams, 'Player'>>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { streamUrl } = route.params;
+  const streamUrl = route.params?.streamUrl;
 
-  const player = useVideoPlayer(streamUrl, player => {
-    player.loop = false;
-    player.play();
+  const player = useVideoPlayer(streamUrl || '', player => {
+    if (streamUrl) {
+      player.loop = false;
+      player.play();
+    }
   });
+
+  if (!streamUrl) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={styles.errorText}>Unable to play: missing stream URL.</Text>
+        <TouchableOpacity
+          style={[styles.closeButton, { top: Math.max(insets.top, 20) }]}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="close" size={32} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -54,5 +77,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
+  },
+  centered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: '#ff4d4f',
+    fontSize: 16,
+    textAlign: 'center',
   },
 });

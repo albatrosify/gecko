@@ -29,9 +29,13 @@ function ipToLong(ip: string): number {
 }
 
 function matchCidr(ip: string, cidr: string): boolean {
-  const [range, bits = "32"] = cidr.split("/");
-  const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1);
-  return (ipToLong(ip) & mask) === (ipToLong(range) & mask);
+  const [range, bitsStr = "32"] = cidr.split("/");
+  if (!/^\d{1,2}$/.test(bitsStr)) return false;
+  const bits = parseInt(bitsStr, 10);
+  if (bits < 0 || bits > 32) return false;
+  if (!net.isIPv4(ip) || !net.isIPv4(range)) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return ((ipToLong(ip) & mask) >>> 0) === ((ipToLong(range) & mask) >>> 0);
 }
 
 function isCloudflareIp(ip: string): boolean {
@@ -113,6 +117,7 @@ export function guessNetworkType(rawUrl: string): { networkType: 'cdn' | 'direct
   } catch {
     hostname = rawUrl.replace(/^https?:\/\//, "").split(/[:/]/)[0].toLowerCase();
   }
+  hostname = hostname.replace(/^\[|\]$/g, "");
   if (!hostname) return { networkType: 'direct', cdnProvider: null };
 
   if (net.isIP(hostname)) {
@@ -141,6 +146,7 @@ export async function detectHostNetwork(
   } catch {
     hostname = rawUrl.replace(/^https?:\/\//, "").split(/[:/]/)[0];
   }
+  hostname = hostname.replace(/^\[|\]$/g, "");
 
   if (!hostname) {
     return { networkType: 'direct', cdnProvider: null, resolvedIp: null };
@@ -429,6 +435,14 @@ let hostStatsTimer: NodeJS.Timeout | null = null;
 export function initHostStatsFlusher(): void {
   if (hostStatsTimer) clearInterval(hostStatsTimer);
   hostStatsTimer = setInterval(flushHostStats, 60_000);
+  hostStatsTimer.unref?.();
+}
+
+export function stopHostStatsFlusher(): void {
+  if (hostStatsTimer) {
+    clearInterval(hostStatsTimer);
+    hostStatsTimer = null;
+  }
 }
 
 /**
@@ -437,51 +451,62 @@ export function initHostStatsFlusher(): void {
 async function probeThroughput(url: string): Promise<number> {
   const start = Date.now();
   let bytes = 0;
+  const controller = new AbortController();
 
-  const response = await axios({
-    method: "get",
-    url,
-    responseType: "stream",
-    timeout: PROBE_TIMEOUT,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0",
-      Range: `bytes=0-${PROBE_CAP_BYTES - 1}`,
-    },
-    validateStatus: () => true,
-  });
+  try {
+    const response = await axios({
+      method: "get",
+      url,
+      responseType: "stream",
+      timeout: PROBE_TIMEOUT,
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0",
+        Range: `bytes=0-${PROBE_CAP_BYTES - 1}`,
+      },
+      validateStatus: () => true,
+    });
 
-  if (response.status >= 400) {
-    if (response.data?.destroy) response.data.destroy();
-    throw new Error(`upstream returned ${response.status}`);
-  }
+    if (response.status >= 400) {
+      if (response.data?.destroy) response.data.destroy();
+      controller.abort();
+      throw new Error(`upstream returned ${response.status}`);
+    }
 
-  return new Promise<number>((resolve, reject) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      try {
-        if (response.data?.destroy) response.data.destroy();
-      } catch {}
-      const secs = (Date.now() - start) / 1000;
-      resolve(secs > 0 ? (bytes * 8) / secs / 1_000_000 : 0);
-    };
-    const timeout = setTimeout(finish, PROBE_MAX_MS);
-    response.data.on("data", (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes >= PROBE_CAP_BYTES || Date.now() - start >= PROBE_MAX_MS) {
+    return await new Promise<number>((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
-        finish();
-      }
+        try {
+          if (response.data?.destroy) response.data.destroy();
+        } catch {}
+        controller.abort();
+        const secs = (Date.now() - start) / 1000;
+        resolve(secs > 0 ? (bytes * 8) / secs / 1_000_000 : 0);
+      };
+      const timeout = setTimeout(finish, PROBE_MAX_MS);
+      response.data.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes >= PROBE_CAP_BYTES || Date.now() - start >= PROBE_MAX_MS) {
+          clearTimeout(timeout);
+          finish();
+        }
+      });
+      response.data.on("end", () => { clearTimeout(timeout); finish(); });
+      response.data.on("error", (err: any) => {
+        if (settled) return;
+        clearTimeout(timeout);
+        settled = true;
+        controller.abort();
+        reject(err);
+      });
     });
-    response.data.on("end", () => { clearTimeout(timeout); finish(); });
-    response.data.on("error", (err: any) => {
-      if (settled) return;
-      clearTimeout(timeout);
-      settled = true;
-      reject(err);
-    });
-  });
+  } catch (err) {
+    controller.abort();
+    throw err;
+  }
 }
 
 /**

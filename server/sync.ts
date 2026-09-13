@@ -228,7 +228,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     const idField = type === 'series' ? 'series_id' : 'stream_id';
     const oldSnapshot = await getSnapshot(sourceId, type);
     if (oldSnapshot) {
-      recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
+      await recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
     }
     const newSnapshot = upstreamStreams.map((s: any) => ({ [idField]: s[idField], name: s.name || s.title }));
     await setSnapshot(sourceId, type, newSnapshot);
@@ -247,7 +247,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
         const newCats = { liveCats, vodCats, seriesCats };
         const oldCatSnapshot = await getSnapshot(sourceId, 'categories');
         if (oldCatSnapshot) {
-          recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
+          await recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
         }
         const newCatSnapshot = {
           liveCats: liveCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
@@ -256,7 +256,9 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
         };
         await setSnapshot(sourceId, 'categories', newCatSnapshot);
         setCache(catCacheKey, newCats);
-      } catch (e) {}
+      } catch (e: any) {
+        log(`[Sync] Failed to update categories for source ${sourceId}: ${e?.message || e}`);
+      }
     }
 
     return { success: true, updatedCount, totalExamined, lastUpdated };
