@@ -8,6 +8,7 @@ import { XtreamClient } from "../xtream.ts";
 import { parseXtreamExpDate, isValidHttpUrl } from "../utils.ts";
 import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
 import { normalizeHosts, benchmarkSourceHosts, getHostBenchmarkHistory } from "../hosts.ts";
+import { isConcurrencyGuardEnabled } from "../multiplexer/stream-guard.ts";
 
 export function createSourcesRouter() {
   const router = Router();
@@ -76,8 +77,7 @@ export function createSourcesRouter() {
     }
 
     if (extra.concurrencyGuard === undefined) {
-      const maxC = parseInt(String(extra.maxConnections ?? '1'), 10);
-      extra.concurrencyGuard = isNaN(maxC) || maxC <= 1;
+      extra.concurrencyGuard = isConcurrencyGuardEnabled(extra);
     }
 
     db.insert(schemaSources).values({

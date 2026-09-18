@@ -4,7 +4,7 @@ import axios from "axios";
 import http from "http";
 import https from "https";
 import dns from "dns";
-import { getDb } from "../db.ts";
+import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
 import { proxyStats } from "../proxy-stats.ts";
@@ -199,8 +199,8 @@ export function createProxyRouter() {
         }
 
         if (guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
-          const subId = Math.random().toString(36).substring(7);
-          streamHub.addSubscriber(guardDecision.existingChannelKey, {
+          const subId = generateId();
+          const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
             id: subId,
             res,
             username,
@@ -208,8 +208,11 @@ export function createProxyRouter() {
             ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
             startTime: Date.now(),
           });
-          log(`[Proxy] Client ${username} joined existing shared stream for ${type}/${streamId} (0 extra upstream connections) - ${getClientInfo(req)}`);
-          return;
+          if (joined) {
+            log(`[Proxy] Client ${username} joined existing shared stream for ${type}/${streamId} (0 extra upstream connections) - ${getClientInfo(req)}`);
+            return;
+          }
+          log(`[Proxy] Shared stream ${guardDecision.existingChannelKey} closed before join; falling back to upstream - ${getClientInfo(req)}`);
         }
       }
 
@@ -260,7 +263,7 @@ export function createProxyRouter() {
           // Handle live stream multiplexing
           if (type === 'live') {
             const forwardHeaders: Record<string, string> = {};
-            const headerKeys = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
+            const headerKeys = ['content-type', 'accept-ranges', 'cache-control'];
             for (const h of headerKeys) {
               if (response.headers[h]) forwardHeaders[h] = response.headers[h];
             }
@@ -275,7 +278,7 @@ export function createProxyRouter() {
               forwardHeaders
             );
 
-            const subId = Math.random().toString(36).substring(7);
+            const subId = generateId();
             streamHub.addSubscriber(channel.channelKey, {
               id: subId,
               res,
@@ -295,7 +298,7 @@ export function createProxyRouter() {
             if (response.headers[h]) res.setHeader(h, response.headers[h]);
           }
 
-          const connId = Math.random().toString(36).substring(7);
+          const connId = generateId();
           const connectionInfo = {
             id: connId,
             sourceId,

@@ -69,7 +69,7 @@ export function evaluateStreamRequest(
       action: 'block_placeholder',
       activeStreamName: primaryActive.streamName,
       activeStreamId: primaryActive.streamId,
-      reason: `Quelle ist durch "${primaryActive.streamName || primaryActive.streamId}" belegt (1-Verbindungs-Schutz aktiv).`,
+      reason: `Quelle ist durch "${primaryActive.streamName || primaryActive.streamId}" belegt (${maxConnections}-Verbindungs-Schutz aktiv).`,
     };
   }
 

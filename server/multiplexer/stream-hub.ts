@@ -192,8 +192,11 @@ class StreamHub {
     // Update subscriberCount on all sibling subscribers in proxyStats
     this.syncSubscriberCount(channel);
 
-    // Handle subscriber disconnect
+    // Handle subscriber disconnect (guaranteed idempotent)
+    let cleanedUp = false;
     const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       this.removeSubscriber(channelKey, sub.id);
     };
     sub.res.on('finish', cleanup);
@@ -277,6 +280,19 @@ class StreamHub {
   closeChannel(channelKey: string): void {
     const channel = this.channels.get(channelKey);
     if (!channel) return;
+
+    // If a DVR recording was attached when channel closes, stop and finalize recording session
+    if (channel.dvrRecordingId) {
+      const recId = channel.dvrRecordingId;
+      channel.dvrRecordingId = undefined;
+      import('../dvr/recorder.ts').then(({ dvrRecorder }) => {
+        dvrRecorder.stopRecording(recId).catch(err => {
+          log(`[StreamHub] Failed to finalize DVR recording ${recId} on channel close: ${err.message}`);
+        });
+      }).catch((err) => {
+        log(`[StreamHub] Failed to load DVR recorder while finalizing ${recId}: ${err?.message ?? err}`);
+      });
+    }
 
     // Close all remaining subscriber connections
     for (const sub of channel.subscribers.values()) {

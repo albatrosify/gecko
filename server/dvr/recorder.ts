@@ -241,6 +241,11 @@ class DvrRecorder {
     const session = this.sessions.get(recordingId);
     if (!session) return false;
 
+    // Prevent duplicate alerts if already in handover mode
+    if (session.isHandover) {
+      return true;
+    }
+
     session.isHandover = true;
     session.handoverAt = Date.now();
 
