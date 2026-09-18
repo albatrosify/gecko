@@ -84,8 +84,19 @@ async function startServer() {
     app.use((req, res, next) => {
       const start = Date.now();
       res.on('finish', () => {
-        // Skip logging the logs endpoint itself to avoid feedback loop
-        if (req.path !== '/api/system/logs' && req.path !== '/api/proxy/stats') {
+        const path = req.path || req.url || '';
+        // Skip noisy endpoints that poll continuously or are healthchecks
+        const isExcluded =
+          path === '/health' ||
+          path.endsWith('/health') ||
+          path.includes('/proxy/stats') ||
+          path.includes('/system/logs') ||
+          path.startsWith('/assets/') ||
+          path.startsWith('/@vite') ||
+          path.endsWith('.ico') ||
+          path.endsWith('.map');
+
+        if (!isExcluded) {
           const duration = Date.now() - start;
           log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms - ${getClientInfo(req)}`);
         }

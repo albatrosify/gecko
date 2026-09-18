@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, useDragControls } from 'motion/react';
-import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, Copy, Check, Download, ChevronDown, Tv } from 'lucide-react';
+import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, AlertCircle, WifiOff, RotateCcw, Loader2, Copy, Check, Download, ChevronDown, Tv } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
 import { downloadStreamM3u, launchExternalPlayer, ExternalPlayerType } from '../playerUtils';
@@ -19,6 +19,79 @@ export interface WebPlayerProps {
   onClose: () => void;
 }
 
+interface PlaybackErrorInfo {
+  title: string;
+  message: string;
+  code?: number;
+  details?: string;
+  type: 'network' | 'codec' | 'media';
+}
+
+function getHttpErrorMessage(statusCode?: number): { title: string; message: string } {
+  switch (statusCode) {
+    case 511:
+      return {
+        title: 'Upstream Authentication Failed (HTTP 511)',
+        message: 'All upstream providers rejected the connection. The subscription or line credentials may be expired or blocked.',
+      };
+    case 403:
+      return {
+        title: 'Stream Access Forbidden (HTTP 403)',
+        message: 'The upstream provider denied access to this stream. It may be restricted or blocked.',
+      };
+    case 404:
+      return {
+        title: 'Stream Offline / Not Found (HTTP 404)',
+        message: 'The upstream provider does not have an active broadcast for this stream.',
+      };
+    case 502:
+      return {
+        title: 'Bad Gateway (HTTP 502)',
+        message: 'The proxy could not connect to any upstream IPTV server.',
+      };
+    case 504:
+      return {
+        title: 'Gateway Timeout (HTTP 504)',
+        message: 'The upstream IPTV server timed out without returning stream data.',
+      };
+    case 500:
+      return {
+        title: 'Internal Server Error (HTTP 500)',
+        message: 'An internal error occurred on the stream proxy.',
+      };
+    case 401:
+      return {
+        title: 'Unauthorized (HTTP 401)',
+        message: 'Invalid playlist credentials.',
+      };
+    default:
+      return {
+        title: statusCode ? `Stream Failed (HTTP ${statusCode})` : 'Stream Connection Failed',
+        message: 'The stream failed to connect or was interrupted by the upstream server.',
+      };
+  }
+}
+
+async function fetchStreamErrorMessage(streamUrl: string): Promise<string | undefined> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const resp = await fetch(streamUrl, {
+      method: 'GET',
+      headers: { Range: 'bytes=0-250' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!resp.ok) {
+      const text = await resp.text();
+      if (text && text.length < 300 && !text.includes('<!DOCTYPE') && !text.includes('<html')) {
+        return text.trim();
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
 export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -27,6 +100,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const rejectionHandlerRef = useRef<((e: PromiseRejectionEvent) => void) | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [playbackError, setPlaybackError] = useState<PlaybackErrorInfo | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -95,11 +171,21 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     }
   };
 
+  const handleRetry = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setPlaybackError(null);
+    setAudioCodecWarning(null);
+    setIsLoading(true);
+    setRetryKey(k => k + 1);
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
 
     setAudioCodecWarning(null);
+    setPlaybackError(null);
+    setIsLoading(true);
 
     // Cleanup previous players
     if (mpegtsPlayerRef.current) {
@@ -140,11 +226,40 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           liveBufferLatencyMinRemain: 1,
         });
 
-        player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+        player.on(mpegts.Events.ERROR, async (errorType: string, errorDetail: string, errorInfo: any) => {
           console.warn('mpegts error:', errorType, errorDetail, errorInfo);
+          setIsLoading(false);
+
           if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
             console.log('Media error, possibly unsupported codec like AC3.');
             setAudioCodecWarning('Dolby Digital / AC-3 audio is unsupported in this web browser.');
+            return;
+          }
+
+          if (errorType === mpegts.ErrorTypes.NETWORK_ERROR) {
+            const statusCode = errorInfo?.code;
+            const { title: errTitle, message: errMsg } = getHttpErrorMessage(statusCode);
+            let details = errorInfo?.msg || (errorDetail ? `Detail: ${errorDetail}` : undefined);
+
+            const serverMsg = await fetchStreamErrorMessage(url);
+            if (serverMsg) {
+              details = serverMsg;
+            }
+
+            setPlaybackError({
+              title: errTitle,
+              message: errMsg,
+              code: statusCode,
+              details,
+              type: 'network',
+            });
+          } else {
+            setPlaybackError({
+              title: 'Playback Error',
+              message: 'The media player encountered an unexpected error.',
+              details: errorInfo?.msg || errorDetail,
+              type: 'media',
+            });
           }
         });
 
@@ -199,6 +314,30 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         hlsPlayerRef.current = hls;
         hls.loadSource(url);
         hls.attachMedia(video);
+
+        hls.on(Hls.Events.ERROR, async (event, data) => {
+          console.warn('HLS error:', data);
+          if (data.fatal) {
+            setIsLoading(false);
+            const statusCode = data.response?.code;
+            const { title: errTitle, message: errMsg } = getHttpErrorMessage(statusCode);
+            let details = data.details ? `Detail: ${data.details}` : undefined;
+
+            const serverMsg = await fetchStreamErrorMessage(url);
+            if (serverMsg) {
+              details = serverMsg;
+            }
+
+            setPlaybackError({
+              title: errTitle,
+              message: errMsg,
+              code: statusCode,
+              details,
+              type: data.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'media',
+            });
+          }
+        });
+
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           const playPromise = video.play();
           if (playPromise !== undefined) {
@@ -252,10 +391,59 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     }
 
     // Generic Event Listeners
-    const onPlay = () => setIsPlaying(true);
+    const onPlay = () => {
+      setIsPlaying(true);
+      setIsLoading(false);
+      setPlaybackError(null);
+    };
     const onPause = () => setIsPlaying(false);
+    const onWaiting = () => {
+      if (!video.paused) setIsLoading(true);
+    };
+    const onCanPlay = () => {
+      setIsLoading(false);
+    };
+
+    const onVideoError = async () => {
+      setIsLoading(false);
+      const err = video.error;
+      if (!err) return;
+      console.warn('Video element error:', err);
+
+      const serverMsg = await fetchStreamErrorMessage(url);
+      if (serverMsg) {
+        setPlaybackError({
+          title: 'Stream Unavailable',
+          message: 'The server could not stream this channel.',
+          details: serverMsg,
+          type: 'network',
+        });
+        return;
+      }
+
+      let title = 'Playback Error';
+      let message = 'The video element encountered an error.';
+      if (err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+        title = 'Format Not Supported';
+        message = 'Your browser cannot decode this stream format or container. Try opening in VLC.';
+      } else if (err.code === MediaError.MEDIA_ERR_DECODE) {
+        title = 'Decode Error';
+        message = 'The stream data was corrupted or uses an unsupported codec.';
+      } else if (err.code === MediaError.MEDIA_ERR_NETWORK) {
+        title = 'Network Error';
+        message = 'A network error caused the video download to fail.';
+      }
+
+      setPlaybackError({
+        title,
+        message,
+        details: err.message || `MediaError Code ${err.code}`,
+        type: 'media',
+      });
+    };
 
     const onLoadedMetadata = () => {
+      setIsLoading(false);
       // Native audio tracks (Safari, or Chrome with flag)
       if ((video as any).audioTracks && (video as any).audioTracks.length > 0) {
         const at = (video as any).audioTracks;
@@ -285,15 +473,23 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         }
       }
     };
+
     video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('addtrack', onLoadedMetadata); // Sometimes tracks are added after
-
     video.addEventListener('play', onPlay);
+    video.addEventListener('playing', onPlay);
+    video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('waiting', onWaiting);
     video.addEventListener('pause', onPause);
+    video.addEventListener('error', onVideoError);
 
     return () => {
       video.removeEventListener('play', onPlay);
+      video.removeEventListener('playing', onPlay);
+      video.removeEventListener('canplay', onCanPlay);
+      video.removeEventListener('waiting', onWaiting);
       video.removeEventListener('pause', onPause);
+      video.removeEventListener('error', onVideoError);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('addtrack', onLoadedMetadata);
       if (rejectionHandlerRef.current) {
@@ -314,7 +510,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       }
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
-  }, [url]);
+  }, [url, retryKey]);
 
   if (!url) return null;
 
@@ -400,6 +596,59 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         className="w-full h-full object-contain bg-black"
         onClick={togglePlay}
       />
+
+      {/* Playback Error Overlay */}
+      {playbackError && (
+        <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-in fade-in duration-200">
+          <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mb-2.5 shadow-lg shadow-red-950/40 shrink-0">
+            {playbackError.type === 'network' ? <WifiOff size={22} /> : <AlertCircle size={22} />}
+          </div>
+          <h3 className="text-sm font-bold text-zinc-100 mb-1 leading-snug">
+            {playbackError.title}
+          </h3>
+          <p className="text-xs text-zinc-400 max-w-sm leading-relaxed mb-2.5 px-2">
+            {playbackError.message}
+          </p>
+          {playbackError.details && (
+            <div className="mb-3 max-w-[380px] px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl text-[11px] font-mono text-red-300/90 break-words leading-normal select-text">
+              {playbackError.details}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <button
+              onClick={handleRetry}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-zinc-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+            >
+              <RotateCcw size={13} />
+              Retry
+            </button>
+            <button
+              onClick={(e) => handleOpenExternal(e, 'm3u')}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-400 active:scale-95 text-zinc-950 rounded-lg text-xs font-bold transition-all shadow-md shadow-orange-950/30 cursor-pointer"
+              title="Download .m3u to play in VLC / Native Player"
+            >
+              <VlcIcon size={13} />
+              Open in VLC (.m3u)
+            </button>
+            <button
+              onClick={handleCopyUrl}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-zinc-300 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+              title="Copy stream URL"
+            >
+              {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+              <span>{copied ? 'Copied' : 'Copy URL'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Buffering Indicator */}
+      {isLoading && !playbackError && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none z-20">
+          <Loader2 size={32} className="text-emerald-500 animate-spin mb-2" />
+          <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Connecting to stream...</span>
+        </div>
+      )}
 
       {/* Top Bar (Draggable) */}
       <div

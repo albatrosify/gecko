@@ -506,25 +506,48 @@ export function createMappingsRouter() {
   router.post("/category-mappings/reset", requireAuth, async (req: AuthRequest, res) => {
     try {
       const db = getDb();
-      const { ids } = req.body;
+      const { ids, originalIds, playlistId, type } = req.body;
 
-      if (!ids || !Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ error: "ids array required" });
+      let targetIds: string[] = [];
+      if (Array.isArray(ids) && ids.length > 0) {
+        targetIds = ids;
+      } else if (Array.isArray(originalIds) && originalIds.length > 0 && playlistId && type) {
+        if (!verifyPlaylistOwnership(db, playlistId, req.user!.id, req.user?.role)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+        for (let i = 0; i < originalIds.length; i += 500) {
+          const chunk = originalIds.slice(i, i + 500);
+          const found = db.select({ id: schemaCategoryMappings.id })
+            .from(schemaCategoryMappings)
+            .where(
+              and(
+                eq(schemaCategoryMappings.playlistId, playlistId),
+                eq(schemaCategoryMappings.type, type),
+                inArray(schemaCategoryMappings.originalId, chunk)
+              )
+            ).all();
+          targetIds.push(...found.map(f => f.id));
+        }
+      } else {
+        return res.status(400).json({ error: "ids array or (originalIds, playlistId, type) required" });
       }
 
       db.transaction((tx) => {
-        const docs = tx.select().from(schemaCategoryMappings).where(inArray(schemaCategoryMappings.id, ids)).all();
-        for (const doc of docs) {
-          if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
-            throw new ForbiddenError();
+        for (let i = 0; i < targetIds.length; i += 500) {
+          const chunk = targetIds.slice(i, i + 500);
+          const docs = tx.select().from(schemaCategoryMappings).where(inArray(schemaCategoryMappings.id, chunk)).all();
+          for (const doc of docs) {
+            if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
+              throw new ForbiddenError();
+            }
+            const extra = (doc.extra as any) || {};
+            delete extra.customName;
+            tx.update(schemaCategoryMappings).set({ extra }).where(eq(schemaCategoryMappings.id, doc.id)).run();
           }
-          const extra = (doc.extra as any) || {};
-          delete extra.customName;
-          tx.update(schemaCategoryMappings).set({ extra }).where(eq(schemaCategoryMappings.id, doc.id)).run();
         }
       });
 
-      res.json({ success: true, count: ids.length });
+      res.json({ success: true, count: targetIds.length });
     } catch (err: any) {
       if (err instanceof ForbiddenError || err?.message === "Access denied") {
         return res.status(403).json({ error: "Access denied" });

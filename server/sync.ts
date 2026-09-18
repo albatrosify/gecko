@@ -135,16 +135,79 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
   }
 
   const source = db.select().from(sources).where(eq(sources.id, sourceId)).get();
-  if (!source) return { error: "Source not found" };
+  if (!source) return { error: "Source not found", type };
 
   log(`[Sync] Starting ${type} sync for: ${source.name}`);
   const client = new XtreamClient(source as any);
 
   try {
-    let upstreamStreams: any[] = [];
+    const sourceExtra = (source.extra as any) || {};
+
+    // 1. Account authentication check upfront for Xtream sources (on force or live)
+    if (source.type === 'xtream' && (type === 'live' || force)) {
+      try {
+        const auth = await client.authenticate();
+        if (auth && typeof auth === 'object') {
+          if (auth.user_info) {
+            if (auth.user_info.auth === 0) {
+              const reason = auth.user_info.message || 'Invalid username or password';
+              log(`[Sync] Authentication rejected for ${source.name}: ${reason}`);
+              return { error: `Authentication rejected: ${reason}`, type, isAuthError: true };
+            }
+            sourceExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
+            if (auth.user_info.status) sourceExtra.accountStatus = auth.user_info.status;
+            if (auth.user_info.max_connections !== undefined) sourceExtra.maxConnections = auth.user_info.max_connections;
+            if (auth.user_info.status && auth.user_info.status.toLowerCase() === 'expired') {
+              log(`[Sync] Warning: Account for ${source.name} is marked EXPIRED`);
+            }
+          }
+        }
+      } catch (authErr: any) {
+        log(`[Sync] Auth check error for ${source.name}: ${authErr.message}`);
+        if (authErr.response?.status === 401 || authErr.response?.status === 403 || authErr.response?.status === 511) {
+          return { error: `Authentication failed (HTTP ${authErr.response.status}): ${authErr.message}`, type, isAuthError: true };
+        }
+      }
+    }
+
+    // 2. Fetch streams from upstream
+    let upstreamStreams: any = [];
     if (type === 'live') upstreamStreams = await client.getLiveStreams();
     else if (type === 'vod') upstreamStreams = await client.getMovies();
     else if (type === 'series') upstreamStreams = await client.getSeries();
+
+    // 3. Validate upstreamStreams payload structure
+    if (!Array.isArray(upstreamStreams)) {
+      if (typeof upstreamStreams === 'string' && (upstreamStreams.includes('<html') || upstreamStreams.includes('<!DOCTYPE'))) {
+        log(`[Sync] Error: Upstream returned HTML instead of ${type} streams for ${source.name}`);
+        return { error: `Upstream returned HTML (server error, maintenance, or Cloudflare protection)`, type };
+      }
+      if (upstreamStreams && typeof upstreamStreams === 'object') {
+        const obj = upstreamStreams as any;
+        if (obj.user_info?.auth === 0) {
+          return { error: `Authentication failed: ${obj.user_info?.message || 'Invalid credentials'}`, type, isAuthError: true };
+        }
+        if (obj.message || obj.error) {
+          return { error: `Upstream error: ${obj.message || obj.error}`, type };
+        }
+      }
+      return { error: `Invalid upstream response for ${type} (expected array, got ${typeof upstreamStreams})`, type };
+    }
+
+    // 4. Empty Streams Guard:
+    // If source previously had streams cached, and upstream suddenly returns 0, do NOT wipe cache!
+    const cacheKey = `${sourceId}_streams_${type}`;
+    const previousCached = getCached(cacheKey);
+    const prevCount = Array.isArray(previousCached?.data) ? previousCached.data.length : 0;
+    if (upstreamStreams.length === 0 && prevCount > 0) {
+      log(`[Sync] WARNING: Upstream returned 0 ${type} streams for ${source.name}, but previous cache had ${prevCount}. Preserving existing cache to prevent accidental wipeout.`);
+      return {
+        error: `Upstream returned 0 ${type} streams (previous cache had ${prevCount}). Cache preserved.`,
+        type,
+        fetchedCount: 0,
+        preserved: true
+      };
+    }
 
     log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
 
@@ -192,22 +255,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     });
 
     const lastUpdated = new Date().toISOString();
-    const sourceExtra = (source.extra as any) || {};
     sourceExtra.lastUpdated = lastUpdated;
-
-    // Fetch and update account info (expiry date, status, max connections) for Xtream sources
-    if (source.type === 'xtream' && (type === 'live' || force)) {
-      try {
-        const auth = await client.authenticate();
-        if (auth && auth.user_info) {
-          sourceExtra.expiryDate = parseXtreamExpDate(auth.user_info.exp_date);
-          if (auth.user_info.status) sourceExtra.accountStatus = auth.user_info.status;
-          if (auth.user_info.max_connections !== undefined) sourceExtra.maxConnections = auth.user_info.max_connections;
-        }
-      } catch (authErr: any) {
-        log(`[Sync] Note: Could not fetch account auth info for ${source.name}: ${authErr.message}`);
-      }
-    }
 
     db.update(sources).set({ extra: sourceExtra }).where(eq(sources.id, sourceId)).run();
 
@@ -218,13 +266,12 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
         set: { lastSync: lastUpdated, extra: { timestamp: lastUpdated } }
       }).run();
 
-    log(`[Sync] Completed for ${source.name} (${type}). Updated ${updatedCount} name(s).`);
+    log(`[Sync] Completed for ${source.name} (${type}). Fetched ${upstreamStreams.length}, updated ${updatedCount} name(s).`);
 
     // Update disk cache for the UI
-    const cacheKey = `${sourceId}_streams_${type}`;
     setCache(cacheKey, upstreamStreams);
 
-    // Record changelog using MongoDB snapshot (TTL-independent)
+    // Record changelog using snapshot (TTL-independent)
     const idField = type === 'series' ? 'series_id' : 'stream_id';
     const oldSnapshot = await getSnapshot(sourceId, type);
     if (oldSnapshot) {
@@ -234,6 +281,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     await setSnapshot(sourceId, type, newSnapshot);
 
     // Periodically (or on force) update categories too
+    let categoryWarning: string | null = null;
+    let categoriesCount = 0;
     if (force || type === 'live') {
       try {
         const catCacheKey = `${sourceId}_categories`;
@@ -244,27 +293,46 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
           client.getSeriesCategories()
         ]);
 
-        const newCats = { liveCats, vodCats, seriesCats };
+        const validLive = Array.isArray(liveCats) ? liveCats : [];
+        const validVod = Array.isArray(vodCats) ? vodCats : [];
+        const validSeries = Array.isArray(seriesCats) ? seriesCats : [];
+
+        if (!Array.isArray(liveCats) && !Array.isArray(vodCats) && !Array.isArray(seriesCats)) {
+          throw new Error('Upstream returned invalid category data (non-array)');
+        }
+
+        categoriesCount = validLive.length + validVod.length + validSeries.length;
+        const newCats = { liveCats: validLive, vodCats: validVod, seriesCats: validSeries };
         const oldCatSnapshot = await getSnapshot(sourceId, 'categories');
         if (oldCatSnapshot) {
           await recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
         }
         const newCatSnapshot = {
-          liveCats: liveCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
-          vodCats: vodCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
-          seriesCats: seriesCats.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name }))
+          liveCats: validLive.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
+          vodCats: validVod.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),
+          seriesCats: validSeries.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name }))
         };
         await setSnapshot(sourceId, 'categories', newCatSnapshot);
         setCache(catCacheKey, newCats);
       } catch (e: any) {
-        log(`[Sync] Failed to update categories for source ${sourceId}: ${e?.message || e}`);
+        log(`[Sync] Warning: Failed to update categories for source ${sourceId}: ${e?.message || e}`);
+        categoryWarning = `Categories: ${e?.message || e}`;
       }
     }
 
-    return { success: true, updatedCount, totalExamined, lastUpdated };
+    return {
+      success: true,
+      type,
+      fetchedCount: upstreamStreams.length,
+      categoriesCount: categoriesCount || undefined,
+      updatedCount,
+      totalExamined,
+      lastUpdated,
+      warning: categoryWarning || undefined
+    };
   } catch (err: any) {
     log(`[Sync] Error for ${source.name} (${type}): ${err.message}`);
-    return { error: err.message };
+    return { error: err.message, type };
   }
 }
 

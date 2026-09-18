@@ -292,10 +292,10 @@ export const categoryMappings = {
       body: JSON.stringify({ updates }),
     });
   },
-  async reset(ids: string[]) {
+  async reset(ids?: string[], options?: { originalIds?: string[]; playlistId?: string; type?: string }) {
     return request<any>('/api/category-mappings/reset', {
       method: 'POST',
-      body: JSON.stringify({ ids })
+      body: JSON.stringify({ ids, ...options })
     });
   },
   async delete(id: string) {
@@ -352,8 +352,8 @@ export const admin = {
 };
 
 export const system = {
-  async logs() {
-    return request<{ logs: string }>('/api/system/logs');
+  async logs(limit: number = 500) {
+    return request<{ logs: string; totalLines?: number }>(`/api/system/logs?limit=${limit}`);
   },
   async ip() {
     return request<{ ip: string; country: string; city: string; org: string }>('/api/system/ip');

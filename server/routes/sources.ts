@@ -185,12 +185,47 @@ export function createSourcesRouter() {
       refreshSource(sid, 'series', true)
     ]);
 
-    const error = results.find(r => (r as any).error);
-    if (error) {
-      res.json({ success: false, error: (error as any).error });
+    const errors = results.filter(r => (r as any).error).map(r => `[${(r as any).type || 'sync'}] ${(r as any).error}`);
+    const warnings = results.map(r => (r as any).warning).filter(Boolean);
+    const totalUpdated = results.reduce((acc, r: any) => acc + (r.updatedCount || 0), 0);
+
+    const liveRes = results[0] as any;
+    const vodRes = results[1] as any;
+    const seriesRes = results[2] as any;
+
+    const summary = {
+      live: liveRes.error ? `Failed: ${liveRes.error}` : `${liveRes.fetchedCount ?? 0} streams`,
+      vod: vodRes.error ? `Failed: ${vodRes.error}` : `${vodRes.fetchedCount ?? 0} movies`,
+      series: seriesRes.error ? `Failed: ${seriesRes.error}` : `${seriesRes.fetchedCount ?? 0} series`,
+    };
+
+    if (errors.length === results.length) {
+      // All types failed
+      res.json({
+        success: false,
+        error: errors.join(' | '),
+        summary,
+        results
+      });
+    } else if (errors.length > 0) {
+      // Partial failure (e.g. live succeeded, VOD timed out)
+      res.json({
+        success: true,
+        partial: true,
+        updatedCount: totalUpdated,
+        warning: `Partial sync: ${errors.join(', ')}`,
+        summary,
+        results
+      });
     } else {
-      const totalUpdated = results.reduce((acc, r: any) => acc + (r.updatedCount || 0), 0);
-      res.json({ success: true, updatedCount: totalUpdated, results });
+      // All succeeded
+      res.json({
+        success: true,
+        updatedCount: totalUpdated,
+        warning: warnings.length > 0 ? warnings.join(' | ') : undefined,
+        summary,
+        results
+      });
     }
   });
 

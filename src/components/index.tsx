@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } 
 import { createPortal } from 'react-dom';
 import api from '../api';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost } from '../types';
+import { SystemLogViewer } from './SystemLogViewer';
 
 export const copyToClipboard = async (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -1344,37 +1345,45 @@ export function SourceManager({ user }: { user: User }) {
   }, [showAdd, showEdit]);
 
   const handleRefresh = async (source: UpstreamSource) => {
-    if (!confirm(`Run manual sync for "${source.name}"? This will update any unmodified channel names and account details to match upstream.`)) {
+    if (!confirm(`Run manual sync for "${source.name}"? This will fetch Live, VOD, and Series streams and update channels to match upstream.`)) {
       return;
     }
 
     setRefreshingSources(prev => ({ ...prev, [source.id]: true }));
-    setSyncStatus(prev => ({ ...prev, [source.id]: 'Syncing...' }));
+    setSyncStatus(prev => ({ ...prev, [source.id]: 'Syncing Live, VOD & Series...' }));
 
     try {
       const result = await api.sources.refresh(source.id);
       if (result.success) {
         if (result.skipped) {
-          setSyncStatus(prev => ({ ...prev, [source.id]: `Success: Recently synced, no refresh needed.` }));
+          setSyncStatus(prev => ({ ...prev, [source.id]: `Recently synced, no refresh needed.` }));
         } else {
-          setSyncStatus(prev => ({ ...prev, [source.id]: `Success: ${result.updatedCount ?? 0} channels updated` }));
+          const parts: string[] = [];
+          if (result.summary?.live && !result.summary.live.startsWith('Failed')) parts.push(`Live: ${result.summary.live}`);
+          if (result.summary?.vod && !result.summary.vod.startsWith('Failed')) parts.push(`VOD: ${result.summary.vod}`);
+          if (result.summary?.series && !result.summary.series.startsWith('Failed')) parts.push(`Series: ${result.summary.series}`);
+
+          let msg = parts.length > 0 ? parts.join(' · ') : `${result.updatedCount ?? 0} channels updated`;
+          if (result.updatedCount > 0) msg += ` (${result.updatedCount} renamed)`;
+          if (result.warning) msg = `Warning: ${result.warning}`;
+          setSyncStatus(prev => ({ ...prev, [source.id]: msg }));
         }
         loadSources();
       } else {
-        setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${result.error || 'Unknown error'}` }));
+        setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${result.error || 'Sync failed'}` }));
       }
     } catch (err) {
       setSyncStatus(prev => ({ ...prev, [source.id]: `Error: ${(err as Error).message}` }));
     } finally {
       setRefreshingSources(prev => ({ ...prev, [source.id]: false }));
-      // Clear status after 10s
+      // Clear status after 20s
       setTimeout(() => {
         setSyncStatus(prev => {
           const newState = { ...prev };
           delete newState[source.id];
           return newState;
         });
-      }, 10000);
+      }, 20000);
     }
   };
 
@@ -1637,7 +1646,11 @@ export function SourceManager({ user }: { user: User }) {
                       {source.lastUpdated ? new Date(source.lastUpdated).toLocaleString() : 'Never'}
                     </p>
                     {syncStatus[source.id] && (
-                      <p className={`text-[10px] font-bold ${syncStatus[source.id].startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                      <p className={`text-[10px] font-bold leading-tight ${
+                        syncStatus[source.id].startsWith('Error') ? 'text-red-400' :
+                        syncStatus[source.id].startsWith('Warning') ? 'text-amber-400' :
+                        'text-emerald-400'
+                      }`}>
                         {syncStatus[source.id]}
                       </p>
                     )}
@@ -2953,26 +2966,8 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
 }
 
 export function Settings({ user }: { user: User }) {
-  const [logs, setLogs] = useState<string>('Loading logs...');
-  const logRef = useRef<HTMLPreElement>(null);
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
   const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
-
-  const fetchLogs = useCallback(async () => {
-    try {
-      const data = await api.system.logs();
-      setLogs(data.logs || 'Waiting for system activity...');
-    } catch (err) {
-      console.error("Log fetch error:", err);
-      setLogs(`Error: ${(err as Error).message || 'Failed to fetch'}`);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 5000);
-    return () => clearInterval(interval);
-  }, [fetchLogs]);
 
   useEffect(() => {
     api.settings.get()
@@ -2981,12 +2976,6 @@ export function Settings({ user }: { user: User }) {
         // Silently ignore settings load error: using defaults
       });
   }, []);
-
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logs]);
 
   async function saveQualityFormat() {
     setQualityFormatSaving(true);
@@ -3074,28 +3063,8 @@ export function Settings({ user }: { user: User }) {
           </div>
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-zinc-400">
-               <Activity size={18} className="text-emerald-500" />
-               <h3 className="font-bold">System Logs</h3>
-            </div>
-            <div className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Live Monitoring
-            </div>
-          </div>
-          
-          <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-6 relative overflow-hidden group">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500/0 via-emerald-500/50 to-emerald-500/0 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <pre 
-              ref={logRef}
-              className="font-mono text-[11px] leading-relaxed text-zinc-400 overflow-y-auto max-h-[500px] scrollbar-hide selection:bg-emerald-500/20"
-            >
-              {logs}
-            </pre>
-          </div>
-          <p className="text-[10px] text-zinc-600 italic">Showing last 200 activity lines</p>
+        <div className="lg:col-span-2">
+          <SystemLogViewer />
         </div>
       </div>
     </div>
@@ -3833,6 +3802,40 @@ export function PlaylistEditor({ user }: { user: User }) {
     }
   };
 
+  const handleBatchCategoryReset = async () => {
+    if (selectedCategoryIds.size === 0) {
+      alert("No categories selected.");
+      return;
+    }
+
+    const count = selectedCategoryIds.size;
+    if (!confirm(`Reset ${count} selected ${count === 1 ? 'category' : 'categories'} to default? (Restores original upstream name${count === 1 ? '' : 's'})`)) return;
+
+    try {
+      setLoading(true);
+      const upstreamCatIds = Array.from(selectedCategoryIds).filter(catId => !catId.startsWith('custom_'));
+      const toReset = upstreamCatIds
+        .map(catId => categoryMappings.find(m => String(m.originalId) === String(catId) && m.type === activeTab)?.id)
+        .filter(Boolean) as string[];
+
+      if (toReset.length > 0 || upstreamCatIds.length > 0) {
+        await api.categoryMappings.reset(toReset, {
+          originalIds: upstreamCatIds,
+          playlistId: id!,
+          type: activeTab,
+        });
+        await refreshMappings();
+      } else {
+        alert("No modified upstream categories found in selection.");
+      }
+    } catch (error) {
+      console.error("Batch category reset failed:", error);
+      alert("Failed to reset categories.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleBatchVisibility = async (hidden: boolean, scope: 'all' | 'categories' | 'streams') => {
     let activeStreams: any[] = [];
     
@@ -4492,13 +4495,22 @@ export function PlaylistEditor({ user }: { user: User }) {
                 <FolderPlus size={16} />
               </button>
               {selectedCategoryIds.size > 0 && (
-                <button 
-                  onClick={() => handleBatchMoveToTop('categories')}
-                  className="px-3 py-2 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl text-[10px] font-bold hover:bg-emerald-500/20 transition-all shrink-0"
-                  title="Move selected to top"
-                >
-                  <ChevronRight className="-rotate-90" size={14} />
-                </button>
+                <>
+                  <button 
+                    onClick={() => handleBatchMoveToTop('categories')}
+                    className="px-3 py-2 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl text-[10px] font-bold hover:bg-emerald-500/20 transition-all shrink-0"
+                    title="Move selected to top"
+                  >
+                    <ChevronRight className="-rotate-90" size={14} />
+                  </button>
+                  <button 
+                    onClick={handleBatchCategoryReset}
+                    className="px-3 py-2 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-xl text-[10px] font-bold hover:bg-orange-500/20 transition-all shrink-0 flex items-center gap-1"
+                    title={`Reset ${selectedCategoryIds.size} selected categories to default`}
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -4678,6 +4690,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onMoveToTop={() => handleBatchMoveToTop('categories')}
                   onBatchApplyRegex={(rules) => handleBatchApplyRegex(rules, 'categories')}
                   onBatchCategoryApplyRegex={(rules) => handleBatchCategoryApplyRegex(rules)}
+                  onBatchCategoryReset={handleBatchCategoryReset}
                   onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
                   onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
                 />
@@ -4703,6 +4716,7 @@ interface BatchActionsSectionProps {
   onRefresh: () => void;
   onBatchApply: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchCategoryApply?: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryReset?: () => void;
   onBatchVisibility: (hidden: boolean) => void;
   onBatchMoveToTop: () => void;
 }
@@ -4716,6 +4730,7 @@ function BatchActionsSection({
   onRefresh,
   onBatchApply,
   onBatchCategoryApply,
+  onBatchCategoryReset,
   onBatchVisibility,
   onBatchMoveToTop,
 }: BatchActionsSectionProps) {
@@ -4989,44 +5004,57 @@ function BatchActionsSection({
 
       <div className="h-px w-full bg-zinc-800/50" />
 
-      {/* Move to Top */}
+      {/* Move to Top & Reset */}
       <div className="space-y-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
           <ArrowLeft className="rotate-90" size={12} /> Order & Reset
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2">
           <button
             onClick={onBatchMoveToTop}
             disabled={streamIds.length === 0}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
           >
             <ArrowLeft size={14} className="rotate-90" />
-            Move to Top
+            {onBatchCategoryReset ? 'Move Channels to Top' : 'Move to Top'}
           </button>
-          <button
-            onClick={async () => {
-              if (!streamIds.length) return;
-              if (!confirm(`Reset ${streamIds.length} selected streams to default? (Restores original names and icons)`)) return;
-              try {
-                // We need to resolve streamIds (which are raw originalIds in BatchActionsSection) to their mapping IDs
-                const toReset = streamIds.map(sid => mappingsById.get(sid)?.id).filter(Boolean) as string[];
-                if (toReset.length > 0) {
-                  await api.mappings.reset(toReset);
-                  onRefresh();
-                } else {
-                  alert("No modified mappings found in selection.");
+          <div className={onBatchCategoryReset ? "grid grid-cols-2 gap-2" : ""}>
+            {onBatchCategoryReset && (
+              <button
+                onClick={onBatchCategoryReset}
+                className="flex justify-center items-center gap-2 px-4 py-2.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-xl text-xs font-bold hover:bg-purple-500/20 transition-all hover:-translate-y-0.5"
+                title="Reset selected category names to original upstream defaults"
+              >
+                <RefreshCw size={14} />
+                Reset Categories
+              </button>
+            )}
+            <button
+              onClick={async () => {
+                if (!streamIds.length) return;
+                if (!confirm(`Reset ${streamIds.length} selected streams to default? (Restores original names and icons)`)) return;
+                try {
+                  // We need to resolve streamIds (which are raw originalIds in BatchActionsSection) to their mapping IDs
+                  const toReset = streamIds.map(sid => mappingsById.get(sid)?.id).filter(Boolean) as string[];
+                  if (toReset.length > 0) {
+                    await api.mappings.reset(toReset);
+                    onRefresh();
+                  } else {
+                    alert("No modified mappings found in selection.");
+                  }
+                } catch (e) {
+                  console.error("Batch reset failed:", e);
+                  alert("Failed to reset streams.");
                 }
-              } catch (e) {
-                console.error("Batch reset failed:", e);
-                alert("Failed to reset streams.");
-              }
-            }}
-            disabled={streamIds.length === 0}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
-          >
-            <RefreshCw size={14} />
-            Reset
-          </button>
+              }}
+              disabled={streamIds.length === 0}
+              className={`flex justify-center items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5 ${!onBatchCategoryReset ? 'w-full' : ''}`}
+              title="Reset channel names and icons within selected categories to defaults"
+            >
+              <RefreshCw size={14} />
+              {onBatchCategoryReset ? 'Reset Channels' : 'Reset'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -5048,6 +5076,7 @@ interface CategoryPaneProps {
   onMoveToTop: () => void;                         // move selected categories to top
   onBatchApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
   onBatchCategoryApplyRegex: (rules: { type?: 'regex' | 'string', pattern: string; replacement: string }[]) => void;
+  onBatchCategoryReset?: () => void;
   onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
   onMoveStreamsToTop: () => void;
 }
@@ -5055,13 +5084,13 @@ interface CategoryPaneProps {
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
-  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchStreamVisibility, onMoveStreamsToTop,
+  onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchCategoryReset, onBatchStreamVisibility, onMoveStreamsToTop,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
 
   const category = catId ? categories.find(c => String(c.category_id) === catId) : null;
-  const mapping = catId ? categoryMappings.find(m => String(m.originalId) === catId) : null;
+  const mapping = catId ? categoryMappings.find(m => String(m.originalId) === catId && m.type === activeTab) : null;
 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState('');
@@ -5093,7 +5122,7 @@ function CategoryPane({
 
   const handleToggleVisible = async () => {
     if (!catId) return;
-    const newHidden = !(mapping?.hidden ?? false);
+    const newHidden = !mapping?.hidden;
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { hidden: newHidden });
     } else {
@@ -5104,13 +5133,30 @@ function CategoryPane({
 
   const handleToggleSync = async () => {
     if (!catId) return;
-    const newSync = !(mapping?.syncOnDemand ?? false);
+    const newSync = !mapping?.syncOnDemand;
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
     } else {
       await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: category?.category_name || category?.name || '', order: 999999, hidden: false, syncOnDemand: newSync });
     }
     onMappingChange();
+  };
+
+  const handleResetSingleCategory = async () => {
+    if (!catId) return;
+    const catName = category?.category_name || category?.name || '';
+    if (!confirm(`Reset category "${mapping?.customName || catName}" to original upstream name "${catName}"?`)) return;
+    try {
+      if (mapping?.id) {
+        await api.categoryMappings.reset([mapping.id]);
+        onMappingChange();
+      } else {
+        alert("This category has not been modified.");
+      }
+    } catch (e) {
+      console.error("Failed to reset category:", e);
+      alert("Failed to reset category.");
+    }
   };
 
   // Streams that belong to ANY selected category
@@ -5155,6 +5201,16 @@ function CategoryPane({
         <div className="flex items-center gap-1 shrink-0">
           {isSingle && (
             <>
+              {mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
+                <button
+                  onClick={handleResetSingleCategory}
+                  className="px-2 py-1 text-xs bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors flex items-center gap-1"
+                  title="Reset category name to upstream default"
+                >
+                  <RefreshCw size={12} />
+                  <span>Reset</span>
+                </button>
+              )}
               <button
                 onClick={handleToggleVisible}
                 className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isHidden ? 'text-zinc-600' : 'text-zinc-300'}`}
@@ -5177,30 +5233,12 @@ function CategoryPane({
               <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
               <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
               <button
-                onClick={async () => {
-                  if (selectedCategoryIds.size === 0) return;
-                  if (!confirm(`Reset ${selectedCategoryIds.size} selected categories to default? (Restores original names)`)) return;
-                  try {
-                    // Filter out custom categories (starting with custom_) as they can't be "reset" to upstream
-                    const toReset = Array.from(selectedCategoryIds)
-                      .filter(id => !id.startsWith('custom_'))
-                      .map(catId => categoryMappings.find(m => m.originalId === catId && m.type === activeTab)?.id)
-                      .filter(Boolean) as string[];
-
-                    if (toReset.length > 0) {
-                      await api.categoryMappings.reset(toReset);
-                      onMappingChange();
-                    } else {
-                      alert("No modified upstream categories found in selection.");
-                    }
-                  } catch (e) {
-                    console.error("Batch category reset failed:", e);
-                    alert("Failed to reset categories.");
-                  }
-                }}
-                className="px-2 py-1 text-xs bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors"
+                onClick={onBatchCategoryReset}
+                className="px-2 py-1 text-xs bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded transition-colors flex items-center gap-1"
+                title={`Reset ${selectedCategoryIds.size} selected categories to default (restores original upstream names)`}
               >
-                Reset
+                <RefreshCw size={12} />
+                <span>Reset</span>
               </button>
             </>
           )}
@@ -5222,6 +5260,7 @@ function CategoryPane({
             onRefresh={onMappingChange}
             onBatchApply={onBatchApplyRegex}
             onBatchCategoryApply={onBatchCategoryApplyRegex}
+            onBatchCategoryReset={onBatchCategoryReset}
             onBatchVisibility={onBatchStreamVisibility}
             onBatchMoveToTop={onMoveStreamsToTop}
           />
@@ -5425,6 +5464,22 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         >
           <Edit2 size={12} />
         </button>
+        {mapping?.customName && mapping.customName !== (cat.category_name || cat.name) && (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              const catName = cat.category_name || cat.name || '';
+              if (window.confirm(`Reset category "${mapping.customName}" to original upstream name "${catName}"?`)) {
+                await api.categoryMappings.reset([mapping.id]);
+                onMappingChange();
+              }
+            }}
+            className="p-1 hover:bg-orange-500/20 rounded text-orange-400 hover:text-orange-300 transition-colors"
+            title={`Reset name to "${cat.category_name || cat.name}"`}
+          >
+            <RefreshCw size={12} />
+          </button>
+        )}
         <button 
           onClick={toggleVisibility}
           className={cn(
@@ -6574,35 +6629,45 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   return (
     <motion.aside
       initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 360, opacity: 1 }}
+      animate={{ width: 380, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       className="border-l border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col z-20 shrink-0 overflow-hidden"
     >
-      {/* Compact header: icon + name inline */}
-      <header className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/50 flex items-center gap-3 min-w-0">
-        {isMulti ? (
-          <div className="w-9 h-9 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-emerald-500 font-bold text-sm shrink-0">
-            {selectedStreamIds.size}
+      {/* Header: Stream identity on top row, quick actions on second row */}
+      <header className="border-b border-zinc-800 bg-zinc-950/60 shrink-0">
+        <div className="px-4 py-3 flex items-center gap-3 min-w-0">
+          {isMulti ? (
+            <div className="w-9 h-9 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-emerald-500 font-bold text-sm shrink-0">
+              {selectedStreamIds.size}
+            </div>
+          ) : (
+            <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
+              {effectiveIcon ? (
+                <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
+              ) : (
+                <Tv size={16} className="text-zinc-700" />
+              )}
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold truncate text-zinc-100 leading-tight" title={isMulti ? `${selectedStreamIds.size} streams selected` : (customName || originalName)}>
+              {isMulti ? `${selectedStreamIds.size} streams selected` : (customName || originalName)}
+            </p>
+            <p className="text-[10px] text-zinc-500 font-mono leading-tight mt-0.5 truncate">
+              {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
+            </p>
           </div>
-        ) : (
-          <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-            {effectiveIcon ? (
-              <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
-            ) : (
-              <Tv size={16} className="text-zinc-700" />
-            )}
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold truncate text-zinc-100 leading-tight">
-            {isMulti ? `${selectedStreamIds.size} streams selected` : (customName || originalName)}
-          </p>
-          <p className="text-[10px] text-zinc-600 font-mono leading-tight">
-            {isMulti ? 'EPG and logo apply to all' : `ID: ${stream._uniqueId}`}
-          </p>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 shrink-0 transition-colors"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
         </div>
+
         {!isMulti && playlist && source && (
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className={`px-4 pb-3 pt-0 grid gap-2 ${onPlay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {onPlay && (
               <button
                 onClick={() => {
@@ -6615,10 +6680,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   }
                   onPlay(url, customName || originalName || "Stream");
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 rounded-lg font-bold text-xs transition-colors shrink-0"
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 rounded-xl font-bold text-xs transition-all shadow-sm shadow-emerald-950/20"
                 title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
               >
-                <Play size={12} fill="currentColor" />
+                <Play size={13} fill="currentColor" />
                 Play
               </button>
             )}
@@ -6633,17 +6698,14 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 }
                 downloadStreamM3u(url, customName || originalName || "Stream");
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-orange-500/20 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border border-orange-500/30 rounded-lg font-bold text-xs transition-colors shrink-0"
+              className="flex items-center justify-center gap-1.5 py-2 px-3 bg-orange-500/15 hover:bg-orange-500/25 active:scale-[0.98] text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-xl font-bold text-xs transition-all"
               title="Download .m3u to play in VLC / Native Player"
             >
-              <VlcIcon size={12} />
+              <VlcIcon size={13} />
               External (.m3u)
             </button>
           </div>
         )}
-        <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-100 shrink-0">
-          <X size={16} />
-        </button>
       </header>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">

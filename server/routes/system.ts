@@ -35,11 +35,12 @@ export function createSystemRouter() {
     try {
       const data = await fs.promises.readFile(LOG_PATH, "utf-8");
       const lines = data.split("\n").filter(l => l.trim() !== "");
-      const tail = lines.slice(-200).join("\n");
-      res.json({ logs: tail });
+      const limit = Math.min(2000, Math.max(50, parseInt(req.query.limit as string || '500', 10)));
+      const tail = lines.slice(-limit).join("\n");
+      res.json({ logs: tail, totalLines: lines.length });
     } catch (err: any) {
       if (err.code === "ENOENT") {
-        return res.json({ logs: "" });
+        return res.json({ logs: "", totalLines: 0 });
       }
       res.status(500).json({ error: "Failed to read logs: " + err.message });
     }
