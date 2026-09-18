@@ -3319,6 +3319,8 @@ function TelegramSettingsCard() {
   const [botToken, setBotToken] = useState('');
   const [chatId, setChatId] = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [newKeyword, setNewKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -3330,6 +3332,7 @@ function TelegramSettingsCard() {
         setBotToken(s.telegramBotToken || '');
         setChatId(s.telegramChatId || '');
         setEnabled(Boolean(s.telegramEnabled));
+        setKeywords(s.telegramKeywords || []);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -3343,6 +3346,7 @@ function TelegramSettingsCard() {
         telegramBotToken: botToken,
         telegramChatId: chatId,
         telegramEnabled: enabled,
+        telegramKeywords: keywords,
       });
       setStatusMessage({ text: 'Telegram-Einstellungen gespeichert!', isError: false });
       setTimeout(() => setStatusMessage(null), 4000);
@@ -3351,6 +3355,18 @@ function TelegramSettingsCard() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const addKeyword = () => {
+    const kw = newKeyword.trim();
+    if (!kw) return;
+    setNewKeyword('');
+    if (keywords.some(k => k.toLowerCase() === kw.toLowerCase())) return;
+    setKeywords([...keywords, kw]);
+  };
+
+  const removeKeyword = (kw: string) => {
+    setKeywords(keywords.filter(k => k !== kw));
   };
 
   const handleTest = async () => {
@@ -3381,7 +3397,7 @@ function TelegramSettingsCard() {
               {enabled ? 'Aktiv' : 'Inaktiv'}
             </span>
           </div>
-          <p className="text-sm text-zinc-500">Benachrichtigungen bei DVR-Aufnahmen & Handover</p>
+          <p className="text-sm text-zinc-500">Benachrichtigungen bei DVR-Aufnahmen, Handover & Sync-Treffern</p>
         </div>
         <button
           onClick={() => setEnabled(!enabled)}
@@ -3436,6 +3452,40 @@ function TelegramSettingsCard() {
               {statusMessage.text}
             </div>
           )}
+
+          <div className="space-y-2 pt-2 border-t border-zinc-800">
+            <label className="block text-xs font-semibold text-zinc-400">Sync-Keywords</label>
+            <p className="text-[10px] text-zinc-600">Benachrichtigt dich, wenn beim Sync ein neuer oder umbenannter Sender / eine Kategorie mit einem dieser Begriffe auftaucht.</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newKeyword}
+                onChange={e => setNewKeyword(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeyword(); } }}
+                placeholder='z.B. "Düsseldorfer EG" oder "DEL2"'
+                className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 text-sm"
+              />
+              <button
+                onClick={addKeyword}
+                disabled={!newKeyword.trim()}
+                className="px-3 py-2 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm disabled:opacity-40"
+              >
+                Hinzufügen
+              </button>
+            </div>
+            {keywords.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {keywords.map(kw => (
+                  <span key={kw} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-200">
+                    {kw}
+                    <button onClick={() => removeKeyword(kw)} className="text-zinc-500 hover:text-red-400" title="Entfernen">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="flex gap-3 pt-2">
             <button

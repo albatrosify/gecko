@@ -381,6 +381,7 @@ export interface GlobalSettings {
   telegramBotToken?: string;
   telegramChatId?: string;
   telegramEnabled?: boolean;
+  telegramKeywords?: string[];
 }
 
 export const settings = {

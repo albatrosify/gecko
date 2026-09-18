@@ -6,6 +6,8 @@ export interface TelegramConfig {
   botToken?: string;
   chatId?: string;
   enabled?: boolean;
+  /** Keywords watched during sync — matched against added/renamed stream & category names. */
+  telegramKeywords?: string[];
 }
 
 /**
@@ -24,6 +26,7 @@ export async function getTelegramConfig(): Promise<TelegramConfig> {
       botToken: extra.telegramBotToken || '',
       chatId: extra.telegramChatId || '',
       enabled: Boolean(extra.telegramEnabled),
+      telegramKeywords: Array.isArray(extra.telegramKeywords) ? extra.telegramKeywords : [],
     };
   } catch (err: any) {
     log(`[Telegram] Failed to load config: ${err.message}`);

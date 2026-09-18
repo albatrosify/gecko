@@ -54,7 +54,7 @@ export async function setSnapshot(sourceId: string, type: string, snapshot: any)
   setCache(`snapshot_${sourceId}_${type}`, snapshot);
 }
 
-export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any) {
+export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any): Promise<{ added: any[]; removed: any[]; renamed: any[] }> {
   try {
     const db = getDb();
     let added: any[] = [];
@@ -115,8 +115,79 @@ export async function recordSourceChanges(sourceId: string, type: string, oldDat
         db.delete(source_changelogs).where(inArray(source_changelogs.id, toDelete)).run();
       }
     }
+
+    return { added, removed, renamed };
   } catch (err: any) {
     log(`[Changelog] FAILED to record: ${err.message}`);
+    return { added: [], removed: [], renamed: [] };
+  }
+}
+
+/** Escape user-controlled text for Telegram HTML parse mode. */
+function escapeHtml(text: string): string {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  live: 'Live TV',
+  vod: 'VoD',
+  series: 'Serien',
+  categories: 'Kategorien',
+};
+
+/**
+ * Sends a Telegram notification when a sync changelog contains newly-added or
+ * renamed streams/categories matching the configured keywords. Intentionally
+ * non-throwing so a Telegram hiccup never breaks the sync itself.
+ */
+async function notifyKeywordMatches(
+  source: any,
+  type: string,
+  changes: { added: any[]; renamed: any[] }
+): Promise<void> {
+  try {
+    const { getTelegramConfig, sendTelegramNotification } = await import('./telegram.ts');
+    const config = await getTelegramConfig();
+    const keywords = (config.telegramKeywords || []).map((k: string) => k.trim()).filter(Boolean);
+    if (!config.enabled || keywords.length === 0) return;
+
+    const matchesKeyword = (name: string | undefined): boolean => {
+      if (!name) return false;
+      const lower = name.toLowerCase();
+      return keywords.some(k => lower.includes(k.toLowerCase()));
+    };
+
+    const matches: string[] = [];
+    for (const c of changes.added || []) {
+      if (matchesKeyword(c.name)) {
+        const typeTag = c.type ? ` <i>(${escapeHtml(c.type)})</i>` : '';
+        matches.push(`➕ <b>${escapeHtml(c.name)}</b>${typeTag} — neu hinzugefügt`);
+      }
+    }
+    for (const c of changes.renamed || []) {
+      if (matchesKeyword(c.newName)) {
+        matches.push(`✏️ <b>${escapeHtml(c.oldName)}</b> → <b>${escapeHtml(c.newName)}</b> — umbenannt`);
+      }
+    }
+
+    if (matches.length === 0) return;
+
+    const typeLabel = TYPE_LABELS[type] || type;
+    const overflow = matches.length > 20 ? matches.length - 20 : 0;
+    const message =
+      `🦎 <b>Gecko IPTV – Sync Treffer</b>\n\n` +
+      `Quelle: <b>${escapeHtml(source.name || source.id)}</b>\n` +
+      `Typ: ${typeLabel}\n` +
+      `Zeit: <code>${new Date().toLocaleString()}</code>\n\n` +
+      matches.slice(0, 20).join('\n') +
+      (overflow > 0 ? `\n\n… und ${overflow} weitere` : '');
+
+    await sendTelegramNotification(message, { parseMode: 'HTML' });
+  } catch (err: any) {
+    log(`[Telegram] Keyword notification failed: ${err.message}`);
   }
 }
 
@@ -281,7 +352,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     const idField = type === 'series' ? 'series_id' : 'stream_id';
     const oldSnapshot = await getSnapshot(sourceId, type);
     if (oldSnapshot) {
-      await recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
+      const changes = await recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
+      await notifyKeywordMatches(source, type, changes);
     }
     const newSnapshot = upstreamStreams.map((s: any) => ({ [idField]: s[idField], name: s.name || s.title }));
     await setSnapshot(sourceId, type, newSnapshot);
@@ -311,7 +383,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
         const newCats = { liveCats: validLive, vodCats: validVod, seriesCats: validSeries };
         const oldCatSnapshot = await getSnapshot(sourceId, 'categories');
         if (oldCatSnapshot) {
-          await recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
+          const catChanges = await recordSourceChanges(sourceId, 'categories', oldCatSnapshot, newCats);
+          await notifyKeywordMatches(source, 'categories', catChanges);
         }
         const newCatSnapshot = {
           liveCats: validLive.map((c: any) => ({ category_id: c.category_id, category_name: c.category_name })),

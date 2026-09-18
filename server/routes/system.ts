@@ -132,6 +132,7 @@ export function createSystemRouter() {
       telegramBotToken: extra.telegramBotToken ?? '',
       telegramChatId: extra.telegramChatId ?? '',
       telegramEnabled: Boolean(extra.telegramEnabled),
+      telegramKeywords: Array.isArray(extra.telegramKeywords) ? extra.telegramKeywords : [],
     });
   });
 
@@ -142,7 +143,7 @@ export function createSystemRouter() {
     const db = getDb();
     const { settings } = await import('../schema.ts');
     const { eq } = await import('drizzle-orm');
-    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled } = req.body;
+    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords } = req.body;
 
     if (qualityLabelFormat !== undefined && (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200)) {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
@@ -156,6 +157,11 @@ export function createSystemRouter() {
     if (telegramEnabled !== undefined && typeof telegramEnabled !== 'boolean') {
       return res.status(400).json({ error: 'telegramEnabled must be a boolean' });
     }
+    if (telegramKeywords !== undefined) {
+      if (!Array.isArray(telegramKeywords) || telegramKeywords.length > 200 || telegramKeywords.some((k: any) => typeof k !== 'string' || k.length > 200)) {
+        return res.status(400).json({ error: 'telegramKeywords must be an array of strings (max 200 entries, each ≤ 200 characters)' });
+      }
+    }
 
     const currentSettings = db.select().from(settings).where(eq(settings.id, 'global')).get();
     const currentExtra = (currentSettings?.extra as any) || {};
@@ -165,6 +171,7 @@ export function createSystemRouter() {
       ...(telegramBotToken !== undefined ? { telegramBotToken: telegramBotToken.trim() } : {}),
       ...(telegramChatId !== undefined ? { telegramChatId: telegramChatId.trim() } : {}),
       ...(telegramEnabled !== undefined ? { telegramEnabled } : {}),
+      ...(telegramKeywords !== undefined ? { telegramKeywords: telegramKeywords.map((k: string) => k.trim()).filter(Boolean) } : {}),
     };
 
     db.insert(settings)
