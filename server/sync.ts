@@ -43,15 +43,29 @@ import { eq, and, inArray } from 'drizzle-orm';
 import { sources, playlists, mappings, source_sync_meta, source_changelogs } from './schema.ts';
 import { generateId } from './db.ts';
 
+/**
+ * Baseline snapshot key. Persisted in `source_sync_meta` (SQLite) rather than
+ * the cache so the sync diff/changelog — and the keyword notifications built on
+ * top of it — survive restarts and cache TTL regardless of CACHE_BACKEND.
+ */
+function snapshotKey(sourceId: string, type: string): string {
+  return `snapshot_${sourceId}_${type}`;
+}
+
 export async function getSnapshot(sourceId: string, type: string): Promise<any> {
-  const { getCached } = await import('./cache.ts');
-  const cached = getCached(`snapshot_${sourceId}_${type}`);
-  return cached?.data ?? null;
+  const db = getDb();
+  const row = db.select().from(source_sync_meta).where(eq(source_sync_meta.key, snapshotKey(sourceId, type))).get();
+  return (row?.extra as any)?.snapshot ?? null;
 }
 
 export async function setSnapshot(sourceId: string, type: string, snapshot: any): Promise<void> {
-  const { setCache } = await import('./cache.ts');
-  setCache(`snapshot_${sourceId}_${type}`, snapshot);
+  const db = getDb();
+  const key = snapshotKey(sourceId, type);
+  const now = new Date().toISOString();
+  db.insert(source_sync_meta)
+    .values({ key, lastSync: now, extra: { snapshot } })
+    .onConflictDoUpdate({ target: source_sync_meta.key, set: { lastSync: now, extra: { snapshot } } })
+    .run();
 }
 
 export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any): Promise<{ added: any[]; removed: any[]; renamed: any[] }> {
