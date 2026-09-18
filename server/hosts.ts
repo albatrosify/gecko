@@ -9,6 +9,7 @@ import { log } from "./logger.ts";
 import { getCached } from "./cache.ts";
 import { eq } from "drizzle-orm";
 import { SourceHost } from "../src/types.ts";
+import { recordVpnBlock } from "./vpn.ts";
 
 const PROBE_CAP_BYTES = 2 * 1024 * 1024; // 2MB (enables measuring real 4K / high-bitrate stream speeds)
 const PROBE_MAX_MS = 3500; // 3.5s timeout per host
@@ -470,6 +471,9 @@ async function probeThroughput(url: string): Promise<number> {
     if (response.status >= 400) {
       if (response.data?.destroy) response.data.destroy();
       controller.abort();
+      if (response.status === 511) {
+        throw new Error('Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted)');
+      }
       throw new Error(`upstream returned ${response.status}`);
     }
 
@@ -621,6 +625,10 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
         r.probeOk = false;
         r.throughputMbps = null;
         if (!r.lastError) r.lastError = err.message;
+        if (err.message?.includes('511')) {
+          r.vpnBlocked = true;
+          recordVpnBlock(sourceId, h.url, 511, err.message);
+        }
       }
     } else {
       r.probeOk = false;
@@ -630,12 +638,16 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
     results.push(r);
   })));
 
-  // Sort: healthy hosts first by latency ascending, then failed hosts
+  // Sort: healthy non-blocked hosts first by latency ascending, then blocked/failed hosts
   const sorted = results
     .map((h, i) => ({ ...h, order: i }))
     .sort((a, b) => {
-      const aOk = a.authOk ? 0 : 1;
-      const bOk = b.authOk ? 0 : 1;
+      const aBlocked = a.vpnBlocked ? 1 : 0;
+      const bBlocked = b.vpnBlocked ? 1 : 0;
+      if (aBlocked !== bBlocked) return aBlocked - bBlocked;
+
+      const aOk = a.authOk && a.probeOk !== false ? 0 : 1;
+      const bOk = b.authOk && b.probeOk !== false ? 0 : 1;
       if (aOk !== bOk) return aOk - bOk;
       if (aOk === 0) {
         const aLat = a.latencyMs ?? Number.MAX_SAFE_INTEGER;
@@ -646,7 +658,7 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
     })
     .map((h, i) => ({ ...h, order: i }));
 
-  const primary = sorted.find(h => h.authOk) || sorted[0];
+  const primary = sorted.find(h => h.authOk && !h.vpnBlocked) || sorted[0];
 
   const newExtra = {
     ...extra,

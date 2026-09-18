@@ -228,63 +228,131 @@ function countryToFlag(code: string): string {
 
 function VpnStatusBar() {
   const [ipInfo, setIpInfo] = useState<{ ip: string; country: string; city: string; org: string } | null>(null);
+  const [vpnStatus, setVpnStatus] = useState<import('../types').VpnStatus | null>(null);
   const [error, setError] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [rotateMessage, setRotateMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetch = async () => {
-      try {
-        const data = await api.system.ip();
-        setIpInfo(data);
-        setError(false);
-      } catch {
-        setError(true);
-      }
-    };
-    fetch();
-    const interval = setInterval(fetch, 30_000);
-    return () => clearInterval(interval);
+  const fetchStatus = useCallback(async () => {
+    try {
+      const [ipData, vpnData] = await Promise.all([
+        api.system.ip(),
+        api.system.vpnStatus().catch(() => null),
+      ]);
+      setIpInfo(ipData);
+      if (vpnData) setVpnStatus(vpnData);
+      setError(false);
+    } catch {
+      setError(true);
+    }
   }, []);
 
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 20_000);
+    return () => clearInterval(interval);
+  }, [fetchStatus]);
+
+  const handleRotateVpn = async () => {
+    if (rotating) return;
+    setRotating(true);
+    setRotateMessage('Reconnecting VPN tunnel in Gluetun...');
+    try {
+      const res = await api.system.reconnectVpn();
+      setRotateMessage(res.message || 'VPN rotated successfully');
+      await fetchStatus();
+      setTimeout(() => setRotateMessage(null), 5000);
+    } catch (err: any) {
+      setRotateMessage(`Failed: ${err.message}`);
+      setTimeout(() => setRotateMessage(null), 7000);
+    } finally {
+      setRotating(false);
+    }
+  };
+
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl px-6 py-4 flex items-center gap-4">
-      <div className="flex items-center gap-2 shrink-0">
-        {error ? (
-          <span className="w-2 h-2 rounded-full bg-amber-500" title="IP lookup unavailable" />
-        ) : ipInfo ? (
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-        ) : (
-          <span className="w-2 h-2 rounded-full bg-zinc-600 animate-pulse" />
-        )}
-        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Egress IP</span>
-      </div>
-
-      {error && (
-        <span className="text-xs text-amber-400 font-mono">IP lookup unavailable</span>
-      )}
-
-      {!error && !ipInfo && (
-        <div className="flex gap-4">
-          <div className="h-3 w-28 bg-zinc-800 rounded animate-pulse" />
-          <div className="h-3 w-20 bg-zinc-800 rounded animate-pulse" />
-        </div>
-      )}
-
-      {!error && ipInfo && (
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-xl leading-none">{countryToFlag(ipInfo.country)}</span>
-            <span className="font-mono text-sm font-bold text-zinc-100 tracking-tight">{ipInfo.ip}</span>
+    <div className="space-y-3">
+      {vpnStatus?.vpnBlockedRecent && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="text-amber-400 shrink-0" size={18} />
+            <div className="text-xs text-amber-200">
+              <span className="font-bold text-amber-300">Upstream CDN Block Detected (HTTP 511):</span>{' '}
+              An upstream stream was rejected because your current egress IP is recognized as a VPN or datacenter IP.
+            </div>
           </div>
-          <span className="text-zinc-600">·</span>
-          <span className="text-sm text-zinc-400">{[ipInfo.city, ipInfo.country].filter(Boolean).join(', ')}</span>
-          {ipInfo.org && (
-            <>
-              <span className="text-zinc-600">·</span>
-              <span className="text-xs text-zinc-500 font-mono truncate max-w-[240px]">{ipInfo.org}</span>
-            </>
+          {vpnStatus.configured && (
+            <button
+              onClick={handleRotateVpn}
+              disabled={rotating}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 transition disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={rotating ? "animate-spin" : ""} />
+              <span>{rotating ? "Rotating..." : "Rotate VPN Now"}</span>
+            </button>
           )}
         </div>
       )}
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2 shrink-0">
+            {error ? (
+              <span className="w-2 h-2 rounded-full bg-amber-500" title="IP lookup unavailable" />
+            ) : ipInfo ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-zinc-600 animate-pulse" />
+            )}
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Egress IP</span>
+          </div>
+
+          {error && (
+            <span className="text-xs text-amber-400 font-mono">IP lookup unavailable</span>
+          )}
+
+          {!error && !ipInfo && (
+            <div className="flex gap-4">
+              <div className="h-3 w-28 bg-zinc-800 rounded animate-pulse" />
+              <div className="h-3 w-20 bg-zinc-800 rounded animate-pulse" />
+            </div>
+          )}
+
+          {!error && ipInfo && (
+            <div className="flex items-center gap-6 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xl leading-none">{countryToFlag(ipInfo.country)}</span>
+                <span className="font-mono text-sm font-bold text-zinc-100 tracking-tight">{ipInfo.ip}</span>
+              </div>
+              <span className="text-zinc-600">·</span>
+              <span className="text-sm text-zinc-400">{[ipInfo.city, ipInfo.country].filter(Boolean).join(', ')}</span>
+              {ipInfo.org && (
+                <>
+                  <span className="text-zinc-600">·</span>
+                  <span className="text-xs text-zinc-500 font-mono truncate max-w-[240px]">{ipInfo.org}</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {vpnStatus?.configured && (
+          <div className="flex items-center gap-3 shrink-0 ml-auto">
+            {rotateMessage && (
+              <span className="text-xs text-zinc-400 animate-pulse">{rotateMessage}</span>
+            )}
+            <button
+              onClick={handleRotateVpn}
+              disabled={rotating}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 hover:border-zinc-600 transition disabled:opacity-50"
+              title="Disconnect and reconnect VPN via Gluetun to get a new IP address"
+            >
+              <RefreshCw size={12} className={clsx(rotating && "animate-spin text-emerald-400", !rotating && "text-zinc-400")} />
+              <span>{rotating ? "Rotating..." : "Rotate VPN"}</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1749,6 +1817,15 @@ export function SourceManager({ user }: { user: User }) {
                                     {isActive && (
                                       <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans">
                                         Active
+                                      </span>
+                                    )}
+                                    {(h.vpnBlocked || h.lastError?.includes('511')) && (
+                                      <span
+                                        className="px-1.5 py-0.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans flex items-center gap-1"
+                                        title={h.lastError || "Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Rotate VPN to switch server/IP."}
+                                      >
+                                        <AlertTriangle size={9} />
+                                        VPN Blocked
                                       </span>
                                     )}
                                     <span className="text-zinc-200 truncate max-w-xs sm:max-w-sm md:max-w-md" title={h.url}>

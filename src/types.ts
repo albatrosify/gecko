@@ -21,6 +21,24 @@ export interface SourceHost {
   failures: number;               // Failed proxied stream attempts
   lastUsed?: string | null;       // ISO timestamp of last successful use
   lastError?: string | null;      // Last failure reason
+  vpnBlocked?: boolean;           // Whether this host is currently blocked by upstream CDN (HTTP 511)
+}
+
+export interface VpnStatus {
+  configured: boolean;
+  status?: string;
+  publicIp?: string;
+  country?: string;
+  city?: string;
+  organization?: string;
+  vpnBlockedRecent?: boolean;
+  lastBlock?: {
+    sourceId: string;
+    hostUrl: string;
+    timestamp: number;
+    status: number;
+    reason: string;
+  } | null;
 }
 
 export interface UpstreamSource {

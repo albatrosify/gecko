@@ -15,6 +15,7 @@ services:
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY:?WIREGUARD_PRIVATE_KEY is required}
       - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Netherlands}
       - HTTP_CONTROL_SERVER_ADDRESS=:8000
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE=${HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE:-{"auth":"none"}}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8000/ || exit 1"]
       interval: 15s
@@ -39,6 +40,8 @@ services:
       - NODE_ENV=production
       - APP_URL=${APP_URL:-}
       - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
+      - GLUETUN_CONTROL_URL=${GLUETUN_CONTROL_URL:-http://127.0.0.1:8000}
+      - GLUETUN_API_KEY=${GLUETUN_API_KEY:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 30s

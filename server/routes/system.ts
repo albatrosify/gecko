@@ -20,13 +20,51 @@ export function createSystemRouter() {
       if (ipCache && now < ipCache.expiresAt) {
         return res.json(ipCache.data);
       }
+
+      // Check Gluetun first if available
+      const { getGluetunStatus } = await import("../vpn.ts");
+      const gluetun = await getGluetunStatus();
+      if (gluetun.configured && gluetun.publicIp) {
+        const data = {
+          ip: gluetun.publicIp,
+          country: gluetun.country || '',
+          city: gluetun.city || '',
+          org: gluetun.organization || '',
+        };
+        ipCache = { data, expiresAt: now + 30_000 };
+        return res.json(data);
+      }
+
       const response = await axios.get('http://ipinfo.io/json', { timeout: 10000 });
       const { ip, country, city, org } = response.data;
       const data = { ip, country, city, org };
       ipCache = { data, expiresAt: now + 30_000 };
       res.json(data);
     } catch (err: any) {
-      res.status(502).json({ error: 'Failed to reach ipinfo.io: ' + err.message });
+      res.status(502).json({ error: 'Failed to reach IP service: ' + err.message });
+    }
+  });
+
+  // VPN Status & Diagnostics
+  router.get("/system/vpn", requireAuth, async (req, res) => {
+    try {
+      const { getGluetunStatus } = await import("../vpn.ts");
+      const status = await getGluetunStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to query VPN status: ' + err.message });
+    }
+  });
+
+  // VPN Reconnect / Rotate
+  router.post("/system/vpn/reconnect", requireAuth, async (req, res) => {
+    try {
+      const { reconnectGluetun } = await import("../vpn.ts");
+      const result = await reconnectGluetun();
+      ipCache = null; // Invalidate IP cache immediately
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to reconnect VPN' });
     }
   });
 

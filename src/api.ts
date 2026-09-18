@@ -358,6 +358,14 @@ export const system = {
   async ip() {
     return request<{ ip: string; country: string; city: string; org: string }>('/api/system/ip');
   },
+  async vpnStatus() {
+    return request<import('./types.ts').VpnStatus>('/api/system/vpn');
+  },
+  async reconnectVpn() {
+    return request<{ success: boolean; message: string; newIp?: string }>('/api/system/vpn/reconnect', {
+      method: 'POST',
+    });
+  },
 };
 
 // Settings

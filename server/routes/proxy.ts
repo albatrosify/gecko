@@ -13,6 +13,7 @@ import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
+import { recordVpnBlock } from "../vpn.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
 
@@ -167,10 +168,16 @@ export function createProxyRouter() {
           // Treat 4xx/5xx from upstream as a failure — try next host/source
           if (response.status >= 400) {
             lastStatus = response.status;
-            lastError = `upstream returned ${response.status}`;
+            if (response.status === 511) {
+              lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
+              recordVpnBlock(sourceId, hostUrl, 511, lastError);
+              log(`[Proxy] ⚠️ Host ${hostUrl} BLOCKED by upstream CDN (511 Network Authentication Required) for ${type}/${streamId}. Egress IP appears blacklisted. Recommend rotating VPN. - ${getClientInfo(req)}`);
+            } else {
+              lastError = `upstream returned ${response.status}`;
+              log(`[Proxy] Host ${hostUrl} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
+            }
             if (response.data?.destroy) response.data.destroy();
-            recordHostUse(sourceId, hostUrl, false, `upstream returned ${response.status}`);
-            log(`[Proxy] Host ${hostUrl} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
+            recordHostUse(sourceId, hostUrl, false, lastError);
             continue;
           }
 
@@ -237,7 +244,11 @@ export function createProxyRouter() {
     }
 
     log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} (status ${lastStatus}) - ${getClientInfo(req)}`);
-    res.status(lastStatus).send(`All upstream sources failed: ${lastError}`);
+    if (lastStatus === 511) {
+      res.status(511).send(`All upstream sources failed: Upstream CDN blocked connection (HTTP 511 Network Authentication Required). Server egress IP appears blacklisted. Please rotate VPN.`);
+    } else {
+      res.status(lastStatus).send(`All upstream sources failed: ${lastError}`);
+    }
   };
 
   // Stream proxy routes — all traffic flows through this server (required for VPN routing)
