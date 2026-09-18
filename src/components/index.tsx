@@ -5,6 +5,19 @@ import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMappi
 import { SystemLogViewer } from './SystemLogViewer';
 import mpegts from 'mpegts.js';
 
+/**
+ * Rewrite an upstream image URL to go through Gecko's `/img` proxy using a
+ * relative path, so logos resolve on the same origin/protocol as the web UI.
+ * This avoids mixed-content errors when the UI is served over HTTPS while the
+ * upstream icon is plain `http://`.
+ */
+export const proxyImg = (url?: string | null): string => {
+  if (!url) return '';
+  if (url.startsWith('/img') || url.startsWith('data:') || url.startsWith('blob:')) return url;
+  if (/^https?:\/\//i.test(url)) return `/img?url=${encodeURIComponent(url)}`;
+  return url;
+};
+
 export const copyToClipboard = async (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
     try {
@@ -6387,7 +6400,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
         {icon ? (
-          <img src={icon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" loading="lazy" />
+          <img src={proxyImg(icon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-zinc-800">
             <Tv size={12} />
@@ -7133,7 +7146,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           ) : (
             <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
               {effectiveIcon ? (
-                <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
+                <img src={proxyImg(effectiveIcon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
               ) : (
                 <Tv size={16} className="text-zinc-700" />
               )}
@@ -7334,7 +7347,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
               />
               <div className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
                 {effectiveIcon ? (
-                  <img src={effectiveIcon} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
+                  <img src={proxyImg(effectiveIcon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" onError={e => (e.currentTarget.style.display='none')} />
                 ) : (
                   <Tv size={14} className="text-zinc-700" />
                 )}
@@ -7408,7 +7421,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 onClick={() => { setEpgOpen(o => !o); setEpgSearch(''); }}
               >
                 {selectedChannel?.icon && (
-                  <img src={selectedChannel.icon} alt="" className="w-5 h-5 object-contain rounded shrink-0" onError={e => (e.currentTarget.style.display='none')} />
+                  <img src={proxyImg(selectedChannel.icon)} alt="" className="w-5 h-5 object-contain rounded shrink-0" onError={e => (e.currentTarget.style.display='none')} />
                 )}
                 <span className={`flex-1 truncate font-mono text-xs ${epgMapping ? 'text-zinc-100' : 'text-zinc-600'}`}>
                   {selectedChannel ? selectedChannel.name : epgMapping || (originalEpg ? `Using: ${originalEpg}` : 'Select EPG channel...')}
@@ -7445,7 +7458,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                         onClick={() => { setEpgMapping(ch.id); setEpgOpen(false); setEpgSearch(''); if (ch.icon && !customIcon) setCustomIcon(ch.icon); }}
                       >
                         {ch.icon && (
-                          <img src={ch.icon} alt="" className="w-6 h-6 object-contain rounded shrink-0" onError={e => (e.currentTarget.style.display='none')} />
+                          <img src={proxyImg(ch.icon)} alt="" className="w-6 h-6 object-contain rounded shrink-0" onError={e => (e.currentTarget.style.display='none')} />
                         )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
