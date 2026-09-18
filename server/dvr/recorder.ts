@@ -77,6 +77,8 @@ class DvrRecorder {
     const streamId = String(conn.streamId);
     const streamName = conn.streamName || `Stream ${streamId}`;
 
+    const channelKey = conn.channelKey || `${sourceId}:${streamId}`;
+
     // Acquire lock from arbiter
     const locked = connectionArbiter.acquireDvrLock(sourceId, streamId, recordingId, streamName);
     if (!locked) {
@@ -148,6 +150,15 @@ class DvrRecorder {
 
     this.sessions.set(recordingId, session);
     this.connToRecording.set(connId, recordingId);
+    this.connToRecording.set(channelKey, recordingId);
+
+    // Attach to StreamHub if channel is multiplexed
+    try {
+      const { streamHub } = await import('../multiplexer/stream-hub.ts');
+      streamHub.attachDvr(sourceId, streamId, recordingId);
+    } catch (err: any) {
+      log(`[DVR] streamHub attach warning: ${err.message}`);
+    }
 
     log(`[DVR] Started live recording for ${streamName} (id: ${recordingId}, conn: ${connId})`);
 
@@ -178,10 +189,10 @@ class DvrRecorder {
   }
 
   /**
-   * Called on every chunk received by the proxy stream.
+   * Called on every chunk received by the proxy stream or multiplexer.
    */
-  writeChunk(connId: string, chunk: Buffer): void {
-    const recordingId = this.connToRecording.get(connId);
+  writeChunk(connIdOrKey: string, chunk: Buffer): void {
+    const recordingId = this.connToRecording.get(connIdOrKey) || (this.sessions.has(connIdOrKey) ? connIdOrKey : undefined);
     if (!recordingId) return;
 
     const session = this.sessions.get(recordingId);
@@ -223,8 +234,8 @@ class DvrRecorder {
    * If recording is active, initiates Handover: keeps upstream connection alive and alerts user via Telegram.
    * Returns true if handover occurred (meaning caller should NOT destroy upstream connection).
    */
-  handleDownstreamClose(connId: string): boolean {
-    const recordingId = this.connToRecording.get(connId);
+  handleDownstreamClose(connIdOrRecordingId: string): boolean {
+    const recordingId = this.connToRecording.get(connIdOrRecordingId) || (this.sessions.has(connIdOrRecordingId) ? connIdOrRecordingId : undefined);
     if (!recordingId) return false;
 
     const session = this.sessions.get(recordingId);
@@ -281,6 +292,14 @@ class DvrRecorder {
       // Release arbiter lock
       connectionArbiter.releaseDvrLock(session.sourceId, recordingId);
 
+      // Detach from StreamHub if channel was multiplexed
+      try {
+        const { streamHub } = await import('../multiplexer/stream-hub.ts');
+        streamHub.detachDvr(session.sourceId, session.streamId);
+      } catch (err: any) {
+        log(`[DVR] streamHub detach warning: ${err.message}`);
+      }
+
       // If connection was in handover, terminate upstream response and proxyStats
       if (session.isHandover && session.upstreamResponse) {
         if (session.upstreamResponse.data?.destroy) {
@@ -320,7 +339,9 @@ class DvrRecorder {
         .where(eq(recordings.id, recordingId))
         .run();
 
+      const channelKey = `${session.sourceId}:${session.streamId}`;
       this.connToRecording.delete(session.connId);
+      this.connToRecording.delete(channelKey);
       this.sessions.delete(recordingId);
 
       log(`[DVR] Stopped recording ${recordingId} for ${session.streamName} (${durationSeconds}s, ${fileSizeBytes} bytes)`);
@@ -505,3 +526,12 @@ class DvrRecorder {
 }
 
 export const dvrRecorder = new DvrRecorder();
+
+// Hook into streamHub to receive multiplexed live stream chunks
+import('../multiplexer/stream-hub.ts').then(({ streamHub }) => {
+  streamHub.setOnChunk((channelKey: string, chunk: Buffer) => {
+    dvrRecorder.writeChunk(channelKey, chunk);
+  });
+}).catch((err: any) => {
+  log(`[DVR] Failed to hook streamHub onChunk: ${err.message}`);
+});

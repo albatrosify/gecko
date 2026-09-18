@@ -66,6 +66,7 @@ export interface UpstreamSource {
   benchmarkStreamId?: string | number | null; // Selected stream for benchmarking (e.g. a 4K channel)
   benchmarkStreamName?: string | null;       // Display name of selected benchmark channel
   hosts?: SourceHost[];       // Ordered list of upstream hosts (fallback + benchmark)
+  concurrencyGuard?: boolean; // Protect 1-connection accounts by multiplexing same stream & blocking conflicts
 }
 
 export interface SourceConnectionLog {

@@ -19,6 +19,9 @@ export const proxyStats = {
     intervalBytes: number;
     currentBps: number;
     proxied: boolean;
+    channelKey?: string;
+    subscriberCount?: number;
+    recordingId?: string;
   }>()
 };
 

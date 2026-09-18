@@ -75,6 +75,11 @@ export function createSourcesRouter() {
       }
     }
 
+    if (extra.concurrencyGuard === undefined) {
+      const maxC = parseInt(String(extra.maxConnections ?? '1'), 10);
+      extra.concurrencyGuard = isNaN(maxC) || maxC <= 1;
+    }
+
     db.insert(schemaSources).values({
       id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron, extra
     }).run();

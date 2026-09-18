@@ -486,6 +486,11 @@ export function Dashboard() {
                         <div className="text-xs text-zinc-500 truncate mt-0.5">via <span className="text-zinc-400">{conn.playlistName || conn.username}</span></div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {conn.subscriberCount > 1 && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20" title="Dieser Stream wird lokal mit mehreren Clients geteilt (1 Upstream-Verbindung)">
+                            👥 {conn.subscriberCount} Clients (1 Upstream)
+                          </span>
+                        )}
                         {conn.recordingId ? (
                           <div className="flex items-center gap-1.5">
                             <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
@@ -1319,7 +1324,8 @@ export function SourceManager({ user }: { user: User }) {
   const [newSource, setNewSource] = useState<Partial<UpstreamSource>>({ 
     name: '', type: 'xtream', url: '', username: '', password: '', 
     autoSyncEnabled: false, syncCron: '0 2 * * *',
-    monitorEnabled: false, monitorInterval: 60
+    monitorEnabled: false, monitorInterval: 60,
+    concurrencyGuard: true,
   });
   const [editingSource, setEditingSource] = useState<UpstreamSource | null>(null);
   const [changelogs, setChangelogs] = useState<any[]>([]);
@@ -1761,6 +1767,13 @@ export function SourceManager({ user }: { user: User }) {
                       <p className="text-[10px] text-zinc-500">
                         Max Connections: <span className="text-zinc-400 font-medium">{source.maxConnections}</span>
                       </p>
+                    )}
+                    {source.concurrencyGuard !== false && (
+                      <div className="pt-0.5">
+                        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full" title="Stream-Multiplexing & 1-Verbindungs-Schutz aktiv">
+                          🛡️ Concurrency Guard
+                        </span>
+                      </div>
                     )}
                   </div>
 
@@ -2332,6 +2345,27 @@ export function SourceManager({ user }: { user: User }) {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Concurrency Guard & Stream Multiplexing */}
+                {(showEdit ? editingSource! : newSource).type === 'xtream' && (
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5 rounded border-zinc-800 text-blue-500 focus:ring-blue-500 bg-zinc-950"
+                      checked={(showEdit ? editingSource! : newSource).concurrencyGuard !== false}
+                      onChange={e => showEdit ? setEditingSource({...editingSource!, concurrencyGuard: e.target.checked}) : setNewSource({...newSource, concurrencyGuard: e.target.checked})}
+                    />
+                    <div className="flex-1">
+                      <div className="font-bold text-sm group-hover:text-blue-400 transition-colors flex items-center gap-2">
+                        <span>Concurrency Guard & Stream-Sharing</span>
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded">1-Connection Protection</span>
+                      </div>
+                      <div className="text-[10px] text-zinc-500">
+                        Teilt denselben Live-Stream lokal verlustfrei über mehrere Clients (0 zusätzliche Upstream-Verbindungen). Sperrt abweichende Sender mit Hinweisanzeige, um Provider-Bans zu verhindern.
+                      </div>
+                    </div>
+                  </label>
                 )}
               </div>
             </div>

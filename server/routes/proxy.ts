@@ -19,6 +19,8 @@ import { computeDisplayName } from "../../src/quality.ts";
 import { connectionArbiter } from "../dvr/connection-arbiter.ts";
 import { dvrRecorder, RECORDINGS_DIR } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
+import { streamHub } from "../multiplexer/stream-hub.ts";
+import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import fs from "fs";
 import path from "path";
 
@@ -181,11 +183,33 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
-      // Check DVR lock: if this source is recording a different channel, serve placeholder
+      // Concurrency Guard & Multiplexing Check
       if (type === 'live') {
-        const decision = connectionArbiter.canPlayStream(sourceId, originalId);
-        if (!decision.allowed && decision.lock) {
-          return servePlaceholderStream(res, decision.lock, originalId);
+        const activeOnSource = streamHub.getActiveChannelsForSource(sourceId);
+        const guardDecision = evaluateStreamRequest(sourceDoc, originalId, activeOnSource);
+
+        if (guardDecision.action === 'block_placeholder') {
+          return servePlaceholderStream(res, {
+            sourceId,
+            streamId: guardDecision.activeStreamId || '',
+            streamName: guardDecision.activeStreamName,
+            recordingId: '',
+            lockedAt: Date.now(),
+          }, originalId);
+        }
+
+        if (guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
+          const subId = Math.random().toString(36).substring(7);
+          streamHub.addSubscriber(guardDecision.existingChannelKey, {
+            id: subId,
+            res,
+            username,
+            playlistName: (playlist as any).name || username,
+            ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+            startTime: Date.now(),
+          });
+          log(`[Proxy] Client ${username} joined existing shared stream for ${type}/${streamId} (0 extra upstream connections) - ${getClientInfo(req)}`);
+          return;
         }
       }
 
@@ -233,14 +257,44 @@ export function createProxyRouter() {
           log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} - ${getClientInfo(req)}`);
           recordHostUse(sourceId, hostUrl, true);
 
-          // Forward status code (206 for range requests) and headers
+          // Handle live stream multiplexing
+          if (type === 'live') {
+            const forwardHeaders: Record<string, string> = {};
+            const headerKeys = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
+            for (const h of headerKeys) {
+              if (response.headers[h]) forwardHeaders[h] = response.headers[h];
+            }
+
+            const channel = streamHub.registerChannel(
+              sourceId,
+              originalId,
+              streamName,
+              type,
+              hostUrl,
+              response,
+              forwardHeaders
+            );
+
+            const subId = Math.random().toString(36).substring(7);
+            streamHub.addSubscriber(channel.channelKey, {
+              id: subId,
+              res,
+              username,
+              playlistName: (playlist as any).name || username,
+              ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+              startTime: Date.now(),
+            });
+
+            return; // success — stream multiplexer handles streaming and teardown
+          }
+
+          // Non-live (movies / series) standard 1:1 stream piping
           res.status(response.status);
           const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
           for (const h of forwardHeaders) {
             if (response.headers[h]) res.setHeader(h, response.headers[h]);
           }
 
-          // Track stats
           const connId = Math.random().toString(36).substring(7);
           const connectionInfo = {
             id: connId,
@@ -262,24 +316,16 @@ export function createProxyRouter() {
           proxyStats.connections.set(connId, connectionInfo);
           proxyStats.activeStreams++;
 
-          dvrRecorder.setUpstreamResponse(connId, response);
-
           response.data.on('data', (chunk: Buffer) => {
             proxyStats.totalBytes += chunk.length;
             proxyStats.intervalBytes += chunk.length;
             connectionInfo.bytesRead += chunk.length;
             connectionInfo.intervalBytes += chunk.length;
-            dvrRecorder.writeChunk(connId, chunk);
           });
 
           response.data.pipe(res);
 
           const cleanup = () => {
-            if (dvrRecorder.isRecordingConnection(connId)) {
-              dvrRecorder.handleDownstreamClose(connId);
-              return; // Keep upstream response alive for background DVR recording
-            }
-
             if (proxyStats.connections.has(connId)) {
               proxyStats.connections.delete(connId);
               proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
