@@ -1,8 +1,8 @@
 import fs from 'fs';
+import path from 'path';
 import { getDb } from './db.ts';
 import { cache } from './schema.ts';
-import { eq, count, sum } from 'drizzle-orm';
-
+import { eq, count } from 'drizzle-orm';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
@@ -16,16 +16,42 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
  */
 const USE_MEMORY_BACKEND = process.env.CACHE_BACKEND === 'memory';
 const IN_MEMORY_TTL_MS = USE_MEMORY_BACKEND
-  ? CACHE_TTL_MS          // full TTL — memory IS the store
-  : 60 * 1000;            // 1 minute — just a hot-read mirror in front of SQLite
+  ? CACHE_TTL_MS        // full TTL — memory IS the store
+  : 60 * 1000;          // 1 minute — just a hot-read mirror in front of SQLite
+
+/** DB path, kept in sync with db.ts so statSync hits the right file. */
+const DB_PATH = process.env.SQLITE_PATH ?? path.join(process.cwd(), 'data', 'gecko.db');
 
 interface CacheEntry {
   data: any;
   lastUpdated: string;
   expiresAt: number;
+  /** Approximate serialised byte size, tracked incrementally to avoid
+   *  re-serialising large payloads on every stats call. */
+  sizeBytes: number;
 }
 
 const memoryCache = new Map<string, CacheEntry>();
+
+/**
+ * Running total of live entry sizes in the memory cache.
+ * Updated on every set/delete so getCacheStats() never needs to
+ * JSON.stringify anything — critical when entries hold large stream arrays.
+ */
+let memoryCacheBytes = 0;
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/** Fast approximation of an object's JSON size without blocking the event loop. */
+function estimateBytes(data: any): number {
+  try {
+    return JSON.stringify(data).length;
+  } catch {
+    return 0;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -43,7 +69,10 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
 
   if (USE_MEMORY_BACKEND) {
     // Entry was missing or expired — clean up and bail.
-    memoryCache.delete(key);
+    if (mem) {
+      memoryCacheBytes -= mem.sizeBytes;
+      memoryCache.delete(key);
+    }
     return null;
   }
 
@@ -63,8 +92,9 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
     const data = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : dbRow.data;
     const lastUpdated = dbRow.updatedAt as string;
 
-    // Populate the short-lived in-process mirror.
-    memoryCache.set(key, { data, lastUpdated, expiresAt: Date.now() + IN_MEMORY_TTL_MS });
+    // Populate the short-lived in-process mirror (size tracking not needed
+    // for sqlite mirror entries — the authoritative size is the file on disk).
+    memoryCache.set(key, { data, lastUpdated, expiresAt: Date.now() + IN_MEMORY_TTL_MS, sizeBytes: 0 });
 
     return { data, lastUpdated };
   } catch (error) {
@@ -80,11 +110,17 @@ export function setCache(key: string, data: any): void {
   const lastUpdated = new Date().toISOString();
   const expiresAt = Date.now() + CACHE_TTL_MS;
 
-  // Always write to the in-process map.
+  // Update the running byte counter before overwriting the map entry.
+  const sizeBytes = USE_MEMORY_BACKEND ? estimateBytes(data) : 0;
+  const existing = memoryCache.get(key);
+  if (existing) memoryCacheBytes -= existing.sizeBytes;
+  memoryCacheBytes += sizeBytes;
+
   memoryCache.set(key, {
     data,
     lastUpdated,
     expiresAt: Date.now() + IN_MEMORY_TTL_MS,
+    sizeBytes,
   });
 
   if (USE_MEMORY_BACKEND) return;
@@ -110,8 +146,11 @@ export function setCache(key: string, data: any): void {
  */
 export function clearCache(key?: string): void {
   if (key) {
+    const existing = memoryCache.get(key);
+    if (existing) memoryCacheBytes -= existing.sizeBytes;
     memoryCache.delete(key);
   } else {
+    memoryCacheBytes = 0;
     memoryCache.clear();
   }
 
@@ -138,7 +177,11 @@ export function duplicateCache(oldKey: string, newKey: string): void {
   // Try the in-process map first (always populated in memory-backend mode).
   const mem = memoryCache.get(oldKey);
   if (mem) {
-    memoryCache.set(newKey, { ...mem });
+    const copy = { ...mem };
+    const existing = memoryCache.get(newKey);
+    if (existing) memoryCacheBytes -= existing.sizeBytes;
+    memoryCacheBytes += copy.sizeBytes;
+    memoryCache.set(newKey, copy);
     if (USE_MEMORY_BACKEND) return;
   }
 
@@ -174,6 +217,7 @@ export function duplicateCache(oldKey: string, newKey: string): void {
           data,
           lastUpdated: oldRow.updatedAt as string,
           expiresAt: Date.now() + IN_MEMORY_TTL_MS,
+          sizeBytes: 0, // sqlite mirror — authoritative size is the file
         });
       }
     }
@@ -193,8 +237,8 @@ export interface CacheStats {
   entries: number;
   /**
    * Approximate size in bytes.
-   * - memory  → JSON-serialised size of every live entry's data field.
-   * - sqlite  → Physical size of the SQLite DB file on disk.
+   * - memory  → sum of JSON-serialised sizes, tracked incrementally.
+   * - sqlite  → physical size of the SQLite DB file on disk.
    */
   bytes: number;
   /** Human-readable size string, e.g. "1.23 MB". */
@@ -212,44 +256,36 @@ function formatBytes(bytes: number): string {
 
 /**
  * Returns size/count statistics for the cache.
- * Designed to be cheap — no heavy scans are performed.
+ * O(1) for the memory backend (counters are maintained incrementally).
+ * For sqlite: one statSync + one COUNT(*) query.
  */
 export function getCacheStats(): CacheStats {
-  const now = Date.now();
-
   if (USE_MEMORY_BACKEND) {
+    // Count only live (non-expired) entries — no serialisation needed.
+    const now = Date.now();
     let entries = 0;
-    let bytes = 0;
-    for (const [, entry] of memoryCache) {
-      if (now < entry.expiresAt) {
-        entries++;
-        try {
-          bytes += JSON.stringify(entry.data).length;
-        } catch {
-          // non-serialisable value — skip size contribution
-        }
-      }
+    for (const entry of memoryCache.values()) {
+      if (now < entry.expiresAt) entries++;
     }
-    return { backend: 'memory', entries, bytes, size: formatBytes(bytes), ttlMs: CACHE_TTL_MS };
+    return {
+      backend: 'memory',
+      entries,
+      bytes: memoryCacheBytes,
+      size: formatBytes(memoryCacheBytes),
+      ttlMs: CACHE_TTL_MS,
+    };
   }
 
-  // SQLite backend: report the physical DB file size and live row count.
+  // SQLite backend: physical DB file size + live row count.
   let bytes = 0;
   let entries = 0;
   try {
-    const dbPath = process.env.SQLITE_PATH || './gecko.db';
-    const stat = fs.statSync(dbPath);
-    bytes = stat.size;
+    bytes = fs.statSync(DB_PATH).size;
   } catch {
-    // file not accessible — leave at 0
+    // file not yet created or not accessible
   }
   try {
-    const db = getDb();
-    entries =
-      db
-        .select({ value: count() })
-        .from(cache)
-        .get()?.value ?? 0;
+    entries = getDb().select({ value: count() }).from(cache).get()?.value ?? 0;
   } catch {
     // DB not ready
   }
