@@ -122,6 +122,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
   // Timeout for hiding controls
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Debounce timer: only show the "Connecting…" spinner after a sustained stall,
+  // not on brief mid-stream network hiccups that resolve in <800 ms.
+  const waitingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const getAbsoluteUrl = () => {
     if (!url) return '';
@@ -392,15 +395,22 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
     // Generic Event Listeners
     const onPlay = () => {
+      clearTimeout(waitingTimerRef.current!);
       setIsPlaying(true);
       setIsLoading(false);
       setPlaybackError(null);
     };
     const onPause = () => setIsPlaying(false);
     const onWaiting = () => {
-      if (!video.paused) setIsLoading(true);
+      if (!video.paused) {
+        // Only show the spinner after an 800 ms sustained stall, not on brief
+        // network blips that the player recovers from on its own.
+        clearTimeout(waitingTimerRef.current!);
+        waitingTimerRef.current = setTimeout(() => setIsLoading(true), 800);
+      }
     };
     const onCanPlay = () => {
+      clearTimeout(waitingTimerRef.current!);
       setIsLoading(false);
     };
 
@@ -509,6 +519,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         hlsPlayerRef.current = null;
       }
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (waitingTimerRef.current) clearTimeout(waitingTimerRef.current);
     };
   }, [url, retryKey]);
 
