@@ -120,3 +120,21 @@ export const source_host_logs = sqliteTable('source_host_logs', {
   results: text('results', { mode: 'json' }),
 });
 
+export const recordings = sqliteTable('recordings', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  playlistId: text('playlistId'),
+  sourceId: text('sourceId').notNull(),
+  streamId: text('streamId').notNull(),
+  streamName: text('streamName').notNull(),
+  channelName: text('channelName'),
+  type: text('type').notNull().default('live'),
+  status: text('status').notNull().default('recording'),
+  startTime: text('startTime').notNull(),
+  endTime: text('endTime'),
+  durationSeconds: integer('durationSeconds').notNull().default(0),
+  fileSizeBytes: integer('fileSizeBytes').notNull().default(0),
+  filePath: text('filePath').notNull(),
+  extra: text('extra', { mode: 'json' }),
+});
+

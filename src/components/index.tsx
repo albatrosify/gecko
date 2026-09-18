@@ -74,7 +74,9 @@ import {
   ArrowDown,
   Cloud,
   Globe,
-  Network
+  Network,
+  Send,
+  Bell
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -359,6 +361,33 @@ function VpnStatusBar() {
 
 export function Dashboard() {
   const [stats, setStats] = useState<any>(null);
+  const [dvrBusy, setDvrBusy] = useState<Record<string, boolean>>({});
+
+  const handleStartRecording = async (connId: string) => {
+    setDvrBusy(prev => ({ ...prev, [connId]: true }));
+    try {
+      await api.dvr.recordNow(connId);
+      const data = await api.proxy.stats();
+      setStats(data);
+    } catch (err: any) {
+      alert(`Fehler beim Starten der Aufnahme: ${err.message}`);
+    } finally {
+      setDvrBusy(prev => ({ ...prev, [connId]: false }));
+    }
+  };
+
+  const handleStopRecording = async (connId: string, recordingId: string) => {
+    setDvrBusy(prev => ({ ...prev, [connId]: true }));
+    try {
+      await api.dvr.stopRecording(recordingId);
+      const data = await api.proxy.stats();
+      setStats(data);
+    } catch (err: any) {
+      alert(`Fehler beim Stoppen der Aufnahme: ${err.message}`);
+    } finally {
+      setDvrBusy(prev => ({ ...prev, [connId]: false }));
+    }
+  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -456,9 +485,39 @@ export function Dashboard() {
                         <div className="font-bold text-sm text-zinc-100 truncate leading-tight">{conn.streamName || conn.streamId}</div>
                         <div className="text-xs text-zinc-500 truncate mt-0.5">via <span className="text-zinc-400">{conn.playlistName || conn.username}</span></div>
                       </div>
-                      <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
-                        {conn.type === 'movie' ? 'VOD' : conn.type}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {conn.recordingId ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                              REC
+                            </span>
+                            <button
+                              onClick={() => handleStopRecording(conn.id, conn.recordingId)}
+                              disabled={dvrBusy[conn.id]}
+                              className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
+                              title="Aufnahme beenden"
+                            >
+                              {dvrBusy[conn.id] ? '...' : 'Stopp'}
+                            </button>
+                          </div>
+                        ) : (
+                          conn.type === 'live' && (
+                            <button
+                              onClick={() => handleStartRecording(conn.id)}
+                              disabled={dvrBusy[conn.id]}
+                              className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
+                              title="Live-Stream aufnehmen (Stream-Tee)"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                              {dvrBusy[conn.id] ? '...' : 'Aufnehmen'}
+                            </button>
+                          )
+                        )}
+                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
+                          {conn.type === 'movie' ? 'VOD' : conn.type}
+                        </span>
+                      </div>
                     </div>
                     {/* Bottom row: stats */}
                     <div className="flex items-center gap-4 flex-wrap pl-12">
@@ -3173,6 +3232,151 @@ function VpnSettingsCard() {
   );
 }
 
+function TelegramSettingsCard() {
+  const [botToken, setBotToken] = useState('');
+  const [chatId, setChatId] = useState('');
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+  useEffect(() => {
+    api.settings.get()
+      .then(s => {
+        setBotToken(s.telegramBotToken || '');
+        setChatId(s.telegramChatId || '');
+        setEnabled(Boolean(s.telegramEnabled));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await api.settings.update({
+        telegramBotToken: botToken,
+        telegramChatId: chatId,
+        telegramEnabled: enabled,
+      });
+      setStatusMessage({ text: 'Telegram-Einstellungen gespeichert!', isError: false });
+      setTimeout(() => setStatusMessage(null), 4000);
+    } catch (err: any) {
+      setStatusMessage({ text: `Fehler beim Speichern: ${err.message}`, isError: true });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setStatusMessage({ text: 'Sende Test-Benachrichtigung...', isError: false });
+    try {
+      await api.settings.testTelegram(botToken, chatId);
+      setStatusMessage({ text: '✅ Test-Nachricht erfolgreich gesendet!', isError: false });
+      setTimeout(() => setStatusMessage(null), 5000);
+    } catch (err: any) {
+      setStatusMessage({ text: `❌ Fehler: ${err.message}`, isError: true });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xl font-bold">Telegram Bot</h3>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+              enabled 
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+            }`}>
+              {enabled ? 'Aktiv' : 'Inaktiv'}
+            </span>
+          </div>
+          <p className="text-sm text-zinc-500">Benachrichtigungen bei DVR-Aufnahmen & Handover</p>
+        </div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className={`w-12 h-6 rounded-full transition-colors relative p-1 ${
+            enabled ? 'bg-emerald-500' : 'bg-zinc-800'
+          }`}
+          title={enabled ? 'Deaktivieren' : 'Aktivieren'}
+        >
+          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${
+            enabled ? 'translate-x-6' : 'translate-x-0'
+          }`} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="animate-pulse space-y-2">
+          <div className="h-4 w-32 bg-zinc-800 rounded" />
+          <div className="h-4 w-48 bg-zinc-800 rounded" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-zinc-400">Bot Token</label>
+            <input
+              type="password"
+              value={botToken}
+              onChange={e => setBotToken(e.target.value)}
+              placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+              className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-sm"
+            />
+            <p className="text-[10px] text-zinc-600">Erstelle einen Bot via <span className="text-zinc-400 font-mono">@BotFather</span></p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold text-zinc-400">Chat ID</label>
+            <input
+              type="text"
+              value={chatId}
+              onChange={e => setChatId(e.target.value)}
+              placeholder="z.B. 123456789 oder -100..."
+              className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-sm"
+            />
+            <p className="text-[10px] text-zinc-600">Finde deine Chat ID mit <span className="text-zinc-400 font-mono">@userinfobot</span></p>
+          </div>
+
+          {statusMessage && (
+            <div className={`text-xs p-3 rounded-xl border ${
+              statusMessage.isError 
+                ? 'bg-red-500/10 border-red-500/20 text-red-400' 
+                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+            }`}>
+              {statusMessage.text}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all text-sm disabled:opacity-50"
+            >
+              {saving ? 'Speichere...' : 'Speichern'}
+            </button>
+            <button
+              onClick={handleTest}
+              disabled={testing || !botToken || !chatId}
+              className="px-4 py-2 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <Send size={14} />
+              {testing ? 'Sende...' : 'Test'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Settings({ user }: { user: User }) {
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
   const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
@@ -3226,6 +3430,8 @@ export function Settings({ user }: { user: User }) {
           </div>
 
           <VpnSettingsCard />
+
+          <TelegramSettingsCard />
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
             <div className="space-y-2">
@@ -7428,6 +7634,258 @@ export function UserManager({ user }: { user: User }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+export function DvrManager({ user }: { user: User }) {
+  const [recordings, setRecordings] = useState<import('../types').Recording[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activePlayback, setActivePlayback] = useState<import('../types').Recording | null>(null);
+  const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+
+  const loadRecordings = useCallback(async () => {
+    try {
+      const data = await api.dvr.getRecordings();
+      setRecordings(data);
+    } catch (err: any) {
+      console.error("Failed to load recordings:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRecordings();
+    const interval = setInterval(loadRecordings, 3000);
+    return () => clearInterval(interval);
+  }, [loadRecordings]);
+
+  const handleStop = async (id: string) => {
+    setActionBusy(prev => ({ ...prev, [id]: true }));
+    try {
+      await api.dvr.stopRecording(id);
+      await loadRecordings();
+    } catch (err: any) {
+      alert(`Fehler beim Stoppen: ${err.message}`);
+    } finally {
+      setActionBusy(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Möchtest du die Aufnahme "${name}" wirklich löschen? Die Datei wird dauerhaft von der Festplatte gelöscht.`)) {
+      return;
+    }
+    setActionBusy(prev => ({ ...prev, [id]: true }));
+    try {
+      await api.dvr.deleteRecording(id);
+      await loadRecordings();
+    } catch (err: any) {
+      alert(`Fehler beim Löschen: ${err.message}`);
+    } finally {
+      setActionBusy(prev => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const activeRecordings = recordings.filter(r => r.status === 'recording');
+  const completedRecordings = recordings.filter(r => r.status === 'completed');
+  const totalBytes = recordings.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
+
+  return (
+    <div className="p-8 space-y-8 max-w-6xl mx-auto">
+      <header className="flex justify-between items-end">
+        <div>
+          <h2 className="text-3xl font-black tracking-tight text-zinc-100">DVR / Aufnahmen</h2>
+          <p className="text-zinc-500">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
+        </div>
+      </header>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Aktive Aufnahmen</div>
+          <div className="text-2xl font-black text-red-500 mt-1 flex items-center gap-2">
+            {activeRecordings.length > 0 && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />}
+            {activeRecordings.length}
+          </div>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Gespeicherte Aufnahmen</div>
+          <div className="text-2xl font-black text-zinc-100 mt-1">{completedRecordings.length}</div>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Belegter Speicherplatz</div>
+          <div className="text-2xl font-black text-emerald-500 mt-1">{formatBytes(totalBytes)}</div>
+        </div>
+      </div>
+
+      {/* Active Recordings Section */}
+      {activeRecordings.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+            <h3 className="text-lg font-bold text-zinc-100">Laufende Aufnahmen</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {activeRecordings.map(rec => (
+              <div key={rec.id} className="bg-zinc-900 border border-red-500/30 rounded-3xl p-6 space-y-4 shadow-lg shadow-red-500/5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30">
+                        REC
+                      </span>
+                      <h4 className="font-bold text-base text-zinc-100">{rec.streamName}</h4>
+                    </div>
+                    {rec.extra?.isHandover && (
+                      <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                        <span>⚠️ Fernseher getrennt – Aufnahme läuft im Hintergrund</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleStop(rec.id)}
+                    disabled={actionBusy[rec.id]}
+                    className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-red-500/20 disabled:opacity-50"
+                  >
+                    {actionBusy[rec.id] ? 'Stoppe...' : 'Aufnahme stoppen'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800 text-xs text-zinc-400">
+                  <div>
+                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Laufzeit</span>
+                    <span className="font-mono text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Größe</span>
+                    <span className="font-mono text-zinc-200">{formatBytes(rec.fileSizeBytes)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Startzeit</span>
+                    <span className="font-mono text-zinc-200">{new Date(rec.startTime).toLocaleTimeString()}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Completed Recordings Section */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-bold text-zinc-100">Aufnahme-Bibliothek</h3>
+        {loading && recordings.length === 0 ? (
+          <div className="p-8 text-center text-zinc-500 animate-pulse">Lade Aufnahmen...</div>
+        ) : completedRecordings.length === 0 ? (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-12 text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-zinc-800 text-zinc-500 flex items-center justify-center mx-auto">
+              <Radio size={24} />
+            </div>
+            <h4 className="text-base font-bold text-zinc-300">Noch keine Aufnahmen vorhanden</h4>
+            <p className="text-xs text-zinc-500 max-w-md mx-auto">
+              Klicke im <strong>Dashboard</strong> bei einem aktiven Live-Stream auf <strong>Aufnehmen</strong>, um eine Sendung direkt ohne zweite Verbindung mitzuschneiden.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900/50">
+                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender / Titel</th>
+                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Datum & Uhrzeit</th>
+                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Dauer</th>
+                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Größe</th>
+                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Aktionen</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800 text-sm">
+                {completedRecordings.map(rec => (
+                  <tr key={rec.id} className="group hover:bg-zinc-800/30 transition-all">
+                    <td className="px-6 py-4 font-medium text-zinc-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-zinc-800 flex items-center justify-center text-zinc-400">
+                          <Film size={16} />
+                        </div>
+                        <div>
+                          <div className="font-bold">{rec.streamName}</div>
+                          {rec.playlistId && <div className="text-xs text-zinc-500">via {rec.playlistId}</div>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-zinc-400 text-xs font-mono">
+                      {new Date(rec.startTime).toLocaleDateString()} {new Date(rec.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-6 py-4 text-center font-mono text-xs text-zinc-300">
+                      {formatDuration(rec.durationSeconds)}
+                    </td>
+                    <td className="px-6 py-4 text-center font-mono text-xs text-zinc-300">
+                      {formatBytes(rec.fileSizeBytes)}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setActivePlayback(rec)}
+                          className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all"
+                          title="Im Web-Player abspielen"
+                        >
+                          <Play size={16} />
+                        </button>
+                        <a
+                          href={api.dvr.getStreamUrl(rec.id, true)}
+                          download
+                          className="p-2 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-xl transition-all"
+                          title="Herunterladen"
+                        >
+                          <Download size={16} />
+                        </a>
+                        <button
+                          onClick={() => handleDelete(rec.id, rec.streamName)}
+                          disabled={actionBusy[rec.id]}
+                          className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all disabled:opacity-50"
+                          title="Löschen"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Web Player Modal for Recording Playback */}
+      {activePlayback && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl space-y-4 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-zinc-100">{activePlayback.streamName}</h3>
+                <p className="text-xs text-zinc-500">
+                  Aufgenommen am {new Date(activePlayback.startTime).toLocaleString()} ({formatBytes(activePlayback.fileSizeBytes)})
+                </p>
+              </div>
+              <button
+                onClick={() => setActivePlayback(null)}
+                className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition-all"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="aspect-video bg-black rounded-2xl overflow-hidden flex items-center justify-center">
+              <video
+                controls
+                autoPlay
+                className="w-full h-full"
+                src={api.dvr.getStreamUrl(activePlayback.id)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

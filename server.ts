@@ -25,6 +25,7 @@ import { createMappingsRouter } from "./server/routes/mappings.ts";
 import { createMigrationsRouter } from "./server/routes/migrations.ts";
 import { createCustomCategoriesRouter } from "./server/routes/customCategories.ts";
 import { createQualityScanRouter } from "./server/routes/quality-scan.ts";
+import { createDvrRouter } from "./server/routes/dvr.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -119,6 +120,7 @@ async function startServer() {
     app.use('/api', createMigrationsRouter());
     app.use('/api', createCustomCategoriesRouter());
     app.use('/api', createQualityScanRouter());
+    app.use('/api/dvr', createDvrRouter());
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)
     app.use('/', createProxyRouter());

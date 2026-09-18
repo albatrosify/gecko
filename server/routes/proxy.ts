@@ -16,6 +16,11 @@ import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
+import { connectionArbiter } from "../dvr/connection-arbiter.ts";
+import { dvrRecorder, RECORDINGS_DIR } from "../dvr/recorder.ts";
+import { servePlaceholderStream } from "../dvr/placeholder.ts";
+import fs from "fs";
+import path from "path";
 
 const limit = pLimit(5);
 
@@ -79,6 +84,42 @@ export function createProxyRouter() {
     const playlist = await findPlaylistByCredentials(username, password) as Playlist | null;
     if (!playlist) return res.status(403).send("Invalid credentials");
 
+    // Handle Gecko Recording playback under VOD / Movies
+    if (type === 'movie' && streamId.startsWith('rec_')) {
+      const recId = streamId.slice(4);
+      const recording = dvrRecorder.getRecordingById(recId);
+      if (!recording || !recording.filePath || !fs.existsSync(recording.filePath)) {
+        return res.status(404).send("Recording file not found");
+      }
+
+      const stat = fs.statSync(recording.filePath);
+      const fileSize = stat.size;
+      const range = req.headers.range;
+
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const chunksize = (end - start) + 1;
+        const file = fs.createReadStream(recording.filePath, { start, end });
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunksize,
+          'Content-Type': 'video/mp2t',
+        });
+        return file.pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': fileSize,
+          'Content-Type': 'video/mp2t',
+          'Accept-Ranges': 'bytes',
+        });
+        return fs.createReadStream(recording.filePath).pipe(res);
+      }
+    }
+
     const db = getDb();
     const sourceIds: string[] = playlist.sourceIds || [];
     if (!sourceIds.length) return res.status(400).send("No source configured");
@@ -139,6 +180,14 @@ export function createProxyRouter() {
     for (const sourceId of targetSourceIds) {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
+
+      // Check DVR lock: if this source is recording a different channel, serve placeholder
+      if (type === 'live') {
+        const decision = connectionArbiter.canPlayStream(sourceId, originalId);
+        if (!decision.allowed && decision.lock) {
+          return servePlaceholderStream(res, decision.lock, originalId);
+        }
+      }
 
       const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
       const overridePassword = (playlist as any).sourceOverrides?.[sourceId]?.password || sourceDoc.password;
@@ -213,16 +262,24 @@ export function createProxyRouter() {
           proxyStats.connections.set(connId, connectionInfo);
           proxyStats.activeStreams++;
 
+          dvrRecorder.setUpstreamResponse(connId, response);
+
           response.data.on('data', (chunk: Buffer) => {
             proxyStats.totalBytes += chunk.length;
             proxyStats.intervalBytes += chunk.length;
             connectionInfo.bytesRead += chunk.length;
             connectionInfo.intervalBytes += chunk.length;
+            dvrRecorder.writeChunk(connId, chunk);
           });
 
           response.data.pipe(res);
 
           const cleanup = () => {
+            if (dvrRecorder.isRecordingConnection(connId)) {
+              dvrRecorder.handleDownstreamClose(connId);
+              return; // Keep upstream response alive for background DVR recording
+            }
+
             if (proxyStats.connections.has(connId)) {
               proxyStats.connections.delete(connId);
               proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
@@ -682,6 +739,19 @@ export function createProxyRouter() {
               }
             });
 
+            // Virtual category for Gecko DVR Recordings
+            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && m.originalId === 'gecko_recordings');
+            if (!dvrCatMapping?.hidden) {
+              data.push({
+                category_id: 'gecko_recordings',
+                category_name: dvrCatMapping?.customName || '📁 Gecko Recordings',
+                parent_id: 0,
+                _sourceIdx: -1,
+                _order: dvrCatMapping?.order ?? -1,
+                _hidden: false,
+              });
+            }
+
             const catMap = new Map(catMappings.filter(m => m.type === 'vod').map(m => [String(m.originalId), m]));
 
             data.forEach((c: any, idx: number) => {
@@ -822,6 +892,31 @@ export function createProxyRouter() {
               if (s.added === "") delete s.added;
 
               filteredData.push(s);
+            }
+
+            // Add completed Gecko DVR recordings
+            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && m.originalId === 'gecko_recordings');
+            if (!dvrCatMapping?.hidden && (!categoryId || categoryId === 'gecko_recordings')) {
+              const completedRecordings = dvrRecorder.getAllRecordings().filter(r => r.status === 'completed');
+              completedRecordings.forEach((rec, recIdx) => {
+                const addedSec = Math.floor(new Date(rec.startTime).getTime() / 1000).toString();
+                filteredData.push({
+                  num: filteredData.length + 1,
+                  name: `${rec.streamName} (${new Date(rec.startTime).toLocaleDateString()})`,
+                  stream_type: 'movie',
+                  stream_id: `rec_${rec.id}`,
+                  stream_icon: '',
+                  rating: '',
+                  rating_5based: 0,
+                  added: addedSec,
+                  category_id: 'gecko_recordings',
+                  container_extension: 'ts',
+                  custom_sid: null,
+                  direct_source: '',
+                  _catOrder: dvrCatMapping?.order ?? -1,
+                  _streamOrder: recIdx,
+                });
+              });
             }
 
             data = filteredData.sort((a: any, b: any) => {
@@ -1091,6 +1186,33 @@ export function createProxyRouter() {
             data = { error: "vod_id required" };
             break;
           }
+
+          if (vodId.startsWith('rec_')) {
+            const recId = vodId.slice(4);
+            const rec = dvrRecorder.getRecordingById(recId);
+            if (rec) {
+              data = {
+                info: {
+                  name: rec.streamName,
+                  movie_image: '',
+                  genre: 'Gecko Recordings',
+                  plot: `Aufgenommen am ${new Date(rec.startTime).toLocaleString()}`,
+                  duration_secs: rec.durationSeconds,
+                  duration: `${Math.floor(rec.durationSeconds / 60)} min`,
+                  releasedate: new Date(rec.startTime).toISOString().slice(0, 10),
+                },
+                movie_data: {
+                  stream_id: `rec_${rec.id}`,
+                  name: rec.streamName,
+                  added: Math.floor(new Date(rec.startTime).getTime() / 1000).toString(),
+                  category_id: 'gecko_recordings',
+                  container_extension: 'ts',
+                },
+              };
+              break;
+            }
+          }
+
           let targetSIdx: number | null = null;
           if (vodId.includes('_')) {
             const parts = vodId.split('_');

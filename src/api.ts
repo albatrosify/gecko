@@ -369,14 +369,27 @@ export const system = {
 };
 
 // Settings
+export interface GlobalSettings {
+  qualityLabelFormat?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramEnabled?: boolean;
+}
+
 export const settings = {
-  async get(): Promise<{ qualityLabelFormat: string }> {
+  async get(): Promise<GlobalSettings> {
     return request('/api/settings');
   },
-  async update(data: { qualityLabelFormat: string }) {
+  async update(data: Partial<GlobalSettings>) {
     return request<{ success: boolean }>('/api/settings', {
       method: 'PATCH',
       body: JSON.stringify(data),
+    });
+  },
+  async testTelegram(botToken?: string, chatId?: string) {
+    return request<{ success: boolean }>('/api/settings/telegram/test', {
+      method: 'POST',
+      body: JSON.stringify({ botToken, chatId }),
     });
   },
 };
@@ -409,5 +422,31 @@ export const qualityScan = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan };
+// DVR
+export const dvr = {
+  async getRecordings(): Promise<import('./types').Recording[]> {
+    return request('/api/dvr/recordings');
+  },
+  async recordNow(connectionId: string): Promise<{ success: boolean; recording: import('./types').Recording }> {
+    return request('/api/dvr/record-now', {
+      method: 'POST',
+      body: JSON.stringify({ connectionId }),
+    });
+  },
+  async stopRecording(id: string): Promise<{ success: boolean; recording: import('./types').Recording }> {
+    return request(`/api/dvr/recordings/${id}/stop`, {
+      method: 'POST',
+    });
+  },
+  async deleteRecording(id: string): Promise<{ success: boolean }> {
+    return request(`/api/dvr/recordings/${id}`, {
+      method: 'DELETE',
+    });
+  },
+  getStreamUrl(id: string, download: boolean = false): string {
+    return `/api/dvr/recordings/${id}/stream?download=${download}`;
+  },
+};
+
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr };
 export default api;

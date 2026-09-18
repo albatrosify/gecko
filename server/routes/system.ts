@@ -127,6 +127,9 @@ export function createSystemRouter() {
     const extra = (doc?.extra as any) || {};
     res.json({
       qualityLabelFormat: extra.qualityLabelFormat ?? '{surround::exists["[{surround}] "||""]}{hdr::exists["[{hdr}] "||""]}[{label}]',
+      telegramBotToken: extra.telegramBotToken ?? '',
+      telegramChatId: extra.telegramChatId ?? '',
+      telegramEnabled: Boolean(extra.telegramEnabled),
     });
   });
 
@@ -137,22 +140,54 @@ export function createSystemRouter() {
     const db = getDb();
     const { settings } = await import('../schema.ts');
     const { eq } = await import('drizzle-orm');
-    const { qualityLabelFormat } = req.body;
+    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled } = req.body;
 
-    if (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200) {
+    if (qualityLabelFormat !== undefined && (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200)) {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
+    }
+    if (telegramBotToken !== undefined && typeof telegramBotToken !== 'string') {
+      return res.status(400).json({ error: 'telegramBotToken must be a string' });
+    }
+    if (telegramChatId !== undefined && typeof telegramChatId !== 'string') {
+      return res.status(400).json({ error: 'telegramChatId must be a string' });
+    }
+    if (telegramEnabled !== undefined && typeof telegramEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'telegramEnabled must be a boolean' });
     }
 
     const currentSettings = db.select().from(settings).where(eq(settings.id, 'global')).get();
-    const mergedExtra = { ...(currentSettings?.extra as any || {}), qualityLabelFormat };
+    const currentExtra = (currentSettings?.extra as any) || {};
+    const mergedExtra = {
+      ...currentExtra,
+      ...(qualityLabelFormat !== undefined ? { qualityLabelFormat } : {}),
+      ...(telegramBotToken !== undefined ? { telegramBotToken: telegramBotToken.trim() } : {}),
+      ...(telegramChatId !== undefined ? { telegramChatId: telegramChatId.trim() } : {}),
+      ...(telegramEnabled !== undefined ? { telegramEnabled } : {}),
+    };
 
     db.insert(settings)
       .values({ id: 'global', extra: mergedExtra })
       .onConflictDoUpdate({ target: settings.id, set: { extra: mergedExtra } })
       .run();
 
-    invalidateQualityFormatCache();
+    if (qualityLabelFormat !== undefined) {
+      invalidateQualityFormatCache();
+    }
     res.json({ success: true });
+  });
+
+  router.post("/settings/telegram/test", requireAuth, async (req: any, res) => {
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+    const { botToken, chatId } = req.body || {};
+    const { testTelegramNotification } = await import('../telegram.ts');
+    const result = await testTelegramNotification(botToken, chatId);
+    if (result.success) {
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ error: result.error || 'Failed to send Telegram test message' });
+    }
   });
 
   return router;

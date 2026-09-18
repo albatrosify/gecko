@@ -172,3 +172,26 @@ export interface StreamMapping {
   sourceIdx?: number;
 }
 
+export interface Recording {
+  id: string;
+  userId: string;
+  playlistId?: string;
+  sourceId: string;
+  streamId: string;
+  streamName: string;
+  channelName?: string;
+  type: 'live' | 'vod' | 'series';
+  status: 'recording' | 'completed' | 'failed' | 'cancelled';
+  startTime: string;
+  endTime?: string | null;
+  durationSeconds: number;
+  fileSizeBytes: number;
+  filePath: string;
+  extra?: {
+    isHandover?: boolean;
+    handoverAt?: string;
+    error?: string;
+    [key: string]: any;
+  };
+}
+

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import api, { isLoggedIn, clearToken } from './api';
 import { User as AppUser } from './types';
-import { Layout, Dashboard, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
-import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity } from 'lucide-react';
+import { Layout, Dashboard, DvrManager, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
+import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Radio } from 'lucide-react';
 import Logo from './assets/logo.png';
 
 import pkg from '../package.json';
@@ -71,6 +71,7 @@ export default function App() {
               
               <nav className="flex-1 p-3 space-y-2 mt-2">
                 <NavLink to="/" icon={<LayoutGrid size={20} />} label="Dashboard" />
+                <NavLink to="/dvr" icon={<Radio size={20} />} label="DVR / Aufnahmen" />
                 <NavLink to="/playlists" icon={<Library size={20} />} label="Custom Playlists" />
                 <NavLink to="/sources" icon={<Database size={20} />} label="Upstream Sources" />
                 <NavLink to="/epgs" icon={<Tv size={20} />} label="EPG Providers" />
@@ -107,6 +108,7 @@ export default function App() {
           <main className="flex-1 overflow-auto pl-16 custom-scrollbar">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/dvr" element={<DvrManager user={user} />} />
               <Route path="/playlists" element={<PlaylistManager user={user} />} />
               <Route path="/sources" element={<SourceManager user={user} />} />
               <Route path="/epgs" element={<EPGManager user={user} />} />

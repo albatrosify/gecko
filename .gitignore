@@ -7,5 +7,6 @@ artifacts/
 antigravity_env/
 .DS_Store
 *.log
+*.mp4
 .env*
 !.env.example
