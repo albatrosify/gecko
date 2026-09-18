@@ -7930,12 +7930,14 @@ function DvrPlaybackModal({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const playerRef = useRef<any>(null);
+  const playerRef = useRef<mpegts.Player | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const streamUrl = api.dvr.getStreamUrl(recording.id);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    setPlaybackError(null);
 
     if (mpegts.isSupported()) {
       const player = mpegts.createPlayer({
@@ -7946,12 +7948,22 @@ function DvrPlaybackModal({
         enableStashBuffer: false,
         lazyLoad: false,
       });
+
+      player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: any) => {
+        console.warn('mpegts error in DVR player:', errorType, errorDetail, errorInfo);
+        if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
+          setPlaybackError('Dieser Browser unterstützt den Audio-/Videocodec der Aufnahme nicht (z. B. Dolby/AC-3). Bitte in VLC öffnen.');
+        } else {
+          setPlaybackError('Wiedergabefehler im Webplayer. Bitte nutze VLC oder lade die Datei herunter.');
+        }
+      });
+
       player.attachMediaElement(video);
       player.load();
       try {
         const p = player.play();
-        if (p && typeof (p as any).catch === 'function') {
-          (p as Promise<void>).catch(() => {});
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {});
         }
       } catch {}
       playerRef.current = player;
@@ -7971,6 +7983,11 @@ function DvrPlaybackModal({
           playerRef.current.destroy();
         } catch {}
         playerRef.current = null;
+      }
+      if (video) {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
       }
     };
   }, [streamUrl]);
@@ -8011,13 +8028,36 @@ function DvrPlaybackModal({
             </button>
           </div>
         </div>
-        <div className="aspect-video bg-black rounded-2xl overflow-hidden flex items-center justify-center">
+        <div className="aspect-video bg-black rounded-2xl overflow-hidden flex items-center justify-center relative">
           <video
             ref={videoRef}
             controls
             playsInline
             className="w-full h-full"
           />
+          {playbackError && (
+            <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-6 text-center space-y-3 z-10">
+              <AlertTriangle size={36} className="text-amber-400" />
+              <div className="text-sm font-medium text-zinc-200 max-w-md">{playbackError}</div>
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  onClick={() => downloadStreamM3u(api.dvr.getStreamUrl(recording.id), recording.streamName)}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-lg"
+                >
+                  <VlcIcon size={16} />
+                  In VLC öffnen
+                </button>
+                <a
+                  href={api.dvr.getStreamUrl(recording.id, true)}
+                  download
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all"
+                >
+                  <Download size={16} />
+                  Datei herunterladen
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

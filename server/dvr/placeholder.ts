@@ -8,8 +8,8 @@ import { generateId } from '../db.ts';
 import { proxyStats } from '../proxy-stats.ts';
 
 export const PLACEHOLDER_PATHS = [
-  path.join(process.cwd(), 'data', 'placeholder.ts'),
   path.join(process.cwd(), 'data', 'placeholder.mp4'),
+  path.join(process.cwd(), 'data', 'placeholder.ts'),
   path.join(process.cwd(), 'assets', 'placeholder.mp4'),
 ];
 
@@ -32,12 +32,7 @@ export function servePlaceholderStream(
   const displayName = streamName || `Stream ${requestedStreamId}`;
   log(`[DVR Placeholder] Routing request for stream ${requestedStreamId} (${displayName}) to placeholder because source ${lock.sourceId} is active with ${channelInfo}`);
 
-  const candidates = [
-    path.join(process.cwd(), 'data', 'placeholder.ts'),
-    path.join(process.cwd(), 'data', 'placeholder.mp4'),
-    path.join(process.cwd(), 'assets', 'placeholder.mp4'),
-  ];
-  const videoPath = candidates.find(p => fs.existsSync(p)) || null;
+  const videoPath = PLACEHOLDER_PATHS.find(p => fs.existsSync(p)) || null;
 
   if (videoPath) {
     const connId = generateId();
