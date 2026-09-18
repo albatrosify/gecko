@@ -3636,11 +3636,10 @@ export function PlaylistEditor({ user }: { user: User }) {
   const loadPlaylistData = useCallback(async () => {
     if (!id) return;
     try {
-      const [playlistData, mappingData, catMappingData, epgData, customCatData, customItemData] = await Promise.all([
+      const [playlistData, mappingData, catMappingData, customCatData, customItemData] = await Promise.all([
         api.playlists.list().then(list => list.find(p => p.id === id) || null),
         api.mappings.list(id),
         api.categoryMappings.list(id),
-        api.epgs.channels(id).catch(() => ({ channels: [] })),
         api.customCategories.list(id),
         api.customCategoryItems.list(id),
       ]);
@@ -3649,7 +3648,12 @@ export function PlaylistEditor({ user }: { user: User }) {
       setCategoryMappings(catMappingData);
       setCustomCategories(customCatData);
       setCustomCategoryItems(customItemData);
-      setEpgChannels(epgData.channels);
+
+      // EPG channels hit the upstream XMLTV feed (up to 60s on a cold cache),
+      // so load them in the background and never block the playlist from opening.
+      api.epgs.channels(id)
+        .then(epgData => setEpgChannels(epgData.channels))
+        .catch(() => setEpgChannels([]));
     } catch (error) {
       console.error('Failed to load playlist data:', error);
     }
