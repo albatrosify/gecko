@@ -44,13 +44,39 @@ let memoryCacheBytes = 0;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Fast approximation of an object's JSON size without blocking the event loop. */
-function estimateBytes(data: any): number {
-  try {
-    return JSON.stringify(data).length;
-  } catch {
-    return 0;
+/**
+ * Cheap approximation of a value's serialised size.
+ *
+ * Deliberately avoids `JSON.stringify` — serialising a full stream array
+ * (100k+ items) is synchronous and blocks the event loop for seconds on every
+ * `setCache`. This estimator walks the structure once, summing key and leaf
+ * lengths without ever materialising a giant intermediate string.
+ */
+function estimateBytes(value: any, seen?: Set<any>): number {
+  if (value == null) return 0;
+  const t = typeof value;
+  if (t === 'string') return value.length;
+  if (t === 'number' || t === 'boolean') return 8;
+
+  if (Array.isArray(value)) {
+    let total = 0;
+    for (const item of value) total += estimateBytes(item, seen);
+    return total;
   }
+
+  if (t === 'object') {
+    if (!seen) seen = new Set();
+    if (seen.has(value)) return 0;
+    seen.add(value);
+    let total = 0;
+    for (const k in value) {
+      total += k.length;
+      total += estimateBytes(value[k], seen);
+    }
+    return total;
+  }
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

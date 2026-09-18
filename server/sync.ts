@@ -129,7 +129,13 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
 
   if (!force) {
     const lastSyncMeta = db.select().from(source_sync_meta).where(eq(source_sync_meta.key, metaKey)).get();
-    if (lastSyncMeta && lastSyncMeta.extra && new Date((lastSyncMeta.extra as any).timestamp) > fiveMinsAgo) {
+    // Only honour the cooldown when the cache is actually warm. `source_sync_meta`
+    // survives a restart, but the in-memory cache does not — so after a restart
+    // (CACHE_BACKEND=memory) the cache is cold while the meta looks "recently
+    // synced". Skipping here would leave the cache cold and force every playlist
+    // load to hit the slow upstream fetch. Fetch whenever the cache is cold.
+    const cacheIsWarm = !!getCached(`${sourceId}_streams_${type}`);
+    if (lastSyncMeta && lastSyncMeta.extra && new Date((lastSyncMeta.extra as any).timestamp) > fiveMinsAgo && cacheIsWarm) {
       return { success: true, skipped: true };
     }
   }
