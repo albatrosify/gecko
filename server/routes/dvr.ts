@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { requireAuth } from '../auth.ts';
+import { requireAuth, requireAuthOrQuery, type AuthRequest } from '../auth.ts';
 import { dvrRecorder } from '../dvr/recorder.ts';
 import { log } from '../logger.ts';
 
@@ -65,7 +65,7 @@ export function createDvrRouter() {
   });
 
   // Stream / download recording file with Range request support
-  router.get('/recordings/:id/stream', requireAuth, async (req, res) => {
+  router.get('/recordings/:id/stream', requireAuthOrQuery, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const isDownload = req.query.download === 'true';
 

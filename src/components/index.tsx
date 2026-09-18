@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
-import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost } from '../types';
+import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost, Recording } from '../types';
 import { SystemLogViewer } from './SystemLogViewer';
+import mpegts from 'mpegts.js';
 
 export const copyToClipboard = async (text: string) => {
   if (navigator.clipboard && window.isSecureContext) {
@@ -7912,33 +7913,113 @@ export function DvrManager({ user }: { user: User }) {
 
       {/* Web Player Modal for Recording Playback */}
       {activePlayback && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl space-y-4 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-zinc-100">{activePlayback.streamName}</h3>
-                <p className="text-xs text-zinc-500">
-                  Aufgenommen am {new Date(activePlayback.startTime).toLocaleString()} ({formatBytes(activePlayback.fileSizeBytes)})
-                </p>
-              </div>
-              <button
-                onClick={() => setActivePlayback(null)}
-                className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition-all"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="aspect-video bg-black rounded-2xl overflow-hidden flex items-center justify-center">
-              <video
-                controls
-                autoPlay
-                className="w-full h-full"
-                src={api.dvr.getStreamUrl(activePlayback.id)}
-              />
-            </div>
+        <DvrPlaybackModal
+          recording={activePlayback}
+          onClose={() => setActivePlayback(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DvrPlaybackModal({
+  recording,
+  onClose,
+}: {
+  recording: Recording;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerRef = useRef<any>(null);
+  const streamUrl = api.dvr.getStreamUrl(recording.id);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (mpegts.isSupported()) {
+      const player = mpegts.createPlayer({
+        type: 'mpegts',
+        isLive: false,
+        url: streamUrl,
+      }, {
+        enableStashBuffer: false,
+        lazyLoad: false,
+      });
+      player.attachMediaElement(video);
+      player.load();
+      try {
+        const p = player.play();
+        if (p && typeof (p as any).catch === 'function') {
+          (p as Promise<void>).catch(() => {});
+        }
+      } catch {}
+      playerRef.current = player;
+    } else {
+      video.src = streamUrl;
+      try {
+        const p = video.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {});
+        }
+      } catch {}
+    }
+
+    return () => {
+      if (playerRef.current) {
+        try {
+          playerRef.current.destroy();
+        } catch {}
+        playerRef.current = null;
+      }
+    };
+  }, [streamUrl]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl space-y-4 p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-zinc-100">{recording.streamName}</h3>
+            <p className="text-xs text-zinc-500">
+              Aufgenommen am {new Date(recording.startTime).toLocaleString()} ({formatBytes(recording.fileSizeBytes)})
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href={api.dvr.getStreamUrl(recording.id, true)}
+              download
+              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-all"
+              title="Aufnahme als TS-Datei herunterladen"
+            >
+              <Download size={14} />
+              Herunterladen
+            </a>
+            <button
+              onClick={() => downloadStreamM3u(api.dvr.getStreamUrl(recording.id), recording.streamName)}
+              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-all"
+              title="In externem Player (z. B. VLC) öffnen"
+            >
+              <VlcIcon size={14} />
+              VLC
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition-all ml-2"
+            >
+              <X size={20} />
+            </button>
           </div>
         </div>
-      )}
+        <div className="aspect-video bg-black rounded-2xl overflow-hidden flex items-center justify-center">
+          <video
+            ref={videoRef}
+            controls
+            playsInline
+            className="w-full h-full"
+          />
+        </div>
+      </div>
     </div>
   );
 }

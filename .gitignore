@@ -8,5 +8,6 @@ antigravity_env/
 .DS_Store
 *.log
 *.mp4
+!assets/*.mp4
 .env*
 !.env.example

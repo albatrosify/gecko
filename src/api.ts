@@ -444,7 +444,9 @@ export const dvr = {
     });
   },
   getStreamUrl(id: string, download: boolean = false): string {
-    return `/api/dvr/recordings/${id}/stream?download=${download}`;
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('auth_token') || '') : '';
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    return `/api/dvr/recordings/${id}/stream?download=${download}${tokenParam}`;
   },
 };
 

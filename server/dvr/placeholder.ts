@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { log } from '../logger.ts';
 import { DvrSourceLock } from './connection-arbiter.ts';
 import { generateId } from '../db.ts';
@@ -10,6 +10,7 @@ import { proxyStats } from '../proxy-stats.ts';
 export const PLACEHOLDER_PATHS = [
   path.join(process.cwd(), 'data', 'placeholder.ts'),
   path.join(process.cwd(), 'data', 'placeholder.mp4'),
+  path.join(process.cwd(), 'assets', 'placeholder.mp4'),
 ];
 
 /**
@@ -31,14 +32,12 @@ export function servePlaceholderStream(
   const displayName = streamName || `Stream ${requestedStreamId}`;
   log(`[DVR Placeholder] Routing request for stream ${requestedStreamId} (${displayName}) to placeholder because source ${lock.sourceId} is active with ${channelInfo}`);
 
-  const mp4Path = path.join(process.cwd(), 'data', 'placeholder.mp4');
-  const tsPath = path.join(process.cwd(), 'data', 'placeholder.ts');
-  let videoPath: string | null = null;
-  if (fs.existsSync(mp4Path)) {
-    videoPath = mp4Path;
-  } else if (fs.existsSync(tsPath)) {
-    videoPath = tsPath;
-  }
+  const candidates = [
+    path.join(process.cwd(), 'data', 'placeholder.ts'),
+    path.join(process.cwd(), 'data', 'placeholder.mp4'),
+    path.join(process.cwd(), 'assets', 'placeholder.mp4'),
+  ];
+  const videoPath = candidates.find(p => fs.existsSync(p)) || null;
 
   if (videoPath) {
     const connId = generateId();
@@ -70,7 +69,7 @@ export function servePlaceholderStream(
     proxyStats.connections.set(connId, connectionInfo);
     proxyStats.activeStreams++;
 
-    let ffmpegProc: ChildProcessWithoutNullStreams | null = null;
+    let ffmpegProc: ChildProcess | null = null;
     let cleanedUp = false;
 
     const cleanup = () => {
