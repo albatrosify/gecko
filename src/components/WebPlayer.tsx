@@ -577,6 +577,17 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     }
   };
 
+  // Close player when Escape key is pressed
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
     <motion.div
       ref={containerRef}
@@ -600,6 +611,15 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {/* Playback Error Overlay */}
       {playbackError && (
         <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-in fade-in duration-200">
+          {/* Top-right close button */}
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 p-1.5 rounded-full bg-zinc-900/80 hover:bg-red-500 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-lg border border-zinc-800"
+            title="Close player (Esc)"
+          >
+            <X size={15} />
+          </button>
+
           <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mb-2.5 shadow-lg shadow-red-950/40 shrink-0">
             {playbackError.type === 'network' ? <WifiOff size={22} /> : <AlertCircle size={22} />}
           </div>
@@ -614,7 +634,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               {playbackError.details}
             </div>
           )}
-          <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="flex flex-wrap items-center justify-center gap-2 pointer-events-auto">
             <button
               onClick={handleRetry}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-zinc-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
@@ -638,6 +658,14 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
               <span>{copied ? 'Copied' : 'Copy URL'}</span>
             </button>
+            <button
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 hover:text-white active:scale-95 text-zinc-300 rounded-lg text-xs font-semibold transition-all cursor-pointer border border-zinc-700/50"
+              title="Close player"
+            >
+              <X size={13} />
+              <span>Close</span>
+            </button>
           </div>
         </div>
       )}
@@ -652,7 +680,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
       {/* Top Bar (Draggable) */}
       <div
-        className={`absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between transition-opacity duration-300 z-40 ${showControls || playbackError ? 'opacity-100' : 'opacity-0'}`}
         onPointerDown={(e) => dragControls.start(e)}
         style={{ cursor: 'grab' }}
       >
