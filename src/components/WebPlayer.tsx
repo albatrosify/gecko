@@ -230,11 +230,11 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         });
 
         player.on(mpegts.Events.ERROR, async (errorType: string, errorDetail: string, errorInfo: any) => {
-          console.warn('mpegts error:', errorType, errorDetail, errorInfo);
+          playerLog(`❌ mpegts error — type=${errorType} detail=${errorDetail}`, errorInfo);
           setIsLoading(false);
 
           if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-            console.log('Media error, possibly unsupported codec like AC3.');
+            playerLog('⚠️ Media error — likely unsupported codec (AC-3?)');
             setAudioCodecWarning('Dolby Digital / AC-3 audio is unsupported in this web browser.');
             return;
           }
@@ -393,16 +393,33 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       }
     }
 
+    // ── Diagnostic logging ────────────────────────────────────────────────────
+    const playerStart = Date.now();
+    const playerLog = (msg: string, data?: any) => {
+      const elapsed = ((Date.now() - playerStart) / 1000).toFixed(2);
+      if (data !== undefined) {
+        console.log(`[WebPlayer +${elapsed}s] ${msg}`, data);
+      } else {
+        console.log(`[WebPlayer +${elapsed}s] ${msg}`);
+      }
+    };
+    playerLog(`Init — url: ${url}`);
+
     // Generic Event Listeners
     const onPlay = () => {
       clearTimeout(waitingTimerRef.current!);
+      playerLog('▶ playing');
       setIsPlaying(true);
       setIsLoading(false);
       setPlaybackError(null);
     };
-    const onPause = () => setIsPlaying(false);
+    const onPause = () => {
+      playerLog('⏸ paused');
+      setIsPlaying(false);
+    };
     const onWaiting = () => {
       if (!video.paused) {
+        playerLog(`⏳ waiting — buffered=${video.buffered.length ? `${video.buffered.end(video.buffered.length - 1).toFixed(1)}s` : 'none'} currentTime=${video.currentTime.toFixed(1)}s`);
         // Only show the spinner after an 800 ms sustained stall, not on brief
         // network blips that the player recovers from on its own.
         clearTimeout(waitingTimerRef.current!);
@@ -411,7 +428,14 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     };
     const onCanPlay = () => {
       clearTimeout(waitingTimerRef.current!);
+      playerLog(`✅ canplay — buffered end=${video.buffered.length ? `${video.buffered.end(video.buffered.length - 1).toFixed(1)}s` : 'none'}`);
       setIsLoading(false);
+    };
+    const onStalled = () => {
+      playerLog(`🚫 stalled — browser gave up fetching data (currentTime=${video.currentTime.toFixed(1)}s)`);
+    };
+    const onEnded = () => {
+      playerLog('⏹ ended — stream terminated');
     };
 
     const onVideoError = async () => {
@@ -492,6 +516,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     video.addEventListener('waiting', onWaiting);
     video.addEventListener('pause', onPause);
     video.addEventListener('error', onVideoError);
+    video.addEventListener('stalled', onStalled);
+    video.addEventListener('ended', onEnded);
 
     return () => {
       video.removeEventListener('play', onPlay);
@@ -500,6 +526,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       video.removeEventListener('waiting', onWaiting);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('error', onVideoError);
+      video.removeEventListener('stalled', onStalled);
+      video.removeEventListener('ended', onEnded);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('addtrack', onLoadedMetadata);
       if (rejectionHandlerRef.current) {

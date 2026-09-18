@@ -111,10 +111,36 @@ class StreamHub {
     // At a typical 4–8 Mbps IPTV bitrate this gives ~1–2 s of grace time.
     const MAX_SUBSCRIBER_BUFFER_BYTES = 1 * 1024 * 1024; // 1 MB
 
+    // ── Diagnostic: upstream gap detection ───────────────────────────────────
+    // Reset every time a chunk arrives. If the upstream goes silent for >3 s we
+    // log a warning — this is the #1 cause of client-side buffering/reconnects.
+    const UPSTREAM_GAP_WARN_MS = 3_000;
+    let lastChunkAt = Date.now();
+    let upstreamGapTimer = setInterval(() => {
+      const silentMs = Date.now() - lastChunkAt;
+      if (silentMs >= UPSTREAM_GAP_WARN_MS) {
+        log(`[StreamHub][DIAG] ${channelKey} — upstream silent for ${silentMs} ms (${channel.subscribers.size} subscribers waiting)`);
+      }
+    }, 1_000);
+
+    // ── Diagnostic: periodic throughput report ────────────────────────────────
+    let lastReportBytes = 0;
+    const REPORT_INTERVAL_MS = 10_000;
+    let throughputTimer = setInterval(() => {
+      const delta = channel.bytesRead - lastReportBytes;
+      lastReportBytes = channel.bytesRead;
+      const kbps = Math.round((delta * 8) / (REPORT_INTERVAL_MS / 1000) / 1000);
+      log(`[StreamHub][DIAG] ${channelKey} — ${kbps} kbps upstream | ${channel.subscribers.size} subscriber(s) | total ${Math.round(channel.bytesRead / 1024)} KB`);
+    }, REPORT_INTERVAL_MS);
+
+    // Store timers on channel so closeChannel() can clear them
+    (channel as any)._diagTimers = [upstreamGapTimer, throughputTimer];
+
     // Broadcast incoming upstream chunks.
     // NOTE: intentionally NOT async — async data listeners bypass Node's
     // stream backpressure signal and can swallow unhandled rejections silently.
     upstreamResponse.data.on('data', (chunk: Buffer) => {
+      lastChunkAt = Date.now(); // reset gap-detection watchdog
       channel.bytesRead += chunk.length;
       proxyStats.totalBytes += chunk.length;
       proxyStats.intervalBytes += chunk.length;
@@ -416,6 +442,11 @@ class StreamHub {
       }
     }
     channel.subscribers.clear();
+
+    // Clear diagnostic timers
+    if ((channel as any)._diagTimers) {
+      for (const t of (channel as any)._diagTimers) clearInterval(t);
+    }
 
     // Destroy upstream response
     if (channel.upstreamResponse?.data?.destroy) {
