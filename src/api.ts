@@ -339,7 +339,6 @@ export const proxy = {
         bytesRead: number;
       }[];
       cache: {
-        backend: 'memory' | 'sqlite';
         entries: number;
         bytes: number;
         size: string;

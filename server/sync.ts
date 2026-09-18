@@ -46,7 +46,7 @@ import { generateId } from './db.ts';
 /**
  * Baseline snapshot key. Persisted in `source_sync_meta` (SQLite) rather than
  * the cache so the sync diff/changelog — and the keyword notifications built on
- * top of it — survive restarts and cache TTL regardless of CACHE_BACKEND.
+ * top of it — survive restarts and cache TTL.
  */
 function snapshotKey(sourceId: string, type: string): string {
   return `snapshot_${sourceId}_${type}`;
@@ -215,10 +215,10 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
   if (!force) {
     const lastSyncMeta = db.select().from(source_sync_meta).where(eq(source_sync_meta.key, metaKey)).get();
     // Only honour the cooldown when the cache is actually warm. `source_sync_meta`
-    // survives a restart, but the in-memory cache does not — so after a restart
-    // (CACHE_BACKEND=memory) the cache is cold while the meta looks "recently
-    // synced". Skipping here would leave the cache cold and force every playlist
-    // load to hit the slow upstream fetch. Fetch whenever the cache is cold.
+    // survives a restart, but the cache may be cold (e.g. after a fresh DB or
+    // expired cache) while the meta still looks "recently synced". Skipping here
+    // would leave the cache cold and force every playlist load to hit the slow
+    // upstream fetch. Fetch whenever the cache is cold.
     const cacheIsWarm = !!getCached(`${sourceId}_streams_${type}`);
     if (lastSyncMeta && lastSyncMeta.extra && new Date((lastSyncMeta.extra as any).timestamp) > fiveMinsAgo && cacheIsWarm) {
       return { success: true, skipped: true };

@@ -7,17 +7,10 @@ import { eq, count } from 'drizzle-orm';
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 /**
- * When CACHE_BACKEND=memory the SQLite table is bypassed entirely and all
- * entries are kept in the process heap for their full TTL.  This is useful
- * when you want faster reads and don't need the cache to survive a restart.
- *
- * When CACHE_BACKEND=sqlite (default) a short-lived in-process mirror still
- * sits in front of the DB so repeated hot reads never touch disk.
+ * Short-lived in-process mirror in front of SQLite so repeated hot reads never
+ * touch disk. The SQLite `cache` table is the authoritative store.
  */
-const USE_MEMORY_BACKEND = process.env.CACHE_BACKEND === 'memory';
-const IN_MEMORY_TTL_MS = USE_MEMORY_BACKEND
-  ? CACHE_TTL_MS        // full TTL — memory IS the store
-  : 60 * 1000;          // 1 minute — just a hot-read mirror in front of SQLite
+const MIRROR_TTL_MS = 60 * 1000; // 1 minute
 
 /** DB path, kept in sync with db.ts so statSync hits the right file. */
 const DB_PATH = process.env.SQLITE_PATH ?? path.join(process.cwd(), 'data', 'gecko.db');
@@ -26,58 +19,9 @@ interface CacheEntry {
   data: any;
   lastUpdated: string;
   expiresAt: number;
-  /** Approximate serialised byte size, tracked incrementally to avoid
-   *  re-serialising large payloads on every stats call. */
-  sizeBytes: number;
 }
 
 const memoryCache = new Map<string, CacheEntry>();
-
-/**
- * Running total of live entry sizes in the memory cache.
- * Updated on every set/delete so getCacheStats() never needs to
- * JSON.stringify anything — critical when entries hold large stream arrays.
- */
-let memoryCacheBytes = 0;
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Cheap approximation of a value's serialised size.
- *
- * Deliberately avoids `JSON.stringify` — serialising a full stream array
- * (100k+ items) is synchronous and blocks the event loop for seconds on every
- * `setCache`. This estimator walks the structure once, summing key and leaf
- * lengths without ever materialising a giant intermediate string.
- */
-function estimateBytes(value: any, seen?: Set<any>): number {
-  if (value == null) return 0;
-  const t = typeof value;
-  if (t === 'string') return value.length;
-  if (t === 'number' || t === 'boolean') return 8;
-
-  if (Array.isArray(value)) {
-    let total = 0;
-    for (const item of value) total += estimateBytes(item, seen);
-    return total;
-  }
-
-  if (t === 'object') {
-    if (!seen) seen = new Set();
-    if (seen.has(value)) return 0;
-    seen.add(value);
-    let total = 0;
-    for (const k in value) {
-      total += k.length;
-      total += estimateBytes(value[k], seen);
-    }
-    return total;
-  }
-
-  return 0;
-}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -87,22 +31,12 @@ function estimateBytes(value: any, seen?: Set<any>): number {
  * Returns the cached value for `key`, or `null` if it is absent / expired.
  */
 export function getCached(key: string): { data: any; lastUpdated: string } | null {
-  // Always check the in-process map first.
+  // Check the in-process mirror first.
   const mem = memoryCache.get(key);
   if (mem && Date.now() < mem.expiresAt) {
     return { data: mem.data, lastUpdated: mem.lastUpdated };
   }
 
-  if (USE_MEMORY_BACKEND) {
-    // Entry was missing or expired — clean up and bail.
-    if (mem) {
-      memoryCacheBytes -= mem.sizeBytes;
-      memoryCache.delete(key);
-    }
-    return null;
-  }
-
-  // --- SQLite path ---
   const db = getDb();
   try {
     const dbRow = db.select().from(cache).where(eq(cache.key, key)).get();
@@ -118,9 +52,8 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
     const data = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : dbRow.data;
     const lastUpdated = dbRow.updatedAt as string;
 
-    // Populate the short-lived in-process mirror (size tracking not needed
-    // for sqlite mirror entries — the authoritative size is the file on disk).
-    memoryCache.set(key, { data, lastUpdated, expiresAt: Date.now() + IN_MEMORY_TTL_MS, sizeBytes: 0 });
+    // Populate the short-lived mirror.
+    memoryCache.set(key, { data, lastUpdated, expiresAt: Date.now() + MIRROR_TTL_MS });
 
     return { data, lastUpdated };
   } catch (error) {
@@ -136,22 +69,8 @@ export function setCache(key: string, data: any): void {
   const lastUpdated = new Date().toISOString();
   const expiresAt = Date.now() + CACHE_TTL_MS;
 
-  // Update the running byte counter before overwriting the map entry.
-  const sizeBytes = USE_MEMORY_BACKEND ? estimateBytes(data) : 0;
-  const existing = memoryCache.get(key);
-  if (existing) memoryCacheBytes -= existing.sizeBytes;
-  memoryCacheBytes += sizeBytes;
+  memoryCache.set(key, { data, lastUpdated, expiresAt: Date.now() + MIRROR_TTL_MS });
 
-  memoryCache.set(key, {
-    data,
-    lastUpdated,
-    expiresAt: Date.now() + IN_MEMORY_TTL_MS,
-    sizeBytes,
-  });
-
-  if (USE_MEMORY_BACKEND) return;
-
-  // --- SQLite path ---
   const db = getDb();
   try {
     db.insert(cache)
@@ -172,17 +91,11 @@ export function setCache(key: string, data: any): void {
  */
 export function clearCache(key?: string): void {
   if (key) {
-    const existing = memoryCache.get(key);
-    if (existing) memoryCacheBytes -= existing.sizeBytes;
     memoryCache.delete(key);
   } else {
-    memoryCacheBytes = 0;
     memoryCache.clear();
   }
 
-  if (USE_MEMORY_BACKEND) return;
-
-  // --- SQLite path ---
   const db = getDb();
   try {
     if (key) {
@@ -200,20 +113,12 @@ export function clearCache(key?: string): void {
  * TTL.
  */
 export function duplicateCache(oldKey: string, newKey: string): void {
-  // Try the in-process map first (always populated in memory-backend mode).
+  // Mirror first.
   const mem = memoryCache.get(oldKey);
   if (mem) {
-    const copy = { ...mem };
-    const existing = memoryCache.get(newKey);
-    if (existing) memoryCacheBytes -= existing.sizeBytes;
-    memoryCacheBytes += copy.sizeBytes;
-    memoryCache.set(newKey, copy);
-    if (USE_MEMORY_BACKEND) return;
+    memoryCache.set(newKey, { ...mem });
   }
 
-  if (USE_MEMORY_BACKEND) return;
-
-  // --- SQLite path ---
   const db = getDb();
   try {
     const oldRow = db.select().from(cache).where(eq(cache.key, oldKey)).get();
@@ -235,15 +140,14 @@ export function duplicateCache(oldKey: string, newKey: string): void {
         })
         .run();
 
-      // Keep in-process map in sync if the entry wasn't already there.
+      // Keep the mirror in sync if the entry wasn't already there.
       if (!mem && oldRow.expiresAt && Date.now() < oldRow.expiresAt) {
         const data =
           typeof oldRow.data === 'string' ? JSON.parse(oldRow.data) : oldRow.data;
         memoryCache.set(newKey, {
           data,
           lastUpdated: oldRow.updatedAt as string,
-          expiresAt: Date.now() + IN_MEMORY_TTL_MS,
-          sizeBytes: 0, // sqlite mirror — authoritative size is the file
+          expiresAt: Date.now() + MIRROR_TTL_MS,
         });
       }
     }
@@ -257,15 +161,9 @@ export function duplicateCache(oldKey: string, newKey: string): void {
 // ---------------------------------------------------------------------------
 
 export interface CacheStats {
-  /** Which backend is active: 'memory' or 'sqlite'. */
-  backend: 'memory' | 'sqlite';
   /** Number of non-expired entries currently held. */
   entries: number;
-  /**
-   * Approximate size in bytes.
-   * - memory  → sum of JSON-serialised sizes, tracked incrementally.
-   * - sqlite  → physical size of the SQLite DB file on disk.
-   */
+  /** Physical size of the SQLite DB file on disk. */
   bytes: number;
   /** Human-readable size string, e.g. "1.23 MB". */
   size: string;
@@ -281,28 +179,10 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Returns size/count statistics for the cache.
- * O(1) for the memory backend (counters are maintained incrementally).
- * For sqlite: one statSync + one COUNT(*) query.
+ * Returns size/count statistics for the cache: physical DB file size + live
+ * row count.
  */
 export function getCacheStats(): CacheStats {
-  if (USE_MEMORY_BACKEND) {
-    // Count only live (non-expired) entries — no serialisation needed.
-    const now = Date.now();
-    let entries = 0;
-    for (const entry of memoryCache.values()) {
-      if (now < entry.expiresAt) entries++;
-    }
-    return {
-      backend: 'memory',
-      entries,
-      bytes: memoryCacheBytes,
-      size: formatBytes(memoryCacheBytes),
-      ttlMs: CACHE_TTL_MS,
-    };
-  }
-
-  // SQLite backend: physical DB file size + live row count.
   let bytes = 0;
   let entries = 0;
   try {
@@ -315,5 +195,5 @@ export function getCacheStats(): CacheStats {
   } catch {
     // DB not ready
   }
-  return { backend: 'sqlite', entries, bytes, size: formatBytes(bytes), ttlMs: CACHE_TTL_MS };
+  return { entries, bytes, size: formatBytes(bytes), ttlMs: CACHE_TTL_MS };
 }

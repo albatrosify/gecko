@@ -453,9 +453,6 @@ export function Dashboard() {
               <div className="p-3 rounded-2xl bg-yellow-500/10 text-yellow-500 border border-current/10">
                 <Database size={20} />
               </div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mt-1">
-                {stats.cache.backend}
-              </span>
             </div>
             <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Cache</div>
             <div className="text-2xl font-black text-zinc-100 mt-1">{stats.cache.size}</div>
