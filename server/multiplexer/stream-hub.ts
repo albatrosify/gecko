@@ -106,8 +106,15 @@ class StreamHub {
 
     this.channels.set(channelKey, channel);
 
-    // Broadcast incoming upstream chunks
-    upstreamResponse.data.on('data', async (chunk: Buffer) => {
+    // Maximum bytes allowed to sit un-flushed in a single subscriber's write
+    // buffer before we declare it too slow for live streaming and evict it.
+    // At a typical 4–8 Mbps IPTV bitrate this gives ~1–2 s of grace time.
+    const MAX_SUBSCRIBER_BUFFER_BYTES = 1 * 1024 * 1024; // 1 MB
+
+    // Broadcast incoming upstream chunks.
+    // NOTE: intentionally NOT async — async data listeners bypass Node's
+    // stream backpressure signal and can swallow unhandled rejections silently.
+    upstreamResponse.data.on('data', (chunk: Buffer) => {
       channel.bytesRead += chunk.length;
       proxyStats.totalBytes += chunk.length;
       proxyStats.intervalBytes += chunk.length;
@@ -127,8 +134,21 @@ class StreamHub {
             conn.bytesRead += chunk.length;
             conn.intervalBytes += chunk.length;
           }
-          if (!ok && (sub.res.destroyed || sub.res.writableEnded)) {
-            deadSubscribers.push(subId);
+
+          if (!ok) {
+            if (sub.res.destroyed || sub.res.writableEnded) {
+              // Connection already gone
+              deadSubscribers.push(subId);
+            } else if (sub.res.writableLength > MAX_SUBSCRIBER_BUFFER_BYTES) {
+              // Subscriber's TCP send buffer has grown beyond the threshold —
+              // they can't keep up with the live stream rate.  Evict them so
+              // their stalled socket doesn't accumulate memory or delay chunk
+              // dispatch for the other viewers on this channel.
+              log(`[StreamHub] Evicting slow subscriber ${subId} — buffer ${Math.round(sub.res.writableLength / 1024)} KB > ${MAX_SUBSCRIBER_BUFFER_BYTES / 1024} KB limit.`);
+              deadSubscribers.push(subId);
+            }
+            // If buffer is within limits, write() buffered the chunk normally;
+            // Node will flush it when the socket drains — no action needed.
           }
         } catch (err: any) {
           log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
