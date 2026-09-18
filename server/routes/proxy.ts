@@ -155,9 +155,9 @@ export function createProxyRouter() {
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
     const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, streamId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
     const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
-    const streamName = streamMapping
+    const streamName = (streamMapping
       ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
-      : `Stream ${streamId}`;
+      : '') || `Stream ${streamId}`;
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -189,19 +189,28 @@ export function createProxyRouter() {
         const guardDecision = evaluateStreamRequest(sourceDoc, originalId, activeOnSource);
 
         if (guardDecision.action === 'block_placeholder') {
-          return servePlaceholderStream(res, {
-            sourceId,
-            streamId: guardDecision.activeStreamId || '',
-            streamName: guardDecision.activeStreamName,
-            recordingId: '',
-            lockedAt: Date.now(),
-          }, originalId);
+          return servePlaceholderStream(
+            req,
+            res,
+            {
+              sourceId,
+              streamId: guardDecision.activeStreamId || '',
+              streamName: guardDecision.activeStreamName,
+              recordingId: '',
+              lockedAt: Date.now(),
+            },
+            originalId,
+            streamName,
+            (playlist as any).name || username,
+            username
+          );
         }
 
         if (guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
           const subId = generateId();
           const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
             id: subId,
+            req,
             res,
             username,
             playlistName: (playlist as any).name || username,
@@ -281,6 +290,7 @@ export function createProxyRouter() {
             const subId = generateId();
             streamHub.addSubscriber(channel.channelKey, {
               id: subId,
+              req,
               res,
               username,
               playlistName: (playlist as any).name || username,

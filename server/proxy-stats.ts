@@ -22,6 +22,8 @@ export const proxyStats = {
     channelKey?: string;
     subscriberCount?: number;
     recordingId?: string;
+    isPlaceholder?: boolean;
+    isHandover?: boolean;
   }>()
 };
 

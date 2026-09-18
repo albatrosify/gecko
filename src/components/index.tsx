@@ -477,16 +477,32 @@ export function Dashboard() {
                 return (
                   <div key={conn.id} className="bg-zinc-800/50 rounded-2xl p-4 space-y-3">
                     {/* Top row: icon + name + type badge */}
-                    <div className="flex items-start gap-3">
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconColor}`}>
-                        <Play size={16} fill="currentColor" />
+                    <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
+                      <div className="flex items-center gap-3 min-w-[140px] flex-1">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconColor}`}>
+                          <Play size={16} fill="currentColor" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-sm text-zinc-100 truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
+                            {conn.streamName || `Stream ${conn.streamId}`}
+                          </div>
+                          <div className="text-xs text-zinc-500 truncate mt-0.5">
+                            via <span className="text-zinc-400">{conn.playlistName || conn.username}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-sm text-zinc-100 truncate leading-tight">{conn.streamName || conn.streamId}</div>
-                        <div className="text-xs text-zinc-500 truncate mt-0.5">via <span className="text-zinc-400">{conn.playlistName || conn.username}</span></div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {conn.subscriberCount > 1 && (
+                      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                        {conn.isPlaceholder && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
+                            🛑 Hinweisanzeige
+                          </span>
+                        )}
+                        {conn.isHandover && (
+                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Aufnahme läuft im Hintergrund weiter">
+                            📁 DVR Handover
+                          </span>
+                        )}
+                        {conn.subscriberCount !== undefined && conn.subscriberCount > 1 && (
                           <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20" title="Dieser Stream wird lokal mit mehreren Clients geteilt (1 Upstream-Verbindung)">
                             👥 {conn.subscriberCount} Clients (1 Upstream)
                           </span>
@@ -507,7 +523,7 @@ export function Dashboard() {
                             </button>
                           </div>
                         ) : (
-                          conn.type === 'live' && (
+                          conn.type === 'live' && !conn.isPlaceholder && (
                             <button
                               onClick={() => handleStartRecording(conn.id)}
                               disabled={dvrBusy[conn.id]}
@@ -546,6 +562,9 @@ export function Dashboard() {
                       </div>
                       {conn.proxied && (
                         <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">VPN proxied</span>
+                      )}
+                      {conn.isPlaceholder && (
+                        <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">0 Upstream (Placeholder)</span>
                       )}
                     </div>
                   </div>

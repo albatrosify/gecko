@@ -5,6 +5,7 @@ import { StreamChannelSummary } from './stream-guard.ts';
 
 export interface DownstreamSubscriber {
   id: string;
+  req?: express.Request;
   res: express.Response;
   username: string;
   playlistName: string;
@@ -112,13 +113,25 @@ class StreamHub {
       proxyStats.intervalBytes += chunk.length;
 
       // Broadcast to all active downstream subscribers
-      for (const [subId, sub] of channel.subscribers.entries()) {
-        if (!sub.res.writableEnded && !sub.res.destroyed) {
-          try {
-            sub.res.write(chunk);
-          } catch (err: any) {
-            log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
+      for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
+        if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
+          this.removeSubscriber(channelKey, subId);
+          continue;
+        }
+
+        try {
+          const ok = sub.res.write(chunk);
+          const conn = proxyStats.connections.get(subId);
+          if (conn) {
+            conn.bytesRead += chunk.length;
+            conn.intervalBytes += chunk.length;
           }
+          if (!ok && (sub.res.destroyed || sub.res.writableEnded)) {
+            this.removeSubscriber(channelKey, subId);
+          }
+        } catch (err: any) {
+          log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
+          this.removeSubscriber(channelKey, subId);
         }
       }
 
@@ -192,13 +205,29 @@ class StreamHub {
     // Update subscriberCount on all sibling subscribers in proxyStats
     this.syncSubscriberCount(channel);
 
-    // Handle subscriber disconnect (guaranteed idempotent)
+    // If there was a DVR Handover connection card in proxyStats, remove it because human viewer has joined!
+    if (channel.dvrRecordingId) {
+      const handoverConnId = `dvr-${channel.dvrRecordingId}`;
+      if (proxyStats.connections.has(handoverConnId)) {
+        proxyStats.connections.delete(handoverConnId);
+        proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+      }
+    }
+
+    // Handle subscriber disconnect (guaranteed idempotent across req & res)
     let cleanedUp = false;
     const cleanup = () => {
       if (cleanedUp) return;
       cleanedUp = true;
+      try { sub.res.destroy(); } catch {}
       this.removeSubscriber(channelKey, sub.id);
     };
+    if (sub.req) {
+      sub.req.on('close', cleanup);
+      sub.req.on('end', cleanup);
+      sub.req.socket?.on('close', cleanup);
+      sub.req.socket?.on('error', cleanup);
+    }
     sub.res.on('finish', cleanup);
     sub.res.on('close', cleanup);
     sub.res.on('error', cleanup);
@@ -233,6 +262,32 @@ class StreamHub {
         log(`[StreamHub] All viewers left ${channelKey}, but DVR is recording (${channel.dvrRecordingId}). Stream kept alive.`);
         const { dvrRecorder } = await import('../dvr/recorder.ts');
         dvrRecorder.handleDownstreamClose(channel.dvrRecordingId);
+
+        // Add a Handover entry to proxyStats so the dashboard clearly shows that the stream is recording in background!
+        const handoverConnId = `dvr-${channel.dvrRecordingId}`;
+        if (!proxyStats.connections.has(handoverConnId)) {
+          proxyStats.connections.set(handoverConnId, {
+            id: handoverConnId,
+            channelKey,
+            sourceId: channel.sourceId,
+            host: channel.hostUrl,
+            username: 'Gecko DVR',
+            streamId: channel.streamId,
+            streamName: channel.streamName,
+            playlistName: '📁 Gecko DVR (Handover)',
+            type: channel.type,
+            ip: '127.0.0.1',
+            startTime: channel.startTime,
+            bytesRead: channel.bytesRead,
+            intervalBytes: 0,
+            currentBps: 0,
+            proxied: true,
+            subscriberCount: 0,
+            recordingId: channel.dvrRecordingId,
+            isHandover: true,
+          } as any);
+          proxyStats.activeStreams++;
+        }
       } else {
         // No viewers and no DVR -> Tear down upstream connection
         log(`[StreamHub] No viewers left for ${channelKey}. Tearing down upstream connection.`);
@@ -263,6 +318,14 @@ class StreamHub {
     const channel = this.channels.get(channelKey);
     if (!channel) return;
 
+    const oldDvrId = channel.dvrRecordingId;
+    if (oldDvrId) {
+      const handoverConnId = `dvr-${oldDvrId}`;
+      if (proxyStats.connections.has(handoverConnId)) {
+        proxyStats.connections.delete(handoverConnId);
+        proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+      }
+    }
     channel.dvrRecordingId = undefined;
     this.syncRecordingId(channel, undefined);
     log(`[StreamHub] Detached DVR from channel ${channelKey}`);
@@ -285,6 +348,11 @@ class StreamHub {
     if (channel.dvrRecordingId) {
       const recId = channel.dvrRecordingId;
       channel.dvrRecordingId = undefined;
+      const handoverConnId = `dvr-${recId}`;
+      if (proxyStats.connections.has(handoverConnId)) {
+        proxyStats.connections.delete(handoverConnId);
+        proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+      }
       import('../dvr/recorder.ts').then(({ dvrRecorder }) => {
         dvrRecorder.stopRecording(recId).catch(err => {
           log(`[StreamHub] Failed to finalize DVR recording ${recId} on channel close: ${err.message}`);
