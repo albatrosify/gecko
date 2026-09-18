@@ -416,7 +416,7 @@ export function Dashboard() {
         <p className="text-zinc-500">Real-time system performance and activity</p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         {[
           { label: 'Playlists', value: stats.totalPlaylists, icon: LayoutList, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
           { label: 'Active Users', value: stats.totalUsers, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
@@ -433,6 +433,22 @@ export function Dashboard() {
             <div className="text-2xl font-black text-zinc-100 mt-1">{card.value}</div>
           </div>
         ))}
+        {/* Cache stat card */}
+        {stats.cache && (
+          <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl group hover:border-zinc-700 transition-all">
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-3 rounded-2xl bg-yellow-500/10 text-yellow-500 border border-current/10">
+                <Database size={20} />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-600 mt-1">
+                {stats.cache.backend}
+              </span>
+            </div>
+            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Cache</div>
+            <div className="text-2xl font-black text-zinc-100 mt-1">{stats.cache.size}</div>
+            <div className="text-xs text-zinc-500 mt-1">{stats.cache.entries} entries</div>
+          </div>
+        )}
       </div>
 
       <VpnStatusBar />

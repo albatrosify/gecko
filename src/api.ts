@@ -338,6 +338,13 @@ export const proxy = {
         startTime: number;
         bytesRead: number;
       }[];
+      cache: {
+        backend: 'memory' | 'sqlite';
+        entries: number;
+        bytes: number;
+        size: string;
+        ttlMs: number;
+      };
     }>('/api/proxy/stats');
   },
 };

@@ -89,6 +89,7 @@ export function createSystemRouter() {
       const db = getDb();
       const { playlists, users } = await import('../schema.ts');
       const { count, eq } = await import('drizzle-orm');
+      const { getCacheStats } = await import('../cache.ts');
 
       const playlistsCount = db.select({ value: count() }).from(playlists).get()?.value || 0;
       const usersCount = db.select({ value: count() }).from(users).get()?.value || 0;
@@ -103,6 +104,7 @@ export function createSystemRouter() {
         totalUsers: usersCount,
         directStreamsCount,
         connections: Array.from(proxyStats.connections.values()),
+        cache: getCacheStats(),
       });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch stats' });
