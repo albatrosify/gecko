@@ -3042,6 +3042,137 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
   );
 }
 
+function VpnSettingsCard() {
+  const [vpnStatus, setVpnStatus] = useState<import('../types').VpnStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [rotating, setRotating] = useState(false);
+  const [rotateMessage, setRotateMessage] = useState<string | null>(null);
+
+  const fetchVpn = useCallback(async () => {
+    try {
+      const data = await api.system.vpnStatus();
+      setVpnStatus(data);
+    } catch {
+      setVpnStatus({ configured: false });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchVpn();
+  }, [fetchVpn]);
+
+  const handleRotate = async () => {
+    if (rotating) return;
+    setRotating(true);
+    setRotateMessage('Reconnecting VPN tunnel in Gluetun...');
+    try {
+      const res = await api.system.reconnectVpn();
+      setRotateMessage(res.message || 'VPN rotated successfully');
+      await fetchVpn();
+      setTimeout(() => setRotateMessage(null), 5000);
+    } catch (err: any) {
+      setRotateMessage(`Failed: ${err.message}`);
+      setTimeout(() => setRotateMessage(null), 7000);
+    } finally {
+      setRotating(false);
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-xl font-bold">VPN Connection</h3>
+          {vpnStatus?.configured ? (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              Gluetun Active
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">
+              Unmanaged
+            </span>
+          )}
+        </div>
+        <p className="text-sm text-zinc-500">Outbound VPN tunnel and egress routing</p>
+      </div>
+
+      {loading ? (
+        <div className="animate-pulse space-y-2">
+          <div className="h-4 w-32 bg-zinc-800 rounded" />
+          <div className="h-4 w-48 bg-zinc-800 rounded" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-4 space-y-2 text-xs">
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-500">Public Egress IP</span>
+              <span className="font-mono font-bold text-zinc-200">
+                {vpnStatus?.publicIp || 'Unknown'}
+              </span>
+            </div>
+            {vpnStatus?.country && (
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500">Location</span>
+                <span className="text-zinc-300">
+                  {countryToFlag(vpnStatus.country)} {[vpnStatus.city, vpnStatus.country].filter(Boolean).join(', ')}
+                </span>
+              </div>
+            )}
+            {vpnStatus?.organization && (
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-500">Provider / ASN</span>
+                <span className="text-zinc-400 truncate max-w-[200px]" title={vpnStatus.organization}>
+                  {vpnStatus.organization}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="text-zinc-500">Tunnel Status</span>
+              <span className={clsx(
+                "font-mono font-bold capitalize",
+                vpnStatus?.status === 'running' ? 'text-emerald-400' : 'text-zinc-400'
+              )}>
+                {vpnStatus?.status || (vpnStatus?.configured ? 'Active' : 'Direct / No VPN')}
+              </span>
+            </div>
+          </div>
+
+          {vpnStatus?.vpnBlockedRecent && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2 text-xs text-amber-300">
+              <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                <strong>Warning:</strong> An upstream CDN recently blocked connections on this IP (HTTP 511). Rotate the VPN to obtain a new server/IP.
+              </span>
+            </div>
+          )}
+
+          {vpnStatus?.configured ? (
+            <div className="space-y-2">
+              <button
+                onClick={handleRotate}
+                disabled={rotating}
+                className="w-full py-2.5 px-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500 hover:text-zinc-950 rounded-xl font-bold transition disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+              >
+                <RefreshCw size={14} className={rotating ? "animate-spin" : ""} />
+                <span>{rotating ? "Rotating VPN Tunnel..." : "Rotate VPN / Reconnect"}</span>
+              </button>
+              {rotateMessage && (
+                <p className="text-xs text-center text-zinc-400 animate-pulse">{rotateMessage}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-zinc-500 italic">
+              Gluetun control server not detected at GLUETUN_CONTROL_URL (port 8000). To enable VPN rotation, configure GLUETUN_API_KEY in docker-compose.prod.yml.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Settings({ user }: { user: User }) {
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
   const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
@@ -3093,6 +3224,8 @@ export function Settings({ user }: { user: User }) {
               </div>
             </div>
           </div>
+
+          <VpnSettingsCard />
 
           <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
             <div className="space-y-2">
