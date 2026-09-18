@@ -155,9 +155,10 @@ export function createProxyRouter() {
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
     const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, streamId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
     const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
-    const streamName = (streamMapping
+    const mappedName = streamMapping
       ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
-      : '') || `Stream ${streamId}`;
+      : null;
+    const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${streamId}`;
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',

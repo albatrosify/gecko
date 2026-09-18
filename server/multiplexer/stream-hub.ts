@@ -113,9 +113,10 @@ class StreamHub {
       proxyStats.intervalBytes += chunk.length;
 
       // Broadcast to all active downstream subscribers
+      const deadSubscribers: string[] = [];
       for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
         if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
-          this.removeSubscriber(channelKey, subId);
+          deadSubscribers.push(subId);
           continue;
         }
 
@@ -127,12 +128,28 @@ class StreamHub {
             conn.intervalBytes += chunk.length;
           }
           if (!ok && (sub.res.destroyed || sub.res.writableEnded)) {
-            this.removeSubscriber(channelKey, subId);
+            deadSubscribers.push(subId);
           }
         } catch (err: any) {
           log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
-          this.removeSubscriber(channelKey, subId);
+          deadSubscribers.push(subId);
         }
+      }
+
+      // If DVR handover is streaming in background, advance its bandwidth stats
+      if (channel.dvrRecordingId) {
+        const hoConn = proxyStats.connections.get(`dvr-${channel.dvrRecordingId}`);
+        if (hoConn) {
+          hoConn.bytesRead += chunk.length;
+          hoConn.intervalBytes += chunk.length;
+        }
+      }
+
+      // Safely evict dead subscribers outside the broadcast loop
+      for (const deadId of deadSubscribers) {
+        this.removeSubscriber(channelKey, deadId).catch(err => {
+          log(`[StreamHub] Error removing dead subscriber ${deadId}: ${err.message}`);
+        });
       }
 
       // If DVR recording attached, write chunk to recording file
@@ -219,12 +236,17 @@ class StreamHub {
     const cleanup = () => {
       if (cleanedUp) return;
       cleanedUp = true;
-      try { sub.res.destroy(); } catch {}
-      this.removeSubscriber(channelKey, sub.id);
+      try {
+        sub.res.destroy();
+      } catch (err: any) {
+        log(`[StreamHub] Error destroying subscriber response for ${sub.id}: ${err.message}`);
+      }
+      this.removeSubscriber(channelKey, sub.id).catch(err => {
+        log(`[StreamHub] Error removing subscriber on disconnect ${sub.id}: ${err.message}`);
+      });
     };
     if (sub.req) {
       sub.req.on('close', cleanup);
-      sub.req.on('end', cleanup);
       sub.req.socket?.on('close', cleanup);
       sub.req.socket?.on('error', cleanup);
     }
@@ -270,7 +292,6 @@ class StreamHub {
             id: handoverConnId,
             channelKey,
             sourceId: channel.sourceId,
-            host: channel.hostUrl,
             username: 'Gecko DVR',
             streamId: channel.streamId,
             streamName: channel.streamName,
@@ -285,7 +306,7 @@ class StreamHub {
             subscriberCount: 0,
             recordingId: channel.dvrRecordingId,
             isHandover: true,
-          } as any);
+          });
           proxyStats.activeStreams++;
         }
       } else {

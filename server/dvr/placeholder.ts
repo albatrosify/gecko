@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { log } from '../logger.ts';
 import { DvrSourceLock } from './connection-arbiter.ts';
 import { generateId } from '../db.ts';
@@ -33,10 +33,18 @@ export function servePlaceholderStream(
 
   const mp4Path = path.join(process.cwd(), 'data', 'placeholder.mp4');
   const tsPath = path.join(process.cwd(), 'data', 'placeholder.ts');
-  const videoPath = fs.existsSync(mp4Path) ? mp4Path : (fs.existsSync(tsPath) ? tsPath : null);
+  let videoPath: string | null = null;
+  if (fs.existsSync(mp4Path)) {
+    videoPath = mp4Path;
+  } else if (fs.existsSync(tsPath)) {
+    videoPath = tsPath;
+  }
 
   if (videoPath) {
     const connId = generateId();
+
+    // All sources (.mp4 or .ts) are normalized and remuxed to MPEG-TS via FFmpeg with real-time (-re) pacing
+    // so clients (e.g. TiviMate, ExoPlayer) receive a continuous, non-overflowing transport stream with monotonic timestamps.
     res.writeHead(200, {
       'Content-Type': 'video/mp2t',
       'Connection': 'keep-alive',
@@ -59,10 +67,10 @@ export function servePlaceholderStream(
       proxied: false,
       isPlaceholder: true,
     };
-    proxyStats.connections.set(connId, connectionInfo as any);
+    proxyStats.connections.set(connId, connectionInfo);
     proxyStats.activeStreams++;
 
-    let ffmpegProc: any = null;
+    let ffmpegProc: ChildProcessWithoutNullStreams | null = null;
     let cleanedUp = false;
 
     const cleanup = () => {
@@ -83,7 +91,6 @@ export function servePlaceholderStream(
     };
 
     req.on('close', cleanup);
-    req.on('end', cleanup);
     req.socket?.on('close', cleanup);
     req.socket?.on('error', cleanup);
     res.on('finish', cleanup);
@@ -109,7 +116,16 @@ export function servePlaceholderStream(
 
         if (!res.writableEnded && !res.destroyed) {
           try {
-            res.write(chunk);
+            const ok = res.write(chunk);
+            // Backpressure: pause ffmpeg stdout if socket write buffer is full
+            if (!ok && ffmpegProc && ffmpegProc.stdout) {
+              ffmpegProc.stdout.pause();
+              res.once('drain', () => {
+                if (!cleanedUp && ffmpegProc && ffmpegProc.stdout) {
+                  ffmpegProc.stdout.resume();
+                }
+              });
+            }
           } catch {
             cleanup();
           }
