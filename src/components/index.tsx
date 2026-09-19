@@ -5348,7 +5348,11 @@ export function PlaylistEditor({ user }: { user: User }) {
               <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
                 <div>
                   <h3 className="text-base font-bold text-zinc-100">Auto-match EPG</h3>
-                  <p className="text-[11px] text-zinc-500">Match names against selected EPG sources</p>
+                  <p className="text-[11px] text-zinc-500">
+                    {selectedCategoryIds.size > 0
+                      ? `Matching ${filteredStreams.length} channel${filteredStreams.length === 1 ? '' : 's'} in ${selectedCategoryIds.size} selected categor${selectedCategoryIds.size === 1 ? 'y' : 'ies'}`
+                      : 'Match names against selected EPG sources'}
+                  </p>
                 </div>
                 <button
                   onClick={() => setShowAutoMatchModal(false)}
@@ -5760,6 +5764,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
                   onAiCleanCategories={() => openAiCleanupCategories()}
                   onAiCleanChannels={() => openAiCleanupStreams('categories')}
+                  onAutoMatchEpg={openAutoMatchModal}
                 />
               )}
             </div>
@@ -6344,13 +6349,14 @@ interface CategoryPaneProps {
   onMoveStreamsToTop: () => void;
   onAiCleanCategories?: () => void;
   onAiCleanChannels?: () => void;
+  onAutoMatchEpg?: () => void;
 }
 
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
   onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchCategoryReset, onBatchStreamVisibility, onMoveStreamsToTop,
-  onAiCleanCategories, onAiCleanChannels,
+  onAiCleanCategories, onAiCleanChannels, onAutoMatchEpg,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
@@ -6439,7 +6445,7 @@ function CategoryPane({
     <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-88 xl:static xl:w-80 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950 shadow-2xl xl:shadow-none shrink-0">
       {/* Header */}
       <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-zinc-800 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <Folder size={14} className="text-zinc-400 shrink-0" />
           {isSingle ? (
             editingName ? (
@@ -6461,77 +6467,131 @@ function CategoryPane({
               </span>
             )
           ) : (
-            <span className="text-sm text-white font-medium">{selectedCategoryIds.size} categories</span>
+            <span className="text-sm text-white font-medium truncate">{selectedCategoryIds.size} categories selected</span>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 ml-2">
           {isSingle && (
             <>
-              <button
-                onClick={onAiCleanCategories}
-                className="p-1.5 rounded hover:bg-violet-500/10 transition-colors text-violet-400 hover:text-violet-300"
-                title="Clean this category name with AI"
-              >
-                <Sparkles size={14} />
-              </button>
+              {onAiCleanCategories && (
+                <button
+                  onClick={onAiCleanCategories}
+                  className="p-1.5 rounded hover:bg-violet-500/10 transition-colors text-violet-400 hover:text-violet-300 cursor-pointer"
+                  title="Clean this category name with AI"
+                >
+                  <Sparkles size={14} />
+                </button>
+              )}
               {mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
                 <button
                   onClick={handleResetSingleCategory}
-                  className="px-2 py-1 text-xs bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors flex items-center gap-1"
-                  title="Reset category name to upstream default"
+                  className="p-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors cursor-pointer"
+                  title={`Reset category name to upstream default ("${category?.category_name || category?.name}")`}
                 >
-                  <RefreshCw size={12} />
-                  <span>Reset</span>
+                  <RefreshCw size={13} />
                 </button>
               )}
               <button
                 onClick={handleToggleVisible}
-                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isHidden ? 'text-zinc-600' : 'text-zinc-300'}`}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${isHidden ? 'text-zinc-600' : 'text-zinc-300'}`}
                 title={isHidden ? 'Show category' : 'Hide category'}
               >
                 {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
               <button
                 onClick={handleToggleSync}
-                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
+                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
                 title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
               >
                 <Activity size={14} />
               </button>
             </>
           )}
-          {!isSingle && (
-            <>
-              <button onClick={() => onBatchVisibility(false)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Show all</button>
-              <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
-              <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
-              <button
-                onClick={onAiCleanCategories}
-                className="px-2 py-1 text-xs bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded transition-colors flex items-center gap-1"
-                title={`Clean ${selectedCategoryIds.size} category names with AI`}
-              >
-                <Sparkles size={12} />
-                <span>AI</span>
-              </button>
-              <button
-                onClick={onBatchCategoryReset}
-                className="px-2 py-1 text-xs bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded transition-colors flex items-center gap-1"
-                title={`Reset ${selectedCategoryIds.size} selected categories to default (restores original upstream names)`}
-              >
-                <RefreshCw size={12} />
-                <span>Reset</span>
-              </button>
-            </>
-          )}
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1" title="Close">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close">
             <X size={14} />
           </button>
         </div>
       </div>
 
-      {/* Batch actions for streams in selected categories */}
+      {/* Body */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-3 space-y-3">
+          {/* Category-level batch controls when multiple categories are selected */}
+          {!isSingle && (
+            <div className="space-y-2 border-b border-zinc-800/80 pb-3">
+              <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center justify-between">
+                <span>Category Actions ({selectedCategoryIds.size})</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => onBatchVisibility(false)}
+                  className="flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all cursor-pointer"
+                  title="Show all selected categories"
+                >
+                  <Eye size={12} />
+                  Show all
+                </button>
+                <button
+                  onClick={() => onBatchVisibility(true)}
+                  className="flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-all cursor-pointer"
+                  title="Hide all selected categories"
+                >
+                  <EyeOff size={12} />
+                  Hide all
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={onMoveToTop}
+                  className="flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-bold hover:bg-blue-500/20 transition-all cursor-pointer"
+                  title="Move selected categories to top"
+                >
+                  <ArrowLeft size={12} className="rotate-90" />
+                  Move to top
+                </button>
+                {onBatchCategoryReset && (
+                  <button
+                    onClick={onBatchCategoryReset}
+                    className="flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-lg text-xs font-bold hover:bg-purple-500/20 transition-all cursor-pointer"
+                    title={`Reset ${selectedCategoryIds.size} selected categories to original upstream names`}
+                  >
+                    <RefreshCw size={12} />
+                    Reset names
+                  </button>
+                )}
+              </div>
+              {onAiCleanCategories && (
+                <button
+                  onClick={onAiCleanCategories}
+                  className="w-full flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg text-xs font-bold hover:bg-violet-500/20 transition-all cursor-pointer"
+                  title={`Clean ${selectedCategoryIds.size} category names with AI`}
+                >
+                  <Sparkles size={12} />
+                  AI Clean {selectedCategoryIds.size} categories
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Auto-match EPG section for selected category / categories */}
+          {activeTab === 'live' && onAutoMatchEpg && (
+            <div className="space-y-2 border-b border-zinc-800/80 pb-3">
+              <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center justify-between">
+                <span className="flex items-center gap-1.5"><Tv size={11} /> Auto-match EPG</span>
+                <span className="text-[10px] text-zinc-600 font-normal font-mono">{scopedStreamIds.length} channels</span>
+              </div>
+              <button
+                onClick={onAutoMatchEpg}
+                disabled={scopedStreamIds.length === 0}
+                className="w-full flex justify-center items-center gap-1.5 px-3 py-2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                title={`Auto-match EPG for ${scopedStreamIds.length} channels in selected categor${selectedCategoryIds.size === 1 ? 'y' : 'ies'}`}
+              >
+                <Tv size={13} />
+                Match EPG for {isSingle ? 'Category' : `${selectedCategoryIds.size} Categories`}
+              </button>
+            </div>
+          )}
+
           <BatchActionsSection
             streamIds={scopedStreamIds}
             playlistId={playlistId}
