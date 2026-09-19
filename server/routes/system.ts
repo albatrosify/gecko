@@ -6,6 +6,7 @@ import { getDb } from "../db.ts";
 import { LOG_PATH } from "../logger.ts";
 import { proxyStats } from "../proxy-stats.ts";
 import { invalidateQualityFormatCache } from "../quality-scan.ts";
+import { DEFAULT_LLM_SYSTEM_PROMPT } from "../llm.ts";
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 
@@ -133,6 +134,11 @@ export function createSystemRouter() {
       telegramChatId: extra.telegramChatId ?? '',
       telegramEnabled: Boolean(extra.telegramEnabled),
       telegramKeywords: Array.isArray(extra.telegramKeywords) ? extra.telegramKeywords : [],
+      llmEnabled: Boolean(extra.llmEnabled),
+      llmUrl: extra.llmUrl ?? '',
+      llmApiKey: extra.llmApiKey ?? '',
+      llmModel: extra.llmModel ?? '',
+      llmSystemPrompt: extra.llmSystemPrompt ?? DEFAULT_LLM_SYSTEM_PROMPT,
     });
   });
 
@@ -143,7 +149,7 @@ export function createSystemRouter() {
     const db = getDb();
     const { settings } = await import('../schema.ts');
     const { eq } = await import('drizzle-orm');
-    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords } = req.body;
+    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords, llmEnabled, llmUrl, llmApiKey, llmModel, llmSystemPrompt } = req.body;
 
     if (qualityLabelFormat !== undefined && (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200)) {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
@@ -162,6 +168,21 @@ export function createSystemRouter() {
         return res.status(400).json({ error: 'telegramKeywords must be an array of strings (max 200 entries, each ≤ 200 characters)' });
       }
     }
+    if (llmEnabled !== undefined && typeof llmEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'llmEnabled must be a boolean' });
+    }
+    if (llmUrl !== undefined && (typeof llmUrl !== 'string' || llmUrl.length > 1000)) {
+      return res.status(400).json({ error: 'llmUrl must be a string ≤ 1000 characters' });
+    }
+    if (llmApiKey !== undefined && (typeof llmApiKey !== 'string' || llmApiKey.length > 1000)) {
+      return res.status(400).json({ error: 'llmApiKey must be a string ≤ 1000 characters' });
+    }
+    if (llmModel !== undefined && (typeof llmModel !== 'string' || llmModel.length > 200)) {
+      return res.status(400).json({ error: 'llmModel must be a string ≤ 200 characters' });
+    }
+    if (llmSystemPrompt !== undefined && (typeof llmSystemPrompt !== 'string' || llmSystemPrompt.length > 10000)) {
+      return res.status(400).json({ error: 'llmSystemPrompt must be a string ≤ 10000 characters' });
+    }
 
     const currentSettings = db.select().from(settings).where(eq(settings.id, 'global')).get();
     const currentExtra = (currentSettings?.extra as any) || {};
@@ -172,6 +193,11 @@ export function createSystemRouter() {
       ...(telegramChatId !== undefined ? { telegramChatId: telegramChatId.trim() } : {}),
       ...(telegramEnabled !== undefined ? { telegramEnabled } : {}),
       ...(telegramKeywords !== undefined ? { telegramKeywords: telegramKeywords.map((k: string) => k.trim()).filter(Boolean) } : {}),
+      ...(llmEnabled !== undefined ? { llmEnabled } : {}),
+      ...(llmUrl !== undefined ? { llmUrl: llmUrl.trim() } : {}),
+      ...(llmApiKey !== undefined ? { llmApiKey: llmApiKey.trim() } : {}),
+      ...(llmModel !== undefined ? { llmModel: llmModel.trim() } : {}),
+      ...(llmSystemPrompt !== undefined ? { llmSystemPrompt } : {}),
     };
 
     db.insert(settings)

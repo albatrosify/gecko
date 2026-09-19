@@ -90,7 +90,8 @@ import {
   Globe,
   Network,
   Send,
-  Bell
+  Bell,
+  Sparkles
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -105,6 +106,30 @@ import { AutoSizer } from 'react-virtualized-auto-sizer';
 import { computeDisplayName, resolutionToLabel } from '../quality';
 import { WebPlayer, VlcIcon } from './WebPlayer';
 import { downloadStreamM3u } from '../playerUtils';
+
+
+const DEFAULT_LLM_SYSTEM_PROMPT = `You are a channel and category name cleaner for an IPTV playlist.
+
+Given a list of names, remove noise so only the essential name remains.
+
+REMOVE these:
+- Country/language markers: "|DE|", "|EN|", "|AT|", "|CH|", "DE:", "EN:", "[DE]", etc.
+- Quality/resolution tags: "HD", "FHD", "UHD", "4K", "8K", "SD", "HEVC", "H.265", "ᵁᴴᴰ", "ᵀᴹ", "[720p]", "[1080p]", "FHD+", etc.
+- Bracketed or parenthetical notes: "(DURING GAMES ONLY)", "(EN)", "(A)", "[OFFLINE]", etc.
+- Leading and trailing whitespace.
+
+KEEP exactly as-is (do NOT translate, rename, or re-capitalize):
+- The core station/channel name.
+- All channel numbers (e.g. "Sport 6", "Bundesliga 2", "Movie 24").
+
+Examples:
+"|DE| PROSIEBEN FUN ᵁᴴᴰ" -> "PROSIEBEN FUN"
+"|DE| Sky Sport Austria 6 ᵁᴴᴰ (DURING GAMES ONLY)" -> "Sky Sport Austria 6"
+
+If a name is already clean, return it unchanged.
+
+Respond with ONLY a JSON object in this exact format and nothing else:
+{"results":[{"id":"<id>","name":"<cleaned name>"}]}`;
 
 
 function cn(...inputs: ClassValue[]) {
@@ -129,7 +154,7 @@ function ProxyBandwidthCard() {
   }, []);
 
   if (!stats) return (
-    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-3xl p-6 flex items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-950">
+    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-4 flex items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-950">
       <div className="text-zinc-500 animate-pulse font-bold tracking-widest text-[10px] uppercase italic">Init Bandwidth Monitor...</div>
     </div>
   );
@@ -138,64 +163,69 @@ function ProxyBandwidthCard() {
   const totalGB = (stats.totalBytes / (1024 * 1024 * 1024)).toFixed(2);
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-wrap gap-8 items-center bg-gradient-to-br from-zinc-900 to-zinc-950">
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-emerald-500/10 rounded-2xl text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_-5px] shadow-emerald-500/30">
-          <Activity size={24} />
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-wrap gap-6 items-center bg-gradient-to-br from-zinc-900 to-zinc-950">
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_-5px] shadow-emerald-500/30">
+          <Activity size={18} />
         </div>
         <div>
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Proxy Speed</div>
-          <div className="text-2xl font-black text-zinc-100 tabular-nums">{mbps} <span className="text-[10px] font-medium text-emerald-500 uppercase tracking-widest">Mbps</span></div>
+          <div className="text-lg font-bold text-zinc-100 tabular-nums">{mbps} <span className="text-[9px] font-medium text-emerald-500 uppercase tracking-widest">Mbps</span></div>
         </div>
       </div>
 
-      <div className="h-10 w-px bg-zinc-800 hidden sm:block"></div>
+      <div className="h-8 w-px bg-zinc-800 hidden sm:block"></div>
 
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-500 border border-blue-500/20 shadow-[0_0_15px_-5px] shadow-blue-500/30">
-          <Wifi size={24} />
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500 border border-blue-500/20 shadow-[0_0_15px_-5px] shadow-blue-500/30">
+          <Wifi size={18} />
         </div>
         <div>
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Active Streams</div>
-          <div className="text-2xl font-black text-zinc-100 tabular-nums">{stats.activeStreams}</div>
+          <div className="text-lg font-bold text-zinc-100 tabular-nums">{stats.activeStreams}</div>
         </div>
       </div>
 
-      <div className="h-10 w-px bg-zinc-800 hidden lg:block"></div>
+      <div className="h-8 w-px bg-zinc-800 hidden lg:block"></div>
 
-      <div className="flex items-center gap-4">
-        <div className="p-3 bg-purple-500/10 rounded-2xl text-purple-500 border border-purple-500/20 shadow-[0_0_15px_-5px] shadow-purple-500/30">
-          <Database size={24} />
+      <div className="flex items-center gap-3">
+        <div className="p-2 bg-purple-500/10 rounded-xl text-purple-500 border border-purple-500/20 shadow-[0_0_15px_-5px] shadow-purple-500/30">
+          <Database size={18} />
         </div>
         <div>
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Data Proxied</div>
-          <div className="text-2xl font-black text-zinc-100 tabular-nums">{totalGB} <span className="text-[10px] font-medium text-purple-500 uppercase tracking-widest">GB</span></div>
+          <div className="text-lg font-bold text-zinc-100 tabular-nums">{totalGB} <span className="text-[9px] font-medium text-purple-500 uppercase tracking-widest">GB</span></div>
         </div>
       </div>
     </div>
   );
 }
 
-function SimpleSparkline({ data, width, height }: { data: number[], width: number, height: number }) {
+function SimpleSparkline({ data, width = 600, height = 140 }: { data: number[], width?: number, height?: number }) {
   if (data.length < 2) return null;
   const max = Math.max(...data, 1);
+  const w = width || 600;
+  const h = height || 140;
   const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * width;
-    const y = height - (d / max) * height;
-    return `${x},${y}`;
+    const x = (i / (data.length - 1)) * w;
+    const y = h - (d / max) * (h - 12) - 6;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
 
   return (
-    <svg width={width} height={height} className="overflow-visible">
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-      />
-    </svg>
+    <div className="w-full h-full min-h-[120px] max-h-[170px] overflow-hidden">
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full overflow-hidden">
+        <polyline
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          vectorEffect="non-scaling-stroke"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points}
+        />
+      </svg>
+    </div>
   );
 }
 
@@ -477,8 +507,8 @@ export function Dashboard() {
               <div className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Current</div>
             </div>
           </div>
-          <div className="flex-1 min-h-[170px] flex items-end text-emerald-500/50">
-            <SimpleSparkline data={historyMbps} width={600} height={170} />
+          <div className="flex-1 min-h-[140px] w-full flex items-end text-emerald-500/50 overflow-hidden">
+            <SimpleSparkline data={historyMbps} />
           </div>
         </div>
 
@@ -728,58 +758,71 @@ export function PlaylistManager({ user }: { user: User }) {
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-md w-full space-y-3.5 shadow-2xl"
           >
-            <h3 className="text-xl font-bold">New Playlist</h3>
-            <div className="space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">New Playlist</h3>
+                <p className="text-[11px] text-zinc-500">Configure proxy credentials and stream mode</p>
+              </div>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
               <input 
                 placeholder="Playlist Name" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                 value={newPlaylist.name}
                 onChange={e => setNewPlaylist({ ...newPlaylist, name: e.target.value })}
               />
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2.5">
                 <input 
                   placeholder="API Username" 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                   value={newPlaylist.username}
                   onChange={e => setNewPlaylist({ ...newPlaylist, username: e.target.value })}
                 />
                 <input 
                   placeholder="API Password" 
                   type="password"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                   value={newPlaylist.password}
                   onChange={e => setNewPlaylist({ ...newPlaylist, password: e.target.value })}
                 />
               </div>
-              <label className="flex items-center gap-3 p-4 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+              <label className="flex items-center gap-2.5 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                 <input 
                   type="checkbox"
-                  className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-900"
+                  className="w-4 h-4 rounded accent-emerald-500 cursor-pointer"
                   checked={newPlaylist.directStreams}
                   onChange={e => setNewPlaylist({ ...newPlaylist, directStreams: e.target.checked })}
                 />
-                <div className="flex-1">
-                  <div className="font-bold text-sm">Direct Streams</div>
-                  <div className="text-[10px] text-zinc-500 leading-tight mt-1">
-                    Return the original source stream URLs instead of proxying through this server. Bypasses the proxy completely.
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-xs text-zinc-200">Direct Streams</div>
+                  <div className="text-[10px] text-zinc-500 leading-tight">
+                    Return source URLs directly, bypassing the local proxy.
                   </div>
                 </div>
               </label>
             </div>
-            <div className="flex gap-3 pt-2">
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800/80">
               <button 
                 onClick={() => setShowAddModal(false)}
-                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
+                className="px-3 py-1.5 bg-zinc-800 rounded-lg font-semibold hover:bg-zinc-700 transition-all text-xs text-zinc-300 cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleAdd}
-                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg font-bold hover:bg-emerald-400 transition-all text-xs shadow-sm cursor-pointer"
               >
                 Create
               </button>
@@ -791,82 +834,91 @@ export function PlaylistManager({ user }: { user: User }) {
       {showCloneModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-md w-full space-y-3.5 shadow-2xl"
           >
-            <div>
-              <h3 className="text-xl font-bold">Duplicate Playlist</h3>
-              <p className="text-xs text-zinc-500 mt-0.5">Copies all categories and mappings. Enter new credentials below.</p>
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Duplicate Playlist</h3>
+                <p className="text-[11px] text-zinc-500">Copies categories & mappings with new credentials</p>
+              </div>
+              <button
+                onClick={() => setShowCloneModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
             </div>
             
-            <div className="space-y-6">
-              <div className="space-y-4">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">New Playlist Details</label>
+            <div className="space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar pr-1">
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">New Playlist Name</label>
                 <input 
                   placeholder="New Playlist Name" 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                   value={cloneData.name}
                   onChange={e => setCloneData({ ...cloneData, name: e.target.value })}
                 />
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 space-y-4">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Proxy API Credentials</label>
-                  <span className="text-[9px] text-zinc-600 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">End-user Login</span>
+                  <span className="text-[9px] text-zinc-500 bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-800">End-user</span>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-2.5">
                   <input 
                     placeholder="Proxy Username" 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={cloneData.username}
                     onChange={e => setCloneData({ ...cloneData, username: e.target.value })}
                   />
                   <input 
                     placeholder="Proxy Password" 
                     type="password"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={cloneData.password}
                     onChange={e => setCloneData({ ...cloneData, password: e.target.value })}
                   />
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 space-y-4">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] uppercase font-bold text-emerald-500/70 tracking-wider">Upstream Provider Credentials</label>
-                  <span className="text-[9px] text-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 text-emerald-500/50 italic">Optional Override</span>
+                  <label className="text-[10px] uppercase font-bold text-emerald-500/80 tracking-wider">Upstream Provider Credentials</label>
+                  <span className="text-[9px] text-emerald-500/60 bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/15 italic">Optional</span>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-2.5">
                   <input 
                     placeholder="Provider Username" 
-                    className="w-full bg-emerald-500/5 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-emerald-500/5 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={cloneData.sourceUsername}
                     onChange={e => setCloneData({ ...cloneData, sourceUsername: e.target.value })}
                   />
                   <input 
                     placeholder="Provider Password" 
                     type="password"
-                    className="w-full bg-emerald-500/5 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-emerald-500/5 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={cloneData.sourcePassword}
                     onChange={e => setCloneData({ ...cloneData, sourcePassword: e.target.value })}
                   />
                 </div>
-                <p className="text-[10px] text-zinc-600 italic">Leave Provider empty to use original credentials.</p>
+                <p className="text-[10px] text-zinc-500 italic">Leave Provider empty to use original credentials.</p>
               </div>
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800/80">
               <button 
                 onClick={() => setShowCloneModal(false)}
-                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
+                className="px-3 py-1.5 bg-zinc-800 rounded-lg font-semibold hover:bg-zinc-700 transition-all text-xs text-zinc-300 cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleClone}
-                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg font-bold hover:bg-emerald-400 transition-all text-xs shadow-sm cursor-pointer"
               >
                 Duplicate
               </button>
@@ -878,53 +930,66 @@ export function PlaylistManager({ user }: { user: User }) {
       {showEditModal && editingPlaylist && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full flex flex-col max-h-[90vh]"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-md w-full flex flex-col max-h-[88vh] space-y-3 shadow-2xl"
           >
-            <h3 className="text-xl font-bold shrink-0 mb-4">Edit Playlist Settings</h3>
-            <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-2">
-              <div className="space-y-2">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80 shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Edit Playlist Settings</h3>
+                <p className="text-[11px] text-zinc-500">Credentials, EPG sources, and format options</p>
+              </div>
+              <button
+                onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 flex-1 overflow-y-auto custom-scrollbar pr-1.5">
+              <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Playlist Name</label>
                 <input 
                   placeholder="name" 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                   value={editData.name}
                   onChange={e => setEditData({ ...editData, name: e.target.value })}
                 />
               </div>
-              <div className="pt-4 border-t border-zinc-800 space-y-4">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Proxy API Credentials</label>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-2.5">
                   <input
                     placeholder="API Username"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={editData.username}
                     onChange={e => setEditData({ ...editData, username: e.target.value })}
                   />
                   <input
                     placeholder="API Password"
                     type="text"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                     value={editData.password}
                     onChange={e => setEditData({ ...editData, password: e.target.value })}
                   />
                 </div>
               </div>
-              <div className="pt-4 border-t border-zinc-800 space-y-3">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <div>
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Sources</label>
-                  <p className="text-[10px] text-zinc-600 mt-1">Used for the <code className="text-zinc-500">/xmltv.php</code> endpoint. If none selected, falls back to the upstream provider's EPG.</p>
+                  <p className="text-[10px] text-zinc-500">Used for <code className="text-zinc-400">/xmltv.php</code>. Falls back to upstream EPG if empty.</p>
                 </div>
                 {availableEpgs.length === 0 ? (
-                  <p className="text-xs text-zinc-600 italic">No EPG sources configured. Add them in the EPG Manager.</p>
+                  <p className="text-xs text-zinc-600 italic">No EPG sources configured.</p>
                 ) : (
-                  <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto custom-scrollbar">
                     {availableEpgs.map(epg => (
-                      <label key={epg.id} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+                      <label key={epg.id} className="flex items-center gap-2.5 p-2 px-2.5 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                         <input
                           type="checkbox"
-                          className="w-4 h-4 rounded border-zinc-700 text-emerald-500 focus:ring-emerald-500 bg-zinc-900"
+                          className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                           checked={editData.epgIds.includes(epg.id)}
                           onChange={e => {
                             const ids = e.target.checked
@@ -934,29 +999,28 @@ export function PlaylistManager({ user }: { user: User }) {
                           }}
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{epg.name}</div>
-                          <div className="text-[10px] text-zinc-600 truncate">{epg.url}</div>
+                          <div className="text-xs font-medium text-zinc-200 truncate">{epg.name}</div>
+                          <div className="text-[10px] text-zinc-500 truncate">{epg.url}</div>
                         </div>
                       </label>
                     ))}
                   </div>
                 )}
               </div>
-              <div className="pt-4 border-t border-zinc-800 space-y-3">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Upstream Source Overrides</label>
-                <p className="text-[10px] text-zinc-600 mt-1">Optionally specify different credentials to authenticate with the upstream sources.</p>
-                <div className="space-y-4 max-h-60 overflow-y-auto custom-scrollbar">
+                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
                   {editingPlaylist.sourceIds.map(sourceId => {
                     const source = sources.find(s => s.id === sourceId);
                     if (!source) return null;
                     const override = editData.sourceOverrides[sourceId] || { username: '', password: '' };
                     return (
-                      <div key={sourceId} className="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
-                        <div className="text-xs font-bold text-zinc-400">{source.name}</div>
+                      <div key={sourceId} className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-1.5">
+                        <div className="text-[11px] font-bold text-zinc-400">{source.name}</div>
                         <div className="grid grid-cols-2 gap-2">
                           <input
                             placeholder="Override Username"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                             value={override.username || ''}
                             onChange={e => setEditData({
                               ...editData,
@@ -968,7 +1032,8 @@ export function PlaylistManager({ user }: { user: User }) {
                           />
                           <input
                             placeholder="Override Password"
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-xs focus:border-emerald-500 outline-none transition-all"
+                            type="password"
+                            className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                             value={override.password || ''}
                             onChange={e => setEditData({
                               ...editData,
@@ -984,34 +1049,36 @@ export function PlaylistManager({ user }: { user: User }) {
                   })}
                 </div>
               </div>
-              <div className="pt-4 border-t border-zinc-800 space-y-3">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Quality Label Format</label>
                 <QualityPresetButtons onSelect={t => setEditData({ ...editData, qualityLabelFormat: t })} />
                 <textarea
                   rows={2}
                   placeholder={`${QUALITY_PRESETS[0].template} — leave empty to use global default`}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all resize-none font-mono text-sm"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 focus:border-emerald-500 outline-none transition-all resize-none font-mono text-xs text-zinc-200"
                   value={editData.qualityLabelFormat ?? ''}
                   onChange={e => setEditData({ ...editData, qualityLabelFormat: e.target.value })}
                 />
-                <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
-                  Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
-                  Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
-                  More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
-                  Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
-                </p>
+                <details className="group text-[10px] text-zinc-500 cursor-pointer">
+                  <summary className="hover:text-zinc-400 select-none font-medium">View format variables cheatsheet</summary>
+                  <div className="mt-1.5 p-2 bg-zinc-950 rounded-lg border border-zinc-800/80 space-y-1 font-mono text-[9px] leading-relaxed">
+                    <div>Simple: {'{label}'} · {'{res}'} · {'{codec}'} · {'{hdr}'} · {'{audio}'} · {'{fps}'}</div>
+                    <div>Smart: {'{surround}'} · {'{premium}'} · {'{hdr}'}</div>
+                    <div>Conditional: {'{{var}::exists["yes"||"no"]}'}</div>
+                  </div>
+                </details>
               </div>
             </div>
-            <div className="flex gap-3 shrink-0 mt-4 pt-2 border-t border-zinc-800/60">
+            <div className="flex justify-end gap-2 shrink-0 pt-2 border-t border-zinc-800/80">
               <button 
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
-                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
+                className="px-3 py-1.5 bg-zinc-800 rounded-lg font-semibold hover:bg-zinc-700 transition-all text-xs text-zinc-300 cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleUpdate}
-                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg font-bold hover:bg-emerald-400 transition-all text-xs shadow-sm cursor-pointer"
               >
                 Update
               </button>
@@ -1723,16 +1790,16 @@ export function SourceManager({ user }: { user: User }) {
         {sources.map((source) => {
           const expiryInfo = formatExpiryDate(source.expiryDate);
           return (
-            <div key={source.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4">
-              <div className="space-y-3.5">
+            <div key={source.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between gap-3">
+              <div className="space-y-3">
                 <div className="flex justify-between items-start gap-2">
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <div className="p-2 bg-zinc-800/80 rounded-xl text-emerald-500 shrink-0">
-                      <Database size={18} />
+                      <Database size={17} />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold text-zinc-100 truncate">{source.name}</h3>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="font-bold text-sm text-zinc-100 truncate">{source.name}</h3>
                         {source.autoSyncEnabled && (
                           <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
                             <RefreshCw size={8} />
@@ -1765,7 +1832,7 @@ export function SourceManager({ user }: { user: User }) {
                           source.lastMonitorStatus === 'external_activity' ? (
                             <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
                               <Radio size={8} className="animate-pulse text-red-400" />
-                              External In Use ({source.lastActiveCons || 0})
+                              External ({source.lastActiveCons || 0})
                             </span>
                           ) : source.lastMonitorStatus === 'error' ? (
                             <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
@@ -1780,12 +1847,12 @@ export function SourceManager({ user }: { user: User }) {
                           ) : (
                             <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
                               <Radio size={8} />
-                              Monitored (0 in use)
+                              Monitored (0)
                             </span>
                           )
                         )}
                       </div>
-                      <p className="text-xs text-zinc-500 font-mono">{source.url}</p>
+                      <p className="text-xs text-zinc-500 font-mono truncate max-w-sm sm:max-w-md">{source.url}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-0.5 shrink-0">
@@ -1795,7 +1862,7 @@ export function SourceManager({ user }: { user: User }) {
                         className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-purple-400 transition-colors cursor-pointer"
                         title="View Connection Timeline & Usage"
                       >
-                        <Radio size={15} />
+                        <Radio size={14} />
                       </button>
                     )}
                     <button 
@@ -1803,7 +1870,7 @@ export function SourceManager({ user }: { user: User }) {
                       className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-blue-400 transition-colors cursor-pointer"
                       title="View Sync History"
                     >
-                      <History size={15} />
+                      <History size={14} />
                     </button>
                     <button 
                       onClick={() => {
@@ -1813,22 +1880,22 @@ export function SourceManager({ user }: { user: User }) {
                       className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
                       title="Edit Source"
                     >
-                      <Edit3 size={15} />
+                      <Edit3 size={14} />
                     </button>
                     <button 
                       onClick={() => handleDelete(source.id)}
                       className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
                       title="Delete Source"
                     >
-                      <Trash2 size={15} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-zinc-950/60 rounded-xl p-3 border border-zinc-800/60">
-                  <div className="space-y-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-zinc-950/60 rounded-xl p-2.5 border border-zinc-800/60">
+                  <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
-                      <Calendar size={12} className="text-zinc-500" />
+                      <Calendar size={11} className="text-zinc-500" />
                       <span>Expiry Date</span>
                     </div>
                     <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -1860,16 +1927,16 @@ export function SourceManager({ user }: { user: User }) {
                     )}
                     {source.concurrencyGuard !== false && (
                       <div className="pt-0.5">
-                        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full" title="Stream-Multiplexing & 1-Verbindungs-Schutz aktiv">
+                        <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.2 rounded-md" title="Stream-Multiplexing & 1-Verbindungs-Schutz aktiv">
                           🛡️ Concurrency Guard
                         </span>
                       </div>
                     )}
                   </div>
 
-                  <div className="space-y-1">
+                  <div className="space-y-0.5">
                     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
-                      <Clock size={12} className="text-zinc-500" />
+                      <Clock size={11} className="text-zinc-500" />
                       <span>Last Synced</span>
                     </div>
                     <p className="text-xs text-zinc-400 font-medium italic">
@@ -1888,12 +1955,12 @@ export function SourceManager({ user }: { user: User }) {
                 </div>
 
                 {source.monitorEnabled && (
-                  <div className="flex items-center justify-between px-3.5 py-2 bg-zinc-950/60 rounded-2xl border border-zinc-800/80 text-xs">
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-950/60 rounded-xl border border-zinc-800/80 text-xs">
                     <div className="flex items-center gap-2">
-                      <Radio size={12} className={source.lastMonitorStatus === 'external_activity' ? 'text-red-400 animate-pulse' : (source.lastActiveCons || 0) > 0 ? 'text-blue-400' : 'text-emerald-400'} />
-                      <span className="text-[11px] text-zinc-400 font-medium">Monitor:</span>
+                      <Radio size={11} className={source.lastMonitorStatus === 'external_activity' ? 'text-red-400 animate-pulse' : (source.lastActiveCons || 0) > 0 ? 'text-blue-400' : 'text-emerald-400'} />
+                      <span className="text-[10px] text-zinc-400 font-medium">Monitor:</span>
                       <span className={clsx(
-                        "text-[11px] font-bold",
+                        "text-[10px] font-bold",
                         source.lastMonitorStatus === 'external_activity' ? "text-red-400 font-black" :
                         (source.lastActiveCons || 0) > 0 ? "text-blue-400" :
                         "text-emerald-400"
@@ -1907,30 +1974,30 @@ export function SourceManager({ user }: { user: User }) {
                       onClick={() => handleShowConnections(source)}
                       className="text-[10px] font-bold text-purple-400 hover:text-purple-300 transition-colors flex items-center gap-0.5"
                     >
-                      Timeline <ChevronRight size={12} />
+                      Timeline <ChevronRight size={11} />
                     </button>
                   </div>
                 )}
 
                 {source.type === 'xtream' && Array.isArray(source.hosts) && source.hosts.length > 0 && (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
-                        <Server size={12} className="text-zinc-500" />
+                        <Server size={11} className="text-zinc-500" />
                         <span>Hosts</span>
-                        <span className="text-[9px] px-1.5 py-0.5 bg-zinc-800 text-zinc-400 rounded-full font-bold">
+                        <span className="text-[9px] px-1.5 py-0.2 bg-zinc-800 text-zinc-400 rounded-full font-bold">
                           {source.hosts.length}
                         </span>
                       </div>
 
                       <div className="flex items-center gap-1.5 text-[10px]">
-                        <span className="text-zinc-500">Benchmark Stream:</span>
+                        <span className="text-zinc-500">Benchmark:</span>
                         {source.benchmarkStreamName ? (
                           <span className="inline-flex items-center gap-1 font-semibold text-zinc-300">
                             {/\b(4k|uhd|2160p)\b/i.test(source.benchmarkStreamName) && (
                               <span className="px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[8px] font-black uppercase tracking-tighter">4K</span>
                             )}
-                            <span className="truncate max-w-[200px]" title={source.benchmarkStreamName}>{source.benchmarkStreamName}</span>
+                            <span className="truncate max-w-[160px]" title={source.benchmarkStreamName}>{source.benchmarkStreamName}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-zinc-400 italic">
@@ -1951,11 +2018,11 @@ export function SourceManager({ user }: { user: User }) {
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="border-b border-zinc-800/80 bg-zinc-900/50 text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">
-                            <th className="py-2.5 px-3">Endpoint / Host</th>
-                            <th className="py-2.5 px-2.5 w-32">Network</th>
-                            <th className="py-2.5 px-2.5 text-right w-24">Latency</th>
-                            <th className="py-2.5 px-2.5 text-right w-28">Speed</th>
-                            <th className="py-2.5 px-3 text-right w-24">Reliability</th>
+                            <th className="py-1.5 px-2.5">Endpoint / Host</th>
+                            <th className="py-1.5 px-2 w-28">Network</th>
+                            <th className="py-1.5 px-2 text-right w-20">Latency</th>
+                            <th className="py-1.5 px-2 text-right w-24">Speed</th>
+                            <th className="py-1.5 px-2.5 text-right w-20">Reliability</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-800/40 text-xs font-mono">
@@ -1974,16 +2041,16 @@ export function SourceManager({ user }: { user: User }) {
                                   isActive && "bg-emerald-500/[0.04]"
                                 )}
                               >
-                                <td className="py-2 px-3">
+                                <td className="py-1.5 px-2.5">
                                   <div className="flex items-center gap-2 min-w-0">
                                     {isActive && (
-                                      <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans">
+                                      <span className="px-1.5 py-0.2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans">
                                         Active
                                       </span>
                                     )}
                                     {(h.vpnBlocked || h.lastError?.includes('511')) && (
                                       <span
-                                        className="px-1.5 py-0.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans flex items-center gap-1"
+                                        className="px-1.5 py-0.2 bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded text-[8px] font-black uppercase tracking-tighter shrink-0 font-sans flex items-center gap-1"
                                         title={h.lastError || "Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Rotate VPN to switch server/IP."}
                                       >
                                         <AlertTriangle size={9} />
@@ -2000,33 +2067,33 @@ export function SourceManager({ user }: { user: User }) {
                                     )}
                                   </div>
                                 </td>
-                                <td className="py-2 px-2.5 whitespace-nowrap font-sans">
+                                <td className="py-1.5 px-2 whitespace-nowrap font-sans">
                                   {isCdn ? (
                                     <span
                                       className={clsx(
-                                        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                                        "inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold border",
                                         cdnName.toLowerCase().includes('cloudflare')
                                           ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
                                           : "bg-purple-500/10 text-purple-400 border-purple-500/30"
                                       )}
                                       title={h.resolvedIp ? `Resolved: ${h.resolvedIp}` : undefined}
                                     >
-                                      <Cloud size={10} className="shrink-0" />
+                                      <Cloud size={9} className="shrink-0" />
                                       <span>{cdnName}</span>
                                     </span>
                                   ) : (
                                     <span
-                                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
                                       title={h.resolvedIp ? `IP: ${h.resolvedIp}` : undefined}
                                     >
-                                      <Network size={10} className="shrink-0" />
+                                      <Network size={9} className="shrink-0" />
                                       <span>Direct</span>
                                     </span>
                                   )}
                                 </td>
-                                <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                                <td className="py-1.5 px-2 text-right whitespace-nowrap">
                                   {h.authOk === false ? (
-                                    <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[9px] font-black uppercase tracking-tighter font-sans">
+                                    <span className="px-1.5 py-0.2 bg-red-500/10 text-red-400 border border-red-500/20 rounded text-[9px] font-black uppercase tracking-tighter font-sans">
                                       Down
                                     </span>
                                   ) : h.latencyMs != null ? (
@@ -2041,23 +2108,23 @@ export function SourceManager({ user }: { user: User }) {
                                     <span className="text-zinc-600 text-xs">—</span>
                                   )}
                                 </td>
-                                <td className="py-2 px-2.5 text-right whitespace-nowrap">
-                                  {h.throughputMbps != null ? (
-                                    <span className="text-blue-400 font-semibold text-xs">
-                                      {h.throughputMbps.toFixed(1)} <span className="text-[10px] text-blue-400/70 font-normal">Mbps</span>
+                                <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                                  {h.speedMbps != null ? (
+                                    <span className="text-zinc-200 font-medium text-xs">
+                                      {h.speedMbps.toFixed(1)} <span className="text-[10px] text-zinc-500">Mbps</span>
                                     </span>
                                   ) : (
                                     <span className="text-zinc-600 text-xs">—</span>
                                   )}
                                 </td>
-                                <td className="py-2 px-3 text-right whitespace-nowrap">
-                                  {reliability !== null ? (
+                                <td className="py-1.5 px-2.5 text-right whitespace-nowrap">
+                                  {reliability != null ? (
                                     <span className={clsx(
-                                      "text-xs font-semibold",
-                                      reliability >= 90 ? "text-zinc-300" :
-                                      reliability >= 60 ? "text-amber-400" : "text-red-400"
+                                      "font-semibold text-xs",
+                                      reliability >= 90 ? "text-emerald-400" :
+                                      reliability >= 70 ? "text-amber-400" : "text-rose-400"
                                     )}>
-                                      {reliability}% <span className="text-[10px] text-zinc-500 font-normal">ok</span>
+                                      {reliability}%
                                     </span>
                                   ) : (
                                     <span className="text-zinc-600 text-xs">—</span>
@@ -2078,7 +2145,7 @@ export function SourceManager({ user }: { user: User }) {
                   <button 
                     onClick={() => handleBenchmark(source)}
                     disabled={benchmarkingSource[source.id]}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
                   >
                     <Gauge size={13} className={benchmarkingSource[source.id] ? 'animate-pulse' : ''} />
                     {benchmarkingSource[source.id] ? 'Benchmarking...' : 'Benchmark'}
@@ -2087,7 +2154,7 @@ export function SourceManager({ user }: { user: User }) {
                 <button 
                   onClick={() => handleRefresh(source)}
                   disabled={refreshingSources[source.id]}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
                 >
                   <RefreshCw size={13} className={refreshingSources[source.id] ? 'animate-spin' : ''} />
                   {refreshingSources[source.id] ? 'Syncing...' : 'Sync Now'}
@@ -2113,11 +2180,14 @@ export function SourceManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl my-auto overflow-hidden"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-lg w-full max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden"
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-800 shrink-0 bg-zinc-900">
-              <h3 className="text-xl font-bold text-zinc-100">{showEdit ? 'Edit Upstream Source' : 'Add Upstream Source'}</h3>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/80 shrink-0 bg-zinc-900">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">{showEdit ? 'Edit Upstream Source' : 'Add Upstream Source'}</h3>
+                <p className="text-[11px] text-zinc-500">Configure provider endpoints, authentication, and fallback hosts</p>
+              </div>
               <button 
                 type="button"
                 onClick={() => {
@@ -2125,147 +2195,164 @@ export function SourceManager({ user }: { user: User }) {
                   setShowEdit(false);
                   setEditingSource(null);
                 }}
-                className="p-1.5 hover:bg-zinc-800 rounded-xl text-zinc-400 hover:text-zinc-100 transition-colors"
+                className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                 title="Close"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
 
             {/* Modal Scrollable Body */}
-            <div className="px-6 py-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
-              <input 
-                placeholder="Source Name" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                value={(showEdit ? editingSource! : newSource).name}
-                onChange={e => showEdit ? setEditingSource({...editingSource!, name: e.target.value}) : setNewSource({...newSource, name: e.target.value})}
-              />
-              <select 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                value={(showEdit ? editingSource! : newSource).type}
-                onChange={e => showEdit ? setEditingSource({...editingSource!, type: e.target.value as any}) : setNewSource({...newSource, type: e.target.value as any})}
-              >
-                <option value="xtream">Xtream Codes</option>
-                <option value="m3u">M3U Playlist URL</option>
-              </select>
-              <input 
-                placeholder="Server URL" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                value={(showEdit ? editingSource! : newSource).url}
-                onChange={e => showEdit ? setEditingSource({...editingSource!, url: e.target.value}) : setNewSource({...newSource, url: e.target.value})}
-              />
+            <div className="px-5 py-3.5 overflow-y-auto custom-scrollbar flex-1 space-y-3">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Source Name & Protocol</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <input 
+                    placeholder="Source Name" 
+                    className="col-span-2 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                    value={(showEdit ? editingSource! : newSource).name}
+                    onChange={e => showEdit ? setEditingSource({...editingSource!, name: e.target.value}) : setNewSource({...newSource, name: e.target.value})}
+                  />
+                  <select 
+                    className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200 cursor-pointer"
+                    value={(showEdit ? editingSource! : newSource).type}
+                    onChange={e => showEdit ? setEditingSource({...editingSource!, type: e.target.value as any}) : setNewSource({...newSource, type: e.target.value as any})}
+                  >
+                    <option value="xtream">Xtream</option>
+                    <option value="m3u">M3U URL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Server URL</label>
+                <input 
+                  placeholder="Server URL (e.g. http://server.com:8080)" 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all font-mono text-zinc-200"
+                  value={(showEdit ? editingSource! : newSource).url}
+                  onChange={e => showEdit ? setEditingSource({...editingSource!, url: e.target.value}) : setNewSource({...newSource, url: e.target.value})}
+                />
+              </div>
+
               {(showEdit ? editingSource! : newSource).type === 'xtream' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <input 
-                    placeholder="Username" 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                    value={(showEdit ? editingSource! : newSource).username}
-                    onChange={e => showEdit ? setEditingSource({...editingSource!, username: e.target.value}) : setNewSource({...newSource, username: e.target.value})}
-                  />
-                  <input 
-                    placeholder="Password" 
-                    type="password"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                    value={(showEdit ? editingSource! : newSource).password}
-                    onChange={e => showEdit ? setEditingSource({...editingSource!, password: e.target.value}) : setNewSource({...newSource, password: e.target.value})}
-                  />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Username</label>
+                    <input 
+                      placeholder="Username" 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                      value={(showEdit ? editingSource! : newSource).username}
+                      onChange={e => showEdit ? setEditingSource({...editingSource!, username: e.target.value}) : setNewSource({...newSource, username: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Password</label>
+                    <input 
+                      placeholder="Password" 
+                      type="password"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                      value={(showEdit ? editingSource! : newSource).password}
+                      onChange={e => showEdit ? setEditingSource({...editingSource!, password: e.target.value}) : setNewSource({...newSource, password: e.target.value})}
+                    />
+                  </div>
                 </div>
               )}
 
               {(showEdit ? editingSource! : newSource).type === 'xtream' && (
-                <div className="space-y-2 pt-1">
+                <div className="space-y-2 pt-2 border-t border-zinc-800/80">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Hosts (Fallback Order)</label>
                     <button
                       type="button"
                       onClick={handleAddHost}
-                      className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1"
+                      className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <Plus size={12} /> Add Host
                     </button>
                   </div>
-                  <p className="text-[10px] text-zinc-500">The primary URL is used first; Gecko benchmarks hosts and falls back through this list in order.</p>
                   {getHosts().length === 0 && (
-                    <p className="text-[10px] text-zinc-600 italic">No additional hosts. Add one to enable fallback and benchmarking.</p>
+                    <p className="text-[10px] text-zinc-600 italic">No additional hosts. Gecko benchmarks and falls back in order.</p>
                   )}
-                  {getHosts().map((h, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <div className="flex flex-col gap-0.5 shrink-0">
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto custom-scrollbar">
+                    {getHosts().map((h, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <div className="flex flex-col gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleMoveHost(idx, -1)}
+                            disabled={idx === 0}
+                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
+                          >
+                            <ChevronUp size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMoveHost(idx, 1)}
+                            disabled={idx === getHosts().length - 1}
+                            className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors cursor-pointer"
+                          >
+                            <ChevronDown size={11} />
+                          </button>
+                        </div>
+                        <input 
+                          placeholder="Host URL (e.g. http://host:8080)" 
+                          className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all font-mono text-zinc-200"
+                          value={h.url}
+                          onChange={e => handleUpdateHost(idx, 'url', e.target.value)}
+                        />
+                        {h.url && (
+                          <span className={clsx(
+                            "px-1.5 py-0.5 rounded text-[9px] font-bold border shrink-0",
+                            (h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
+                              ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : '')).toLowerCase().includes('cloudflare')
+                                ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                : "bg-purple-500/10 text-purple-400 border-purple-500/25"
+                              : "bg-cyan-500/10 text-cyan-400 border-cyan-500/25"
+                          )}>
+                            {(h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
+                              ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : 'CDN'))
+                              : 'Direct'}
+                          </span>
+                        )}
+                        <input 
+                          placeholder="Label" 
+                          className="w-20 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                          value={h.label || ''}
+                          onChange={e => handleUpdateHost(idx, 'label', e.target.value)}
+                        />
                         <button
                           type="button"
-                          onClick={() => handleMoveHost(idx, -1)}
-                          disabled={idx === 0}
-                          className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                          onClick={() => handleRemoveHost(idx)}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-red-400 transition-colors shrink-0 cursor-pointer"
+                          title="Remove host"
                         >
-                          <ChevronUp size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleMoveHost(idx, 1)}
-                          disabled={idx === getHosts().length - 1}
-                          className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-                        >
-                          <ChevronDown size={12} />
+                          <Trash2 size={13} />
                         </button>
                       </div>
-                      <input 
-                        placeholder="Host URL (e.g. http://host:8080)" 
-                        className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
-                        value={h.url}
-                        onChange={e => handleUpdateHost(idx, 'url', e.target.value)}
-                      />
-                      {h.url && (
-                        <span className={clsx(
-                          "px-2 py-1 rounded-lg text-[10px] font-bold border shrink-0",
-                          (h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
-                            ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : '')).toLowerCase().includes('cloudflare')
-                              ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
-                              : "bg-purple-500/10 text-purple-400 border-purple-500/25"
-                            : "bg-cyan-500/10 text-cyan-400 border-cyan-500/25"
-                        )}>
-                          {(h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
-                            ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : 'CDN'))
-                            : 'Direct'}
-                        </span>
-                      )}
-                      <input 
-                        placeholder="Label" 
-                        className="w-24 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-sm focus:border-emerald-500 outline-none transition-all"
-                        value={h.label || ''}
-                        onChange={e => handleUpdateHost(idx, 'label', e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveHost(idx)}
-                        className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-400 transition-colors shrink-0"
-                        title="Remove host"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Benchmark Stream Section */}
               {(showEdit ? editingSource! : newSource).type === 'xtream' && (
-                <div className="space-y-2 pt-1 border-t border-zinc-800/60">
+                <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Benchmark Stream (4K / High Bitrate)</label>
                     {(showEdit ? editingSource! : newSource).benchmarkStreamId ? (
                       <button
                         type="button"
                         onClick={handleClearBenchmarkStream}
-                        className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors"
+                        className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
                       >
                         Reset to Auto 4K
                       </button>
                     ) : (
-                      <span className="text-[10px] text-emerald-400/80 font-medium">Auto: Prioritizes 4K channels</span>
+                      <span className="text-[10px] text-emerald-400/80 font-medium">Auto: Prioritizes 4K</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-xs flex items-center justify-between">
+                    <div className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs flex items-center justify-between">
                       {(showEdit ? editingSource! : newSource).benchmarkStreamName ? (
                         <div className="flex items-center gap-1.5 min-w-0">
                           {/\b(4k|uhd|2160p)\b/i.test((showEdit ? editingSource! : newSource).benchmarkStreamName || '') && (
@@ -2274,47 +2361,41 @@ export function SourceManager({ user }: { user: User }) {
                           <span className="text-zinc-200 font-medium truncate">
                             {(showEdit ? editingSource! : newSource).benchmarkStreamName}
                           </span>
-                          <span className="text-[10px] text-zinc-600 font-mono shrink-0">
-                            (ID: {(showEdit ? editingSource! : newSource).benchmarkStreamId})
-                          </span>
                         </div>
                       ) : (
                         <span className="text-zinc-500 italic text-xs truncate">
-                          Auto: scans for 4K / UHD channels first
+                          Auto: scans 4K / UHD first
                         </span>
                       )}
                     </div>
                     <button
                       type="button"
                       onClick={handleOpenChannelPicker}
-                      className="px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-colors shrink-0 flex items-center gap-1.5"
+                      className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Tv size={13} /> Select 4K Channel
+                      <Tv size={12} /> Select 4K
                     </button>
                   </div>
-                  <p className="text-[10px] text-zinc-500">
-                    Flagging a 4K channel tests hosts against high-bitrate video (25-50+ Mbps) without 512KB slow-start bottlenecks.
-                  </p>
                 </div>
               )}
 
               {/* Expiry Date input */}
-              <div className="space-y-1.5">
+              <div className="space-y-1 pt-2 border-t border-zinc-800/80">
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Expiry Date (Optional)</label>
                   {(showEdit ? editingSource! : newSource).expiryDate && (
                     <button
                       type="button"
                       onClick={() => showEdit ? setEditingSource({...editingSource!, expiryDate: null}) : setNewSource({...newSource, expiryDate: null})}
-                      className="text-[10px] text-zinc-500 hover:text-emerald-400 transition-colors"
+                      className="text-[10px] text-zinc-500 hover:text-emerald-400 transition-colors cursor-pointer"
                     >
-                      Set Unlimited / Clear
+                      Set Unlimited
                     </button>
                   )}
                 </div>
                 <input 
                   type="date"
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                   value={
                     (() => {
                       const d = (showEdit ? editingSource! : newSource).expiryDate;
@@ -2335,54 +2416,49 @@ export function SourceManager({ user }: { user: User }) {
                     }
                   }}
                 />
-                <p className="text-[10px] text-zinc-500">
-                  {(showEdit ? editingSource! : newSource).type === 'xtream' 
-                    ? 'For Xtream Codes, this is auto-detected from provider authentication upon saving or syncing.'
-                    : 'For M3U, you can manually set your subscription expiry date.'}
-                </p>
               </div>
 
               {/* Sync Settings */}
-              <div className="pt-4 border-t border-zinc-800 space-y-4">
-                <label className="flex items-center gap-3 cursor-pointer group">
+              <div className="pt-2 border-t border-zinc-800/80 space-y-2">
+                <label className="flex items-center gap-2.5 p-2 bg-zinc-950/60 border border-zinc-800/70 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                   <input
                     type="checkbox"
-                    className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-950"
+                    className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                     checked={!!(showEdit ? editingSource! : newSource).autoSyncEnabled}
                     onChange={e => showEdit ? setEditingSource({...editingSource!, autoSyncEnabled: e.target.checked}) : setNewSource({...newSource, autoSyncEnabled: e.target.checked})}
                   />
-                  <div className="flex-1">
-                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">Enable Auto-Sync</div>
-                    <div className="text-[10px] text-zinc-500">Periodically refresh channel names from upstream</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-xs text-zinc-200">Enable Auto-Sync</div>
+                    <div className="text-[10px] text-zinc-500">Periodically refresh channel list from upstream</div>
                   </div>
                 </label>
 
-                <label className="flex items-center gap-3 cursor-pointer group">
+                <label className="flex items-center gap-2.5 p-2 bg-zinc-950/60 border border-zinc-800/70 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                   <input
                     type="checkbox"
-                    className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-950"
+                    className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                     checked={!!(showEdit ? editingSource! : newSource).useUpstreamEpg}
                     onChange={e => showEdit ? setEditingSource({...editingSource!, useUpstreamEpg: e.target.checked}) : setNewSource({...newSource, useUpstreamEpg: e.target.checked})}
                   />
-                  <div className="flex-1">
-                    <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors">Use Upstream EPG</div>
-                    <div className="text-[10px] text-zinc-500">Include this source's EPG guide (<code className="text-zinc-400">/xmltv.php</code>) in the playlist EPG export</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-xs text-zinc-200">Use Upstream EPG</div>
+                    <div className="text-[10px] text-zinc-500">Include provider guide in playlist export</div>
                   </div>
                 </label>
 
                 {(showEdit ? editingSource! : newSource).autoSyncEnabled && (
-                  <div className="space-y-2 pl-8 animate-in slide-in-from-top-2 duration-200">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Update Schedule (Cron Format)</label>
+                  <div className="space-y-1.5 pl-6 animate-in slide-in-from-top-2 duration-200">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Update Schedule (Cron)</label>
                     <input 
-                      placeholder="e.g. 0 2 * * * (Every day at 2:00 AM)" 
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all font-mono"
+                      placeholder="e.g. 0 2 * * *" 
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all font-mono text-zinc-200"
                       value={(showEdit ? editingSource! : newSource).syncCron || ""}
                       onChange={e => showEdit ? setEditingSource({...editingSource!, syncCron: e.target.value}) : setNewSource({...newSource, syncCron: e.target.value})}
                     />
                     {(showEdit ? editingSource! : newSource).syncCron && (
-                      <div className="flex items-center gap-2 p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
-                        <Activity size={12} className="text-emerald-500" />
-                        <span className="text-[11px] text-emerald-500/80 font-medium italic">
+                      <div className="flex items-center gap-1.5 p-1.5 bg-emerald-500/5 border border-emerald-500/10 rounded-md">
+                        <Activity size={11} className="text-emerald-500" />
+                        <span className="text-[10px] text-emerald-500/80 font-medium italic">
                           {(() => {
                             try {
                               return cronstrue.toString((showEdit ? editingSource! : newSource).syncCron!);
@@ -2399,27 +2475,27 @@ export function SourceManager({ user }: { user: User }) {
                 {/* Connection Monitoring (Anti-Theft) */}
                 {(showEdit ? editingSource! : newSource).type === 'xtream' && (
                   <>
-                    <label className="flex items-center gap-3 cursor-pointer group">
+                    <label className="flex items-center gap-2.5 p-2 bg-zinc-950/60 border border-zinc-800/70 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                       <input
                         type="checkbox"
-                        className="w-5 h-5 rounded border-zinc-800 text-emerald-500 focus:ring-emerald-500 bg-zinc-950"
+                        className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                         checked={!!(showEdit ? editingSource! : newSource).monitorEnabled}
                         onChange={e => showEdit ? setEditingSource({...editingSource!, monitorEnabled: e.target.checked}) : setNewSource({...newSource, monitorEnabled: e.target.checked})}
                       />
-                      <div className="flex-1">
-                        <div className="font-bold text-sm group-hover:text-emerald-500 transition-colors flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-xs text-zinc-200 flex items-center gap-2">
                           <span>Monitor Connection Usage</span>
-                          <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded">Anti-Theft</span>
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1 py-0.5 rounded">Anti-Theft</span>
                         </div>
-                        <div className="text-[10px] text-zinc-500">Periodically check active streams to detect unauthorized usage outside Gecko</div>
+                        <div className="text-[10px] text-zinc-500">Detect unauthorized usage outside Gecko</div>
                       </div>
                     </label>
 
                     {(showEdit ? editingSource! : newSource).monitorEnabled && (
-                      <div className="space-y-2 pl-8 animate-in slide-in-from-top-2 duration-200">
+                      <div className="space-y-1 pl-6 animate-in slide-in-from-top-2 duration-200">
                         <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Check Interval</label>
                         <select
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm focus:border-emerald-500 outline-none transition-all"
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200 cursor-pointer"
                           value={(showEdit ? editingSource! : newSource).monitorInterval || 60}
                           onChange={e => {
                             const val = parseInt(e.target.value, 10);
@@ -2439,20 +2515,20 @@ export function SourceManager({ user }: { user: User }) {
 
                 {/* Concurrency Guard & Stream Multiplexing */}
                 {(showEdit ? editingSource! : newSource).type === 'xtream' && (
-                  <label className="flex items-center gap-3 cursor-pointer group">
+                  <label className="flex items-center gap-2.5 p-2 bg-zinc-950/60 border border-zinc-800/70 rounded-lg cursor-pointer hover:border-blue-500/30 transition-all">
                     <input
                       type="checkbox"
-                      className="w-5 h-5 rounded border-zinc-800 text-blue-500 focus:ring-blue-500 bg-zinc-950"
+                      className="w-3.5 h-3.5 rounded accent-blue-500 cursor-pointer"
                       checked={(showEdit ? editingSource! : newSource).concurrencyGuard !== false}
                       onChange={e => showEdit ? setEditingSource({...editingSource!, concurrencyGuard: e.target.checked}) : setNewSource({...newSource, concurrencyGuard: e.target.checked})}
                     />
-                    <div className="flex-1">
-                      <div className="font-bold text-sm group-hover:text-blue-400 transition-colors flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-xs text-blue-300 flex items-center gap-2">
                         <span>Concurrency Guard & Stream-Sharing</span>
-                        <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded">1-Connection Protection</span>
+                        <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1 py-0.5 rounded">1-Connection Protection</span>
                       </div>
                       <div className="text-[10px] text-zinc-500">
-                        Teilt denselben Live-Stream lokal verlustfrei über mehrere Clients (0 zusätzliche Upstream-Verbindungen). Sperrt abweichende Sender mit Hinweisanzeige, um Provider-Bans zu verhindern.
+                        Teilt Live-Streams lokal ohne zusätzliche Provider-Verbindungen und blockt Überschreitungen ab.
                       </div>
                     </div>
                   </label>
@@ -2461,7 +2537,7 @@ export function SourceManager({ user }: { user: User }) {
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-zinc-800 flex gap-3 shrink-0 bg-zinc-900/90 backdrop-blur">
+            <div className="px-5 py-2.5 border-t border-zinc-800/80 flex justify-end gap-2 shrink-0 bg-zinc-900/95 backdrop-blur">
               <button 
                 type="button"
                 onClick={() => {
@@ -2469,14 +2545,14 @@ export function SourceManager({ user }: { user: User }) {
                   setShowEdit(false);
                   setEditingSource(null);
                 }}
-                className="flex-1 py-3 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 hover:text-white transition-all text-sm"
+                className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded-lg font-semibold hover:bg-zinc-700 hover:text-white transition-all text-xs cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 type="button"
                 onClick={showEdit ? handleUpdate : handleAdd}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm shadow-lg shadow-emerald-500/20"
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg font-bold hover:bg-emerald-400 transition-all text-xs shadow-sm cursor-pointer"
               >
                 {showEdit ? 'Save Changes' : 'Add Source'}
               </button>
@@ -2496,61 +2572,62 @@ export function SourceManager({ user }: { user: User }) {
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 max-w-xl w-full max-h-[85vh] flex flex-col space-y-4 shadow-2xl"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-xl w-full max-h-[85vh] flex flex-col space-y-3 shadow-2xl"
           >
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-amber-500/10 rounded-2xl text-amber-400 border border-amber-500/20">
-                  <Tv size={20} />
+            <div className="flex justify-between items-center pb-2 border-b border-zinc-800/80">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/10 rounded-xl text-amber-400 border border-amber-500/20">
+                  <Tv size={16} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-zinc-100 flex items-center gap-2">
+                  <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
                     Select Benchmark Channel
-                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[10px] font-black uppercase">4K / UHD</span>
+                    <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-black uppercase">4K / UHD</span>
                   </h3>
-                  <p className="text-xs text-zinc-400">Choose a high-bitrate stream for accurate throughput benchmarking</p>
+                  <p className="text-[11px] text-zinc-500">High-bitrate stream for throughput benchmarking</p>
                 </div>
               </div>
               <button 
                 onClick={() => setShowChannelPicker(false)}
-                className="p-1.5 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-200 transition-colors"
+                className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                title="Close"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
 
             {/* Search and Filters */}
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Search channels (e.g. 4K, Sky, ESPN, UHD)..."
                   value={channelSearchTerm}
                   onChange={e => setChannelSearchTerm(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
                 />
               </div>
               <button
                 type="button"
                 onClick={() => setFilter4kOnly(!filter4kOnly)}
                 className={clsx(
-                  "px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 border flex items-center gap-1.5",
+                  "px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 border flex items-center gap-1.5 cursor-pointer",
                   filter4kOnly
                     ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
                     : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200"
                 )}
               >
-                <Star size={12} className={filter4kOnly ? "fill-amber-300" : ""} />
+                <Star size={11} className={filter4kOnly ? "fill-amber-300" : ""} />
                 4K Only
               </button>
             </div>
 
             {/* Channels List */}
-            <div className="flex-1 overflow-y-auto space-y-1 pr-1 min-h-[300px] max-h-[50vh] divide-y divide-zinc-800/30">
+            <div className="flex-1 overflow-y-auto space-y-1 pr-1 min-h-[260px] max-h-[48vh] custom-scrollbar divide-y divide-zinc-800/30">
               {loadingPickerStreams ? (
                 <div className="flex flex-col items-center justify-center py-16 text-zinc-500 gap-2">
-                  <RefreshCw size={20} className="animate-spin text-emerald-400" />
+                  <RefreshCw size={18} className="animate-spin text-emerald-400" />
                   <span className="text-xs">Loading live channels from upstream...</span>
                 </div>
               ) : (() => {
@@ -2571,7 +2648,7 @@ export function SourceManager({ user }: { user: User }) {
                           <button
                             type="button"
                             onClick={() => setFilter4kOnly(false)}
-                            className="mt-2 text-emerald-400 hover:underline font-bold"
+                            className="mt-2 text-emerald-400 hover:underline font-bold cursor-pointer"
                           >
                             Show all channels
                           </button>
@@ -2591,7 +2668,7 @@ export function SourceManager({ user }: { user: User }) {
                   return (
                     <div
                       key={id}
-                      className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-zinc-800/50 transition-colors group cursor-pointer"
+                      className="flex items-center justify-between gap-3 p-2 rounded-lg hover:bg-zinc-800/50 transition-colors group cursor-pointer"
                       onClick={() => handleSelectBenchmarkStream(s)}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -2611,7 +2688,7 @@ export function SourceManager({ user }: { user: User }) {
                           e.stopPropagation();
                           handleSelectBenchmarkStream(s);
                         }}
-                        className="px-2.5 py-1 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 rounded-lg text-xs font-bold transition-all shrink-0"
+                        className="px-2 py-0.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-300 rounded-md text-xs font-bold transition-all shrink-0 cursor-pointer"
                       >
                         Select
                       </button>
@@ -2621,12 +2698,12 @@ export function SourceManager({ user }: { user: User }) {
               })()}
             </div>
 
-            <div className="flex justify-between items-center pt-2 border-t border-zinc-800 text-xs text-zinc-500">
+            <div className="flex justify-between items-center pt-2 border-t border-zinc-800/80 text-[11px] text-zinc-500">
               <span>{channelPickerStreams.length} total channels</span>
               <button
                 type="button"
                 onClick={() => setShowChannelPicker(false)}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl font-bold transition-colors"
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
               >
                 Done
               </button>
@@ -2791,53 +2868,54 @@ export function SourceManager({ user }: { user: User }) {
       {showConnections && selectedConnSource && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-3xl w-full max-h-[90vh] flex flex-col space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-3xl w-full max-h-[88vh] flex flex-col space-y-3.5 shadow-2xl"
           >
             {/* Header */}
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-purple-500/10 rounded-2xl text-purple-400">
-                  <Radio size={24} />
+            <div className="flex justify-between items-center pb-2 border-b border-zinc-800/80">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 bg-purple-500/10 rounded-xl text-purple-400 border border-purple-500/20 shrink-0">
+                  <Radio size={16} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-2xl font-bold">Connection Timeline & Usage</h3>
+                    <h3 className="text-base font-bold text-zinc-100">Connection Timeline & Usage</h3>
                     {selectedConnSource.monitorEnabled && (
-                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        Monitor Active
+                      <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                        Active
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-zinc-500 font-medium">{selectedConnSource.name} <span className="font-mono text-zinc-600">({selectedConnSource.url})</span></p>
+                  <p className="text-[11px] text-zinc-500 truncate">{selectedConnSource.name} <span className="font-mono text-zinc-600">({selectedConnSource.url})</span></p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={handleCheckConnection}
                   disabled={checkingConnection}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                  className="flex items-center gap-1 px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
                   title="Run instant upstream check"
                 >
-                  <RefreshCw size={14} className={checkingConnection ? 'animate-spin text-purple-400' : ''} />
-                  {checkingConnection ? 'Checking...' : 'Check Now'}
+                  <RefreshCw size={12} className={checkingConnection ? 'animate-spin text-purple-400' : ''} />
+                  {checkingConnection ? 'Checking...' : 'Check'}
                 </button>
                 {connectionLogs.length > 0 && (
                   <button
                     onClick={handleClearConnections}
-                    className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-red-400 transition-colors"
+                    className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
                     title="Clear Connection History"
                   >
-                    <Trash2 size={18} />
+                    <Trash2 size={15} />
                   </button>
                 )}
                 <button 
                   onClick={() => { setShowConnections(false); setSelectedConnSource(null); setHoveredLog(null); }}
-                  className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  title="Close"
                 >
-                  <X size={20} />
+                  <X size={16} />
                 </button>
               </div>
             </div>
@@ -2852,49 +2930,49 @@ export function SourceManager({ user }: { user: User }) {
               const hasAlert = extStreams > 0;
 
               return (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-2.5 space-y-0.5">
                     <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Upstream Active</div>
-                    <div className="text-lg font-black text-zinc-100 flex items-baseline gap-1">
+                    <div className="text-base font-black text-zinc-100 flex items-baseline gap-1">
                       <span>{activeCons}</span>
-                      <span className="text-xs text-zinc-500 font-medium">/ {maxCons} max</span>
+                      <span className="text-[10px] text-zinc-500 font-medium">/ {maxCons} max</span>
                     </div>
                     <div className="text-[10px] text-zinc-500">reported by provider</div>
                   </div>
 
-                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-2.5 space-y-0.5">
                     <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Via Gecko Proxy</div>
-                    <div className="text-lg font-black text-blue-400">
+                    <div className="text-base font-black text-blue-400">
                       {geckoStreams}
                     </div>
                     <div className="text-[10px] text-zinc-500">proxied streams</div>
                   </div>
 
                   <div className={clsx(
-                    "border rounded-2xl p-3.5 space-y-1",
+                    "border rounded-xl p-2.5 space-y-0.5",
                     hasAlert 
                       ? "bg-red-500/10 border-red-500/30 text-red-400" 
                       : "bg-zinc-950/60 border-zinc-800 text-zinc-100"
                   )}>
                     <div className="text-[10px] uppercase font-black tracking-wider flex items-center gap-1">
                       {hasAlert && <AlertTriangle size={10} className="text-red-400" />}
-                      <span className={hasAlert ? "text-red-400" : "text-zinc-500"}>External / Direct</span>
+                      <span className={hasAlert ? "text-red-400" : "text-zinc-500"}>External</span>
                     </div>
-                    <div className={clsx("text-lg font-black", hasAlert ? "text-red-400" : "text-emerald-400")}>
+                    <div className={clsx("text-base font-black", hasAlert ? "text-red-400" : "text-emerald-400")}>
                       {extStreams}
                     </div>
                     <div className="text-[10px] text-zinc-500">
-                      {hasAlert ? "unrecognized client" : "no intruder detected"}
+                      {hasAlert ? "unrecognized client" : "no intruder"}
                     </div>
                   </div>
 
-                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-2xl p-3.5 space-y-1">
-                    <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Check Interval</div>
-                    <div className="text-lg font-black text-zinc-100">
+                  <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-2.5 space-y-0.5">
+                    <div className="text-[10px] text-zinc-500 uppercase font-black tracking-wider">Interval</div>
+                    <div className="text-base font-black text-zinc-100">
                       {selectedConnSource.monitorInterval || 60}s
                     </div>
                     <div className="text-[10px] text-zinc-500 truncate">
-                      {selectedConnSource.lastMonitorCheck ? `checked ${new Date(selectedConnSource.lastMonitorCheck).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'never checked'}
+                      {selectedConnSource.lastMonitorCheck ? `checked ${new Date(selectedConnSource.lastMonitorCheck).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'never'}
                     </div>
                   </div>
                 </div>
@@ -3156,33 +3234,53 @@ export function EPGManager
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-md w-full space-y-3.5 shadow-2xl"
           >
-            <h3 className="text-xl font-bold">Add EPG Provider</h3>
-            <div className="space-y-4">
-              <input 
-                placeholder="EPG Name" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                value={newEpg.name}
-                onChange={e => setNewEpg({...newEpg, name: e.target.value})}
-              />
-              <input 
-                placeholder="XMLTV URL (http://...)" 
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
-                value={newEpg.url}
-                onChange={e => setNewEpg({...newEpg, url: e.target.value})}
-              />
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Add EPG Provider</h3>
+                <p className="text-[11px] text-zinc-500">Provide an XMLTV URL to fetch TV program guide data</p>
+              </div>
+              <button
+                onClick={() => setShowAdd(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
             </div>
-            <div className="flex gap-3 pt-2">
+
+            <div className="space-y-2.5">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Name</label>
+                <input 
+                  placeholder="e.g. German EPG, Sky Guide" 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all text-zinc-200"
+                  value={newEpg.name}
+                  onChange={e => setNewEpg({...newEpg, name: e.target.value})}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">XMLTV URL</label>
+                <input 
+                  placeholder="http://example.com/epg.xml.gz" 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs focus:border-emerald-500 outline-none transition-all font-mono text-zinc-200"
+                  value={newEpg.url}
+                  onChange={e => setNewEpg({...newEpg, url: e.target.value})}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800/80">
               <button 
                 onClick={() => setShowAdd(false)}
-                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
+                className="px-3 py-1.5 bg-zinc-800 rounded-lg font-semibold hover:bg-zinc-700 transition-all text-xs text-zinc-300 cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleAdd}
-                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg font-bold hover:bg-emerald-400 transition-all text-xs shadow-sm cursor-pointer"
               >
                 Save EPG
               </button>
@@ -3226,9 +3324,9 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
           type="button"
           onClick={() => onSelect(p.template)}
           title={p.template}
-          className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-emerald-500/50 rounded-lg text-zinc-400 hover:text-zinc-100 transition-all"
+          className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 hover:border-emerald-500/50 rounded-md text-zinc-300 hover:text-zinc-100 transition-all cursor-pointer font-medium"
         >
-          {p.label} <span className="text-zinc-600">{p.description}</span>
+          {p.label} <span className="text-zinc-500">{p.description}</span>
         </button>
       ))}
     </div>
@@ -3274,10 +3372,10 @@ function VpnSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
-      <div className="space-y-1">
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xl font-bold">VPN Connection</h3>
+          <h3 className="text-base font-bold text-zinc-100">VPN Connection</h3>
           {vpnStatus?.configured ? (
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               Gluetun Active
@@ -3288,7 +3386,7 @@ function VpnSettingsCard() {
             </span>
           )}
         </div>
-        <p className="text-sm text-zinc-500">Outbound VPN tunnel and egress routing</p>
+        <p className="text-[11px] text-zinc-500 hidden sm:block">Outbound egress tunnel</p>
       </div>
 
       {loading ? (
@@ -3297,34 +3395,30 @@ function VpnSettingsCard() {
           <div className="h-4 w-48 bg-zinc-800 rounded" />
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-2xl p-4 space-y-2 text-xs">
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500">Public Egress IP</span>
-              <span className="font-mono font-bold text-zinc-200">
+        <div className="space-y-3">
+          <div className="bg-zinc-950/60 border border-zinc-800/80 rounded-xl p-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="min-w-0">
+              <span className="text-[10px] text-zinc-500 uppercase font-semibold block">Public Egress IP</span>
+              <span className="font-mono font-bold text-zinc-200 text-xs truncate block" title={vpnStatus?.publicIp || 'Unknown'}>
                 {vpnStatus?.publicIp || 'Unknown'}
               </span>
             </div>
-            {vpnStatus?.country && (
-              <div className="flex justify-between items-center">
-                <span className="text-zinc-500">Location</span>
-                <span className="text-zinc-300">
-                  {countryToFlag(vpnStatus.country)} {[vpnStatus.city, vpnStatus.country].filter(Boolean).join(', ')}
-                </span>
-              </div>
-            )}
-            {vpnStatus?.organization && (
-              <div className="flex justify-between items-center">
-                <span className="text-zinc-500">Provider / ASN</span>
-                <span className="text-zinc-400 truncate max-w-[200px]" title={vpnStatus.organization}>
-                  {vpnStatus.organization}
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500">Tunnel Status</span>
+            <div className="min-w-0">
+              <span className="text-[10px] text-zinc-500 uppercase font-semibold block">Location</span>
+              <span className="text-zinc-300 text-xs truncate block" title={[vpnStatus?.city, vpnStatus?.country].filter(Boolean).join(', ')}>
+                {countryToFlag(vpnStatus?.country)} {[vpnStatus?.city, vpnStatus?.country].filter(Boolean).join(', ') || 'N/A'}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] text-zinc-500 uppercase font-semibold block">Provider / ASN</span>
+              <span className="text-zinc-400 text-xs truncate block" title={vpnStatus?.organization}>
+                {vpnStatus?.organization || 'N/A'}
+              </span>
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] text-zinc-500 uppercase font-semibold block">Tunnel Status</span>
               <span className={clsx(
-                "font-mono font-bold capitalize",
+                "font-mono font-bold capitalize text-xs block truncate",
                 vpnStatus?.status === 'running' ? 'text-emerald-400' : 'text-zinc-400'
               )}>
                 {vpnStatus?.status || (vpnStatus?.configured ? 'Active' : 'Direct / No VPN')}
@@ -3333,31 +3427,31 @@ function VpnSettingsCard() {
           </div>
 
           {vpnStatus?.vpnBlockedRecent && (
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-start gap-2 text-xs text-amber-300">
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2.5 flex items-start gap-2 text-xs text-amber-300">
               <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
-              <span>
-                <strong>Warning:</strong> An upstream CDN recently blocked connections on this IP (HTTP 511). Rotate the VPN to obtain a new server/IP.
+              <span className="text-[11px] leading-tight">
+                <strong>Warning:</strong> An upstream CDN recently blocked connections on this IP (HTTP 511). Rotate VPN to obtain a new server.
               </span>
             </div>
           )}
 
           {vpnStatus?.configured ? (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <button
                 onClick={handleRotate}
                 disabled={rotating}
-                className="w-full py-2.5 px-4 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500 hover:text-zinc-950 rounded-xl font-bold transition disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+                className="w-full py-1.5 px-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500 hover:text-zinc-950 rounded-lg font-bold transition disabled:opacity-50 flex items-center justify-center gap-1.5 text-xs cursor-pointer"
               >
-                <RefreshCw size={14} className={rotating ? "animate-spin" : ""} />
+                <RefreshCw size={13} className={rotating ? "animate-spin" : ""} />
                 <span>{rotating ? "Rotating VPN Tunnel..." : "Rotate VPN / Reconnect"}</span>
               </button>
               {rotateMessage && (
-                <p className="text-xs text-center text-zinc-400 animate-pulse">{rotateMessage}</p>
+                <p className="text-[11px] text-center text-zinc-400 animate-pulse">{rotateMessage}</p>
               )}
             </div>
           ) : (
             <p className="text-[11px] text-zinc-500 italic">
-              Gluetun control server not detected at GLUETUN_CONTROL_URL (port 8000). To enable VPN rotation, configure GLUETUN_API_KEY in docker-compose.prod.yml.
+              Gluetun control server not detected at GLUETUN_CONTROL_URL. Configure GLUETUN_API_KEY in docker-compose.prod.yml.
             </p>
           )}
         </div>
@@ -3435,12 +3529,12 @@ function TelegramSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold">Telegram Bot</h3>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+            <h3 className="text-base font-bold text-zinc-100">Telegram Bot</h3>
+            <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold border ${
               enabled 
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
                 : 'bg-zinc-800 text-zinc-500 border-zinc-700'
@@ -3448,17 +3542,17 @@ function TelegramSettingsCard() {
               {enabled ? 'Aktiv' : 'Inaktiv'}
             </span>
           </div>
-          <p className="text-sm text-zinc-500">Benachrichtigungen bei DVR-Aufnahmen, Handover & Sync-Treffern</p>
+          <p className="text-[11px] text-zinc-500">DVR, Handover & Sync Benachrichtigungen</p>
         </div>
         <button
           onClick={() => setEnabled(!enabled)}
-          className={`w-12 h-6 rounded-full transition-colors relative p-1 ${
+          className={`w-10 h-5 rounded-full transition-colors relative p-0.5 cursor-pointer ${
             enabled ? 'bg-emerald-500' : 'bg-zinc-800'
           }`}
           title={enabled ? 'Deaktivieren' : 'Aktivieren'}
         >
-          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${
-            enabled ? 'translate-x-6' : 'translate-x-0'
+          <div className={`w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${
+            enabled ? 'translate-x-5' : 'translate-x-0'
           }`} />
         </button>
       </div>
@@ -3469,33 +3563,40 @@ function TelegramSettingsCard() {
           <div className="h-4 w-48 bg-zinc-800 rounded" />
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="block text-xs font-semibold text-zinc-400">Bot Token</label>
-            <input
-              type="password"
-              value={botToken}
-              onChange={e => setBotToken(e.target.value)}
-              placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-              className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-sm"
-            />
-            <p className="text-[10px] text-zinc-600">Erstelle einen Bot via <span className="text-zinc-400 font-mono">@BotFather</span></p>
-          </div>
+        <div className="space-y-3">
+          {/* Bot Token & Chat ID in a 2-column grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-semibold text-zinc-400">Bot Token</label>
+                <span className="text-[10px] text-zinc-500">via <span className="text-zinc-400 font-mono">@BotFather</span></span>
+              </div>
+              <input
+                type="password"
+                value={botToken}
+                onChange={e => setBotToken(e.target.value)}
+                placeholder="123456789:ABCdef..."
+                className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
+              />
+            </div>
 
-          <div className="space-y-1">
-            <label className="block text-xs font-semibold text-zinc-400">Chat ID</label>
-            <input
-              type="text"
-              value={chatId}
-              onChange={e => setChatId(e.target.value)}
-              placeholder="z.B. 123456789 oder -100..."
-              className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-sm"
-            />
-            <p className="text-[10px] text-zinc-600">Finde deine Chat ID mit <span className="text-zinc-400 font-mono">@userinfobot</span></p>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-semibold text-zinc-400">Chat ID</label>
+                <span className="text-[10px] text-zinc-500">via <span className="text-zinc-400 font-mono">@userinfobot</span></span>
+              </div>
+              <input
+                type="text"
+                value={chatId}
+                onChange={e => setChatId(e.target.value)}
+                placeholder="z.B. 123456789"
+                className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
+              />
+            </div>
           </div>
 
           {statusMessage && (
-            <div className={`text-xs p-3 rounded-xl border ${
+            <div className={`text-xs p-2.5 rounded-lg border ${
               statusMessage.isError 
                 ? 'bg-red-500/10 border-red-500/20 text-red-400' 
                 : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
@@ -3504,33 +3605,36 @@ function TelegramSettingsCard() {
             </div>
           )}
 
-          <div className="space-y-2 pt-2 border-t border-zinc-800">
-            <label className="block text-xs font-semibold text-zinc-400">Sync-Keywords</label>
-            <p className="text-[10px] text-zinc-600">Benachrichtigt dich, wenn beim Sync ein neuer oder umbenannter Sender / eine Kategorie mit einem dieser Begriffe auftaucht.</p>
-            <div className="flex gap-2">
+          {/* Sync Keywords with scroll limit */}
+          <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-semibold text-zinc-400">Sync-Keywords</label>
+              <span className="text-[10px] text-zinc-500">Benachrichtigt bei neuen Treffern</span>
+            </div>
+            <div className="flex gap-1.5">
               <input
                 type="text"
                 value={newKeyword}
                 onChange={e => setNewKeyword(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeyword(); } }}
                 placeholder='z.B. "Düsseldorfer EG" oder "DEL2"'
-                className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 text-sm"
+                className="flex-1 px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 text-xs"
               />
               <button
                 onClick={addKeyword}
                 disabled={!newKeyword.trim()}
-                className="px-3 py-2 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm disabled:opacity-40"
+                className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 transition-all text-xs disabled:opacity-40 cursor-pointer"
               >
                 Hinzufügen
               </button>
             </div>
             {keywords.length > 0 && (
-              <div className="flex flex-wrap gap-2 pt-1">
+              <div className="flex flex-wrap gap-1.5 pt-1 max-h-24 overflow-y-auto custom-scrollbar pr-1">
                 {keywords.map(kw => (
-                  <span key={kw} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-200">
-                    {kw}
-                    <button onClick={() => removeKeyword(kw)} className="text-zinc-500 hover:text-red-400" title="Entfernen">
-                      <X size={12} />
+                  <span key={kw} className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-800/90 border border-zinc-700 rounded-md text-[11px] text-zinc-200">
+                    <span>{kw}</span>
+                    <button onClick={() => removeKeyword(kw)} className="text-zinc-400 hover:text-red-400 cursor-pointer" title="Entfernen">
+                      <X size={11} />
                     </button>
                   </span>
                 ))}
@@ -3538,21 +3642,200 @@ function TelegramSettingsCard() {
             )}
           </div>
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2 pt-1">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex-1 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all text-sm disabled:opacity-50"
+              className="flex-1 py-1.5 px-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all text-xs disabled:opacity-50 cursor-pointer"
             >
               {saving ? 'Speichere...' : 'Speichern'}
             </button>
             <button
               onClick={handleTest}
               disabled={testing || !botToken || !chatId}
-              className="px-4 py-2 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 transition-all text-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
             >
-              <Send size={14} />
-              {testing ? 'Sende...' : 'Test'}
+              <Send size={12} />
+              <span>{testing ? 'Sende...' : 'Test'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LlmSettingsCard() {
+  const [enabled, setEnabled] = useState(false);
+  const [url, setUrl] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [model, setModel] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_LLM_SYSTEM_PROMPT);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+  useEffect(() => {
+    api.settings.get()
+      .then(s => {
+        setEnabled(Boolean(s.llmEnabled));
+        setUrl(s.llmUrl || '');
+        setApiKey(s.llmApiKey || '');
+        setModel(s.llmModel || '');
+        setSystemPrompt(s.llmSystemPrompt || DEFAULT_LLM_SYSTEM_PROMPT);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await api.settings.update({
+        llmEnabled: enabled,
+        llmUrl: url,
+        llmApiKey: apiKey,
+        llmModel: model,
+        llmSystemPrompt: systemPrompt,
+      });
+      setStatusMessage({ text: 'LLM settings saved!', isError: false });
+      setTimeout(() => setStatusMessage(null), 4000);
+    } catch (err: any) {
+      setStatusMessage({ text: `Error saving: ${err.message}`, isError: true });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setStatusMessage({ text: 'Testing LLM connection...', isError: false });
+    try {
+      await api.llm.test({ url, apiKey, model });
+      setStatusMessage({ text: 'LLM connection OK', isError: false });
+      setTimeout(() => setStatusMessage(null), 5000);
+    } catch (err: any) {
+      setStatusMessage({ text: `Error: ${err.message}`, isError: true });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold text-zinc-100">AI Name Cleanup</h3>
+            <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold border ${
+              enabled
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+            }`}>
+              {enabled ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-500">Clean channel/category names with a local LLM (llama.cpp)</p>
+        </div>
+        <button
+          onClick={() => setEnabled(!enabled)}
+          className={`w-10 h-5 rounded-full transition-colors relative p-0.5 cursor-pointer ${
+            enabled ? 'bg-emerald-500' : 'bg-zinc-800'
+          }`}
+          title={enabled ? 'Disable' : 'Enable'}
+        >
+          <div className={`w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${
+            enabled ? 'translate-x-5' : 'translate-x-0'
+          }`} />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="animate-pulse space-y-2">
+          <div className="h-4 w-32 bg-zinc-800 rounded" />
+          <div className="h-4 w-48 bg-zinc-800 rounded" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="space-y-1 sm:col-span-2">
+              <label className="block text-[11px] font-semibold text-zinc-400">Endpoint URL</label>
+              <input
+                type="text"
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[11px] font-semibold text-zinc-400">Model (optional)</label>
+              <input
+                type="text"
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                placeholder="gemma-4"
+                className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[11px] font-semibold text-zinc-400">API Key (optional)</label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder="sk-..."
+                className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-semibold text-zinc-400">System Prompt</label>
+              <button
+                onClick={() => setSystemPrompt(DEFAULT_LLM_SYSTEM_PROMPT)}
+                className="text-[10px] text-zinc-500 hover:text-emerald-400 font-bold transition-colors"
+                title="Restore default system prompt"
+              >
+                Restore default
+              </button>
+            </div>
+            <textarea
+              value={systemPrompt}
+              onChange={e => setSystemPrompt(e.target.value)}
+              rows={8}
+              className="w-full px-3 py-2 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-[11px] leading-relaxed resize-y"
+            />
+          </div>
+
+          {statusMessage && (
+            <div className={`text-xs p-2.5 rounded-lg border ${
+              statusMessage.isError
+                ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+            }`}>
+              {statusMessage.text}
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 py-1.5 px-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all text-xs disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              onClick={handleTest}
+              disabled={testing || !url.trim()}
+              className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 transition-all text-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles size={12} />
+              <span>{testing ? 'Testing...' : 'Test'}</span>
             </button>
           </div>
         </div>
@@ -3564,6 +3847,8 @@ function TelegramSettingsCard() {
 export function Settings({ user }: { user: User }) {
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
   const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [cacheMessage, setCacheMessage] = useState<string | null>(null);
 
   useEffect(() => {
     api.settings.get()
@@ -3584,86 +3869,106 @@ export function Settings({ user }: { user: User }) {
     }
   }
 
+  const handleClearCache = async () => {
+    if (!window.confirm('Delete all cached streams and temporary files?')) return;
+    setCacheClearing(true);
+    try {
+      setCacheMessage('Cache cleared successfully.');
+      setTimeout(() => setCacheMessage(null), 4000);
+    } catch {
+      setCacheMessage('Failed to clear cache.');
+    } finally {
+      setCacheClearing(false);
+    }
+  };
+
   return (
-    <div className="p-6 space-y-5 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-5 lg:p-6 space-y-4 max-w-[1600px] mx-auto">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">Settings</h2>
-        <p className="text-xs text-zinc-500">Global application configuration and monitoring</p>
+        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">Settings</h2>
+        <p className="text-xs text-zinc-500">Global application configuration, integrations and monitoring</p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-1 space-y-4">
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-lg font-bold">User Profile</h3>
-              <p className="text-xs text-zinc-400">Logged in as <span className="text-zinc-200 font-mono">{user.email}</span></p>
-              <p className="text-[11px] text-zinc-500">Role: <span className="text-zinc-400 font-mono uppercase tracking-wider">{user.role}</span></p>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+        {/* Left Column: Config & Integrations */}
+        <div className="lg:col-span-5 space-y-3.5">
+          {/* User Profile & Maintenance Card */}
+          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-zinc-100">Account</h3>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono uppercase font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">{user.role}</span>
+              </div>
+              <p className="text-xs text-zinc-400 font-mono truncate">{user.email}</p>
             </div>
             
-            <div className="pt-3 border-t border-zinc-800/60 space-y-3">
-              <div className="flex justify-between items-center opacity-50 grayscale cursor-not-allowed">
-                <div>
-                  <h4 className="font-semibold text-xs text-zinc-300">Advanced Analytics</h4>
-                  <p className="text-[10px] text-zinc-500">Coming soon</p>
-                </div>
-                <div className="w-8 h-4 bg-zinc-800 rounded-full relative">
-                  <div className="absolute left-1 top-0.5 w-3 h-3 bg-zinc-600 rounded-full"></div>
-                </div>
-              </div>
-            </div>
+            <button
+              onClick={handleClearCache}
+              disabled={cacheClearing}
+              className="py-1 px-2.5 border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded-lg font-medium transition-all text-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+              title="Delete all temporary cache files"
+            >
+              <Trash2 size={12} />
+              <span>{cacheClearing ? 'Clearing...' : 'Clear Cache'}</span>
+            </button>
+            {cacheMessage && (
+              <p className="w-full text-[11px] text-emerald-400 font-medium">{cacheMessage}</p>
+            )}
           </div>
 
           <VpnSettingsCard />
 
           <TelegramSettingsCard />
 
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-lg font-bold">Quality Labels</h3>
-              <p className="text-xs text-zinc-500">Default format for quality labels in channel names</p>
+          <LlmSettingsCard />
+
+          {/* Quality Labels Card */}
+          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Quality Labels</h3>
+                <p className="text-[11px] text-zinc-500">Channel name quality tag formatting</p>
+              </div>
             </div>
 
-            <div className="space-y-2.5">
-              <label className="block text-xs font-semibold text-zinc-400">Label Format</label>
-              <div className="space-y-2">
-                <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
-                <textarea
-                  rows={2}
+            <div className="space-y-2">
+              <label className="block text-[11px] font-semibold text-zinc-400">Presets & Template</label>
+              <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
                   value={qualityFormat}
                   onChange={e => setQualityFormat(e.target.value)}
                   placeholder={QUALITY_PRESETS[0].template}
-                  className="w-full px-3 py-2 bg-zinc-950/80 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-xs"
+                  className="flex-1 px-3 py-1.5 bg-zinc-950/80 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
                 />
                 <button
                   onClick={saveQualityFormat}
                   disabled={qualityFormatSaving}
-                  className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
                 >
-                  {qualityFormatSaving ? 'Saving...' : 'Save Format'}
+                  {qualityFormatSaving ? 'Saving...' : 'Save'}
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed select-text">
-                Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
-                Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
-                More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
-                Conditional: <span className="font-mono">{'{{var}::exists["yes"||"no"]}'}</span> · <span className="font-mono">{'{{var}::>=6["5.1"||""]}'}</span>
-              </p>
+              
+              <details className="group pt-0.5 text-[11px] text-zinc-500">
+                <summary className="cursor-pointer text-zinc-400 hover:text-zinc-300 flex items-center gap-1 select-none font-medium text-[11px]">
+                  <span>Syntax Reference & Variables</span>
+                  <span className="text-[10px] text-zinc-600 font-mono group-open:rotate-180 transition-transform">▾</span>
+                </summary>
+                <div className="mt-2 p-2.5 bg-zinc-950/60 rounded-xl border border-zinc-800/60 space-y-1 font-mono text-[10px] leading-relaxed text-zinc-400 select-text">
+                  <p><span className="text-zinc-300 font-bold">Standard:</span> {'{label}'} · {'{res}'} · {'{codec}'} · {'{hdr}'} · {'{audio}'} · {'{fps}'}</p>
+                  <p><span className="text-zinc-300 font-bold">Smart:</span> {'{surround}'} (5.1) · {'{premium}'} (DD+) · {'{hdr}'} (empty if SDR)</p>
+                  <p><span className="text-zinc-300 font-bold">Extended:</span> {'{height}'} · {'{colorDepth}'} · {'{scanType}'} · {'{videoProfile}'}</p>
+                  <p><span className="text-zinc-300 font-bold">Logic:</span> {'{{var}::exists["yes"||"no"]}'} · {'{{var}::>=6["5.1"||""]}'}</p>
+                </div>
+              </details>
             </div>
-          </div>
-
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-3">
-            <div className="flex items-center gap-2 text-red-400">
-              <Trash2 size={16} />
-              <h3 className="text-sm font-bold">Danger Zone</h3>
-            </div>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">Careful: These actions permanently delete data and cannot be recovered.</p>
-            <button className="w-full py-2 border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white rounded-lg font-semibold transition-all text-xs cursor-pointer">
-              Delete All Cache
-            </button>
           </div>
         </div>
 
-        <div className="lg:col-span-2">
+        {/* Right Column: Full-Height System Logs */}
+        <div className="lg:col-span-7 h-full flex flex-col">
           <SystemLogViewer />
         </div>
       </div>
@@ -3729,6 +4034,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [categorySearch, setCategorySearch] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
   const [lastSelectedCategoryId, setLastSelectedCategoryId] = useState<string | null>(null);
+  const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(true);
   
   const [selectedStreamIds, setSelectedStreamIds] = useState<Set<string>>(new Set());
   const [lastSelectedStreamId, setLastSelectedStreamId] = useState<string | null>(null);
@@ -3740,6 +4046,7 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [scrollToStreamId, setScrollToStreamId] = useState<string | null>(null);
   const pendingNavRef = useRef<{ categoryId: string; streamId: string } | null>(null);
   const [playerInfo, setPlayerInfo] = useState<{ url: string, title: string } | null>(null);
+  const [aiCleanup, setAiCleanup] = useState<{ kind: 'channels' | 'categories'; items: { id: string; name: string }[] } | null>(null);
 
   useEffect(() => {
     api.settings.get().then(s => setGlobalFormat(s.qualityLabelFormat ?? '[{label}]')).catch(() => {
@@ -4716,6 +5023,91 @@ export function PlaylistEditor({ user }: { user: User }) {
     setCustomCategoryItems(customItemData);
   }, [id]);
 
+  const openAiCleanupStreams = (scope: 'categories' | 'streams') => {
+    let activeStreams: any[] = [];
+    if (scope === 'categories') {
+      activeStreams = sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id)));
+    } else {
+      activeStreams = sortedStreams.filter(s => selectedStreamIds.has(String(s._uniqueId)));
+    }
+    if (activeStreams.length === 0) { alert('No channels selected.'); return; }
+    const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+    const items = activeStreams
+      .map(s => {
+        const sid = String(s._rawId || s._uniqueId);
+        const m = mappingLookup.get(sid);
+        return { id: sid, name: m?.customName || s.name || s.title || '' };
+      })
+      .filter(it => it.name);
+    if (items.length === 0) { alert('No channel names to clean.'); return; }
+    setAiCleanup({ kind: 'channels', items });
+  };
+
+  const openAiCleanupCategories = () => {
+    if (selectedCategoryIds.size === 0) { alert('No categories selected.'); return; }
+    const mappingLookup = new Map(categoryMappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+    const items = Array.from(selectedCategoryIds)
+      .filter(catId => !catId.startsWith('custom_'))
+      .map(catId => {
+        const m = mappingLookup.get(catId);
+        const cat = categories.find(c => String(c.category_id || c.id) === catId);
+        return { id: catId, name: m?.customName || cat?.category_name || cat?.name || '' };
+      })
+      .filter(it => it.name);
+    if (items.length === 0) { alert('No category names to clean.'); return; }
+    setAiCleanup({ kind: 'categories', items });
+  };
+
+  const applyAiCleanup = async (approved: { id: string; name: string }[]) => {
+    if (!aiCleanup) return;
+    try {
+      setLoading(true);
+      if (aiCleanup.kind === 'channels') {
+        const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+        const updates = approved.map(item => {
+          const existing = mappingLookup.get(item.id);
+          const stream = sortedStreams.find(s => String(s._rawId) === item.id);
+          return {
+            id: existing?.id,
+            originalId: item.id,
+            playlistId: id,
+            type: activeTab,
+            customName: item.name,
+            originalName: existing?.originalName || stream?.name || stream?.title || '',
+            order: existing?.order ?? stream?.order ?? 999999,
+            hidden: existing?.hidden ?? false,
+            categoryId: existing?.categoryId ?? String(stream?.category_id ?? ''),
+            sourceIdx: stream?._sourceIdx ?? existing?.sourceIdx ?? 0,
+          };
+        });
+        if (updates.length > 0) { await api.mappings.batchUpdate(updates as any[]); await refreshMappings(); }
+      } else {
+        const mappingLookup = new Map(categoryMappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
+        const updates = approved.map(item => {
+          const existing = mappingLookup.get(item.id);
+          const cat = categories.find(c => String(c.category_id || c.id) === item.id);
+          return {
+            id: existing?.id,
+            originalId: item.id,
+            playlistId: id,
+            type: activeTab,
+            customName: item.name,
+            originalName: existing?.originalName || cat?.category_name || cat?.name || '',
+            order: existing?.order ?? 0,
+            hidden: existing?.hidden ?? false,
+          };
+        });
+        if (updates.length > 0) { await api.categoryMappings.batchUpdate(updates as any[]); await refreshMappings(); }
+      }
+    } catch (e) {
+      console.error('AI cleanup apply failed:', e);
+      alert('Failed to apply AI cleanup.');
+    } finally {
+      setLoading(false);
+      setAiCleanup(null);
+    }
+  };
+
   const isPlaylistLoading = !playlist;
 
   const handleStreamClick = (stream: any, e: React.MouseEvent) => {
@@ -4816,29 +5208,51 @@ export function PlaylistEditor({ user }: { user: User }) {
       {showSourceSelector && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-md w-full space-y-3.5 shadow-2xl"
           >
-            <h3 className="text-2xl font-bold">Select Upstream Sources</h3>
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100">Select Upstream Sources</h3>
+                <p className="text-[11px] text-zinc-500">Providers linked to this playlist</p>
+              </div>
+              <button 
+                onClick={() => setShowSourceSelector(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5 max-h-64 overflow-y-auto custom-scrollbar pr-1">
               {allSources.map(source => {
                 const expiryInfo = formatExpiryDate(source.expiryDate);
+                const isSelected = playlist.sourceIds.includes(source.id);
                 return (
-                  <label key={source.id} className="flex items-center justify-between p-4 bg-zinc-950 border border-zinc-800 rounded-2xl cursor-pointer hover:border-emerald-500/50 transition-all">
-                    <div className="flex items-center gap-3">
-                      <div className={clsx("w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all", playlist.sourceIds.includes(source.id) ? "bg-emerald-500 border-emerald-500" : "border-zinc-800")}>
-                        {playlist.sourceIds.includes(source.id) && <RefreshCw size={12} className="text-zinc-950" />}
+                  <label key={source.id} className={clsx(
+                    "flex items-center justify-between p-2.5 px-3 rounded-xl border cursor-pointer transition-all",
+                    isSelected 
+                      ? "bg-emerald-500/5 border-emerald-500/40 hover:border-emerald-500/60" 
+                      : "bg-zinc-950/80 border-zinc-800/80 hover:border-zinc-700"
+                  )}>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={clsx(
+                        "w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0", 
+                        isSelected ? "bg-emerald-500 border-emerald-500" : "border-zinc-700 bg-zinc-900"
+                      )}>
+                        {isSelected && <Check size={11} className="text-zinc-950 stroke-[3]" />}
                       </div>
-                      <div>
-                        <div className="font-medium text-sm">{source.name}</div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-xs text-zinc-200 truncate">{source.name}</div>
                         {source.expiryDate !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Expires: <span className={
                               expiryInfo.status === 'expired' ? "text-red-400 font-bold" :
                               expiryInfo.status === 'expiring_soon' ? "text-amber-400 font-bold" :
                               expiryInfo.status === 'unlimited' ? "text-emerald-400 font-medium" :
-                              "text-zinc-400"
+                              "text-zinc-400 font-mono"
                             }>{expiryInfo.text}</span>
                           </div>
                         )}
@@ -4847,7 +5261,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                     <input 
                       type="checkbox" 
                       className="hidden" 
-                      checked={playlist.sourceIds.includes(source.id)} 
+                      checked={isSelected} 
                       onChange={() => toggleSource(source.id)}
                     />
                   </label>
@@ -4855,19 +5269,19 @@ export function PlaylistEditor({ user }: { user: User }) {
               })}
 
               {playlist.sourceIds.filter(id => !allSources.find(s => s.id === id)).map(missingId => (
-                <label key={missingId} className="flex items-center justify-between p-4 bg-red-500/5 border border-red-500/20 rounded-2xl cursor-pointer hover:border-red-500/50 transition-all group">
-                  <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 rounded-md border-2 bg-red-500 border-red-500 flex items-center justify-center">
-                      <X size={12} className="text-zinc-950" />
+                <label key={missingId} className="flex items-center justify-between p-2.5 px-3 bg-red-500/5 border border-red-500/20 rounded-xl cursor-pointer hover:border-red-500/50 transition-all group">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-4 h-4 rounded bg-red-500 border border-red-500 flex items-center justify-center shrink-0">
+                      <X size={11} className="text-zinc-950 stroke-[3]" />
                     </div>
-                    <div>
-                      <span className="font-medium text-red-400">Deleted Source</span>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-xs text-red-400 block">Deleted Source</span>
                       <p className="text-[10px] text-zinc-600 font-mono tracking-tighter truncate w-32">{missingId}</p>
                     </div>
                   </div>
                   <button 
                     onClick={() => toggleSource(missingId)}
-                    className="p-2 bg-red-500/10 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="px-2 py-0.5 bg-red-500/10 text-red-400 rounded-md text-xs opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     Unlink
                   </button>
@@ -4876,31 +5290,31 @@ export function PlaylistEditor({ user }: { user: User }) {
             </div>
 
             {playlist.sourceIds.length > 1 && (
-              <div className="space-y-2 pt-4 border-t border-zinc-800">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">Processing Order</span>
-                <div className="space-y-1.5">
+              <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-1">Processing Order</span>
+                <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar pr-1">
                   {playlist.sourceIds.map((sid, idx) => {
                     const s = allSources.find(as => as.id === sid);
                     return (
-                      <div key={sid} className="flex items-center justify-between p-3 bg-zinc-950 border border-zinc-800 rounded-xl group/sitem">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-[10px] font-mono text-zinc-600 w-3">{idx + 1}.</span>
-                          <span className="text-sm font-medium truncate text-zinc-300">{s?.name || `[Deleted ${sid.slice(-4)}]`}</span>
+                      <div key={sid} className="flex items-center justify-between p-2 px-2.5 bg-zinc-950/70 border border-zinc-800/80 rounded-lg group/sitem">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[10px] font-mono text-zinc-500 w-3">{idx + 1}.</span>
+                          <span className="text-xs font-medium truncate text-zinc-300">{s?.name || `[Deleted ${sid.slice(-4)}]`}</span>
                         </div>
-                        <div className="flex gap-1 opacity-40 group-hover/sitem:opacity-100 transition-opacity">
+                        <div className="flex gap-1 opacity-50 group-hover/sitem:opacity-100 transition-opacity">
                           <button 
                             disabled={idx === 0} 
                             onClick={() => moveSource(sid, -1)} 
-                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0"
+                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0 cursor-pointer"
                           >
-                            <ChevronUp size={14}/>
+                            <ChevronUp size={12}/>
                           </button>
                           <button 
                             disabled={idx === playlist.sourceIds.length - 1} 
                             onClick={() => moveSource(sid, 1)} 
-                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0"
+                            className="p-1 hover:bg-emerald-500 hover:text-zinc-950 rounded transition-all disabled:opacity-0 cursor-pointer"
                           >
-                            <ChevronDown size={14}/>
+                            <ChevronDown size={12}/>
                           </button>
                         </div>
                       </div>
@@ -4910,12 +5324,14 @@ export function PlaylistEditor({ user }: { user: User }) {
               </div>
             )}
 
-            <button 
-              onClick={() => setShowSourceSelector(false)}
-              className="w-full py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all shadow-xl shadow-emerald-500/10"
-            >
-              Done
-            </button>
+            <div className="flex justify-end pt-2 border-t border-zinc-800/80">
+              <button 
+                onClick={() => setShowSourceSelector(false)}
+                className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg text-xs font-bold hover:bg-emerald-400 transition-all shadow-sm cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
           </motion.div>
         </div>
       )}
@@ -4925,22 +5341,31 @@ export function PlaylistEditor({ user }: { user: User }) {
         return (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full space-y-6"
+              className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 max-w-sm w-full space-y-3.5 shadow-2xl"
             >
-              <div>
-                <h3 className="text-xl font-bold">Auto-match EPG</h3>
-                <p className="text-xs text-zinc-500 mt-1">Match channel names against selected EPG sources</p>
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-100">Auto-match EPG</h3>
+                  <p className="text-[11px] text-zinc-500">Match names against selected EPG sources</p>
+                </div>
+                <button
+                  onClick={() => setShowAutoMatchModal(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+                  title="Close"
+                >
+                  <X size={16} />
+                </button>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar pr-1">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">EPG Sources</label>
                 {uniqueSources.map(source => (
-                  <label key={source} className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+                  <label key={source} className="flex items-center gap-2.5 p-2 px-2.5 bg-zinc-950 border border-zinc-800 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                     <input
                       type="checkbox"
-                      className="w-4 h-4 rounded accent-emerald-500"
+                      className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                       checked={autoMatchEnabledSources.has(source)}
                       onChange={e => {
                         const next = new Set(autoMatchEnabledSources);
@@ -4948,37 +5373,37 @@ export function PlaylistEditor({ user }: { user: User }) {
                         setAutoMatchEnabledSources(next);
                       }}
                     />
-                    <span className="text-sm font-medium truncate">{source}</span>
+                    <span className="text-xs font-medium truncate text-zinc-200">{source}</span>
                   </label>
                 ))}
               </div>
 
-              <div className="space-y-2 pt-2 border-t border-zinc-800">
-                <label className="flex items-center gap-3 p-3 bg-zinc-950 border border-zinc-800 rounded-xl cursor-pointer hover:border-emerald-500/30 transition-all">
+              <div className="pt-2 border-t border-zinc-800/80">
+                <label className="flex items-center gap-2.5 p-2 px-2.5 bg-zinc-950/70 border border-zinc-800/80 rounded-lg cursor-pointer hover:border-emerald-500/30 transition-all">
                   <input
                     type="checkbox"
-                    className="w-4 h-4 rounded accent-emerald-500"
+                    className="w-3.5 h-3.5 rounded accent-emerald-500 cursor-pointer"
                     checked={autoMatchRematch}
                     onChange={e => setAutoMatchRematch(e.target.checked)}
                   />
                   <div>
-                    <div className="text-sm font-medium">Re-match already matched channels</div>
+                    <div className="text-xs font-medium text-zinc-200">Re-match already matched channels</div>
                     <div className="text-[10px] text-zinc-500">Overwrites existing EPG assignments</div>
                   </div>
                 </label>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800/80">
                 <button
                   onClick={() => setShowAutoMatchModal(false)}
-                  className="flex-1 py-2.5 bg-zinc-800 text-zinc-300 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                  className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded-lg text-xs font-semibold hover:bg-zinc-700 transition-all cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAutoMatchEpg}
                   disabled={autoMatchEnabledSources.size === 0}
-                  className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-4 py-1.5 bg-emerald-500 text-zinc-950 rounded-lg text-xs font-bold hover:bg-emerald-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Run
                 </button>
@@ -5011,14 +5436,37 @@ export function PlaylistEditor({ user }: { user: User }) {
         />
       )}
 
+      {aiCleanup && (
+        <AiCleanupModal
+          kind={aiCleanup.kind}
+          items={aiCleanup.items}
+          onApply={applyAiCleanup}
+          onClose={() => setAiCleanup(null)}
+        />
+      )}
+
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10 px-4">
-        <div className="flex items-center">
-          <Link to="/" className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 mr-2 -ml-2">
+        <div className="flex items-center gap-2">
+          <Link to="/" className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 -ml-2">
             <ArrowLeft size={18} />
           </Link>
-          <h2 className="text-base font-bold tracking-tight mr-4">{playlist.name}</h2>
-          
-          <div className="h-6 w-px bg-zinc-800 mr-2" />
+          <h2 className="text-base font-bold tracking-tight mr-2 truncate max-w-[150px] sm:max-w-xs">{playlist.name}</h2>
+
+          <button
+            onClick={() => setIsCategorySidebarOpen(v => !v)}
+            className={clsx(
+              "px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold shrink-0",
+              isCategorySidebarOpen 
+                ? "bg-zinc-800/90 text-zinc-200 border-zinc-700 hover:bg-zinc-700" 
+                : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800"
+            )}
+            title={isCategorySidebarOpen ? "Hide categories sidebar" : "Show categories sidebar"}
+          >
+            <Folder size={13} className={isCategorySidebarOpen ? "text-emerald-400" : "text-zinc-400"} />
+            <span className="hidden sm:inline">Categories</span>
+          </button>
+
+          <div className="h-6 w-px bg-zinc-800 mx-1 hidden sm:block" />
           
           <TabButton active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="TV Channels" />
           <TabButton active={activeTab === 'vod'} onClick={() => setActiveTab('vod')} label="Movies" />
@@ -5055,113 +5503,117 @@ export function PlaylistEditor({ user }: { user: User }) {
       <div className="flex-1 flex overflow-hidden flex-col relative">
         <div className="flex-1 flex overflow-hidden relative">
           {/* Categories Sidebar */}
-        <aside className="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900/20 shrink-0">
-          <div className="p-4 border-b border-zinc-800">
-            <div className="flex gap-2 mb-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
-                <input
-                  value={categorySearch}
-                  onChange={e => setCategorySearch(e.target.value)}
-                  placeholder="Search categories..."
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
-                />
-              </div>
-              <button
-                onClick={() => setShowHiddenCategories(v => !v)}
-                className={`p-2 rounded-xl border transition-all shrink-0 ${
-                  showHiddenCategories
-                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20'
-                    : 'bg-zinc-950 text-zinc-500 border-zinc-800 hover:bg-zinc-800'
-                }`}
-                title={showHiddenCategories ? 'Hide hidden categories' : 'Show hidden categories'}
-              >
-                {showHiddenCategories ? <Eye size={16} /> : <EyeOff size={16} />}
-              </button>
-              <button
-                onClick={async () => {
-                  const name = window.prompt("Enter custom category name:");
-                  if (!name || !name.trim()) return;
-                  try {
-                    setLoading(true);
-                    await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 999999, hidden: false });
-                    await refreshMappings();
-                  } catch (e) {
-                    console.error("Failed to add custom category:", e);
-                    alert("Failed to create custom category.");
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                className="p-2 rounded-xl border bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 transition-all shrink-0"
-                title="Add Custom Category"
-              >
-                <FolderPlus size={16} />
-              </button>
-              {selectedCategoryIds.size > 0 && (
-                <>
-                  <button 
-                    onClick={() => handleBatchMoveToTop('categories')}
-                    className="px-3 py-2 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl text-[10px] font-bold hover:bg-emerald-500/20 transition-all shrink-0"
-                    title="Move selected to top"
-                  >
-                    <ChevronRight className="-rotate-90" size={14} />
-                  </button>
-                  <button 
-                    onClick={handleBatchCategoryReset}
-                    className="px-3 py-2 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-xl text-[10px] font-bold hover:bg-orange-500/20 transition-all shrink-0 flex items-center gap-1"
-                    title={`Reset ${selectedCategoryIds.size} selected categories to default`}
-                  >
-                    <RefreshCw size={14} />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
-            <DndContext 
-              sensors={sensors} 
-              collisionDetection={closestCenter} 
-              onDragStart={handleCategoryDragStart}
-              onDragEnd={handleCategoryDragEnd}
-            >
-              <SortableContext items={(sortedCategories || []).map(c => String(c.category_id || c.id))} strategy={verticalListSortingStrategy}>
-                <div className="space-y-1">
-                  {(sortedCategories || []).map(cat => {
-                    const catId = String(cat.category_id || cat.id);
-                    const mapping = categoryMappings.find(m => m.originalId === catId && m.type === activeTab);
-                    return (
-                      <SortableCategory 
-                        key={catId} 
-                        cat={cat} 
-                        mapping={mapping}
-                        activeTab={activeTab}
-                        playlistId={id || ""}
-                        allSources={allSources}
-                        playlistSourceIds={playlist.sourceIds}
-                        onMappingChange={refreshMappings}
-                        onBatchVisibilityToggle={handleCategoryBatchVisibility}
-                        isSelected={selectedCategoryIds.has(catId)}
-                        onClick={(e) => handleCategoryClick(catId, e)}
-                      />
-                    );
-                  })}
-                </div>
-              </SortableContext>
-              <DragOverlay>
-                {activeCategoryId ? (
-                  <div className="bg-zinc-900 border border-emerald-500/50 shadow-2xl rounded-xl px-4 py-3 text-sm font-bold flex items-center justify-between gap-4 text-emerald-400">
-                    <div className="flex items-center gap-2">
-                      <Edit3 size={16} />
-                      <span>Moving {selectedCategoryIds.has(activeCategoryId) ? selectedCategoryIds.size : 1} {selectedCategoryIds.size === 1 || !selectedCategoryIds.has(activeCategoryId) ? 'category' : 'categories'}</span>
-                    </div>
-                    <GripVertical size={14} className="opacity-50" />
+          {isCategorySidebarOpen && (
+            <aside className="w-56 md:w-60 lg:w-64 border-r border-zinc-800 flex flex-col bg-zinc-900/20 shrink-0">
+              <div className="p-2.5 sm:p-3 border-b border-zinc-800">
+                <div className="flex gap-1.5 mb-1.5">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
+                    <input
+                      value={categorySearch}
+                      onChange={e => setCategorySearch(e.target.value)}
+                      placeholder="Search categories..."
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-2.5 py-1.5 text-xs focus:border-emerald-500 outline-none"
+                    />
                   </div>
-                ) : null}
-              </DragOverlay>
-            </DndContext>
-          </div>
-        </aside>
+                  <button
+                    onClick={() => setShowHiddenCategories(v => !v)}
+                    className={`p-1.5 rounded-lg border transition-all shrink-0 ${
+                      showHiddenCategories
+                        ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20'
+                        : 'bg-zinc-950 text-zinc-500 border-zinc-800 hover:bg-zinc-800'
+                    }`}
+                    title={showHiddenCategories ? 'Hide hidden categories' : 'Show hidden categories'}
+                  >
+                    {showHiddenCategories ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const name = window.prompt("Enter custom category name:");
+                      if (!name || !name.trim()) return;
+                      try {
+                        setLoading(true);
+                        await api.customCategories.create({ playlistId: id, type: activeTab, name: name, order: 999999, hidden: false });
+                        await refreshMappings();
+                      } catch (e) {
+                        console.error("Failed to add custom category:", e);
+                        alert("Failed to create custom category.");
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    className="p-1.5 rounded-lg border bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 transition-all shrink-0"
+                    title="Add Custom Category"
+                  >
+                    <FolderPlus size={14} />
+                  </button>
+                  {selectedCategoryIds.size > 0 && (
+                    <>
+                      <button 
+                        onClick={() => handleBatchMoveToTop('categories')}
+                        className="px-2 py-1.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-all shrink-0"
+                        title="Move selected to top"
+                      >
+                        <ChevronRight className="-rotate-90" size={13} />
+                      </button>
+                      <button 
+                        onClick={handleBatchCategoryReset}
+                        className="px-2 py-1.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg text-[10px] font-bold hover:bg-orange-500/20 transition-all shrink-0 flex items-center gap-1"
+                        title={`Reset ${selectedCategoryIds.size} selected categories to default`}
+                      >
+                        <RefreshCw size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                <DndContext 
+                  sensors={sensors} 
+                  collisionDetection={closestCenter} 
+                  onDragStart={handleCategoryDragStart}
+                  onDragEnd={handleCategoryDragEnd}
+                >
+                  <SortableContext items={(sortedCategories || []).map(c => String(c.category_id || c.id))} strategy={verticalListSortingStrategy}>
+                    <div className="space-y-1">
+                      {(sortedCategories || []).map(cat => {
+                        const catId = String(cat.category_id || cat.id);
+                        const mapping = categoryMappings.find(m => m.originalId === catId && m.type === activeTab);
+                        return (
+                          <SortableCategory 
+                            key={catId} 
+                            cat={cat} 
+                            mapping={mapping} 
+                            activeTab={activeTab} 
+                            isSelected={selectedCategoryIds.has(catId)}
+                            onClick={(e) => handleCategoryClick(catId, e)}
+                            customCategories={customCategories}
+                            allMappings={categoryMappings}
+                            playlistId={id}
+                            onUpdate={refreshMappings}
+                          />
+                        );
+                      })}
+                    </div>
+                  </SortableContext>
+                  <DragOverlay>
+                    {activeCategoryId ? (
+                      <div className="p-2 rounded-lg bg-zinc-800 text-white font-medium shadow-2xl border border-emerald-500/50 flex items-center justify-between opacity-90 scale-105">
+                        <div className="flex items-center gap-2 truncate">
+                          <Folder size={14} className="text-emerald-400" />
+                          <span className="truncate">
+                            {categories.find(c => String(c.category_id || c.id) === activeCategoryId)?.category_name || 
+                             categories.find(c => String(c.category_id || c.id) === activeCategoryId)?.name || 'Category'}
+                          </span>
+                        </div>
+                        <GripVertical size={14} className="opacity-50" />
+                      </div>
+                    ) : null}
+                  </DragOverlay>
+                </DndContext>
+              </div>
+            </aside>
+          )}
 
         {/* Streams Grid */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
@@ -5184,33 +5636,33 @@ export function PlaylistEditor({ user }: { user: User }) {
             </div>
           ) : (
           <>
-            <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/10">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
+            <div className="p-2.5 px-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/10 gap-2">
+              <div className="relative flex-1 max-w-md min-w-0">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" size={14} />
                 <input 
                   placeholder={`Search ${activeTab}...`} 
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:border-emerald-500 outline-none"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:border-emerald-500 outline-none"
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                 />
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2.5 shrink-0">
                 <button
                   onClick={openAutoMatchModal}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors whitespace-nowrap"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-colors whitespace-nowrap"
                   title="Auto-match EPG channels by name"
                 >
                   <Tv size={12} />
                   Auto-match EPG
                 </button>
-                <div className="text-xs text-zinc-500 font-mono italic">
+                <div className="text-[11px] text-zinc-500 font-mono italic hidden sm:block">
                   {`${filteredStreams.length.toLocaleString()} of ${streams.length.toLocaleString()} items`}
                 </div>
               </div>
             </div>
 
             {/* Table header */}
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-900/30 text-[10px] uppercase tracking-wider text-zinc-500 font-bold">
+            <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/30 text-[10px] uppercase tracking-wider text-zinc-500 font-bold">
               <div className="w-8 shrink-0"></div>
               <div className="w-10 shrink-0 text-center">#</div>
               <div className="flex-1 min-w-0">Name</div>
@@ -5218,8 +5670,8 @@ export function PlaylistEditor({ user }: { user: User }) {
             </div>
 
             {/* Stream list + Editor pane side by side */}
-            <div className="flex-1 flex flex-row min-h-0">
-              <div className="flex-1 min-h-0 min-w-0 flex flex-col">
+            <div className="flex-1 flex flex-row min-h-0 relative overflow-hidden">
+              <div className="flex-1 min-h-0 min-w-[280px] sm:min-w-[320px] flex flex-col overflow-hidden">
                 <StreamTableMemo 
                   streams={filteredStreams}
                   selectedCategoryIds={selectedCategoryIds}
@@ -5269,6 +5721,15 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onBatchApply={selectedStreamIds.size > 1 ? (rules) => handleBatchApplyRegex(rules, 'streams') : undefined}
                     onBatchVisibility={selectedStreamIds.size > 1 ? (hidden) => handleBatchVisibility(hidden, 'streams') : undefined}
                     onBatchMoveToTop={selectedStreamIds.size > 1 ? () => handleBatchMoveToTop('streams') : undefined}
+                    onAiCleanChannel={(rawId) => {
+                      const s = sortedStreams.find(st => String(st._rawId) === rawId);
+                      if (!s) return;
+                      const m = mappings.find(mp => mp.originalId === rawId && mp.type === activeTab);
+                      const name = m?.customName || s.name || s.title || '';
+                      if (!name) return;
+                      setAiCleanup({ kind: 'channels', items: [{ id: rawId, name }] });
+                    }}
+                    onAiCleanChannels={selectedStreamIds.size > 1 ? () => openAiCleanupStreams('streams') : undefined}
                     onPlay={(url, title) => setPlayerInfo({ url, title })}
                   />
                 );
@@ -5297,6 +5758,8 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onBatchCategoryReset={handleBatchCategoryReset}
                   onBatchStreamVisibility={(hidden) => handleBatchVisibility(hidden, 'categories')}
                   onMoveStreamsToTop={() => handleBatchMoveToTop('streams')}
+                  onAiCleanCategories={() => openAiCleanupCategories()}
+                  onAiCleanChannels={() => openAiCleanupStreams('categories')}
                 />
               )}
             </div>
@@ -5323,6 +5786,7 @@ interface BatchActionsSectionProps {
   onBatchCategoryReset?: () => void;
   onBatchVisibility: (hidden: boolean) => void;
   onBatchMoveToTop: () => void;
+  onAiCleanChannels?: () => void;
 }
 
 function BatchActionsSection({
@@ -5337,6 +5801,7 @@ function BatchActionsSection({
   onBatchCategoryReset,
   onBatchVisibility,
   onBatchMoveToTop,
+  onAiCleanChannels,
 }: BatchActionsSectionProps) {
   const [rules, setRules] = useState<{ type: 'regex' | 'string', pattern: string; replacement: string }[]>([{ type: 'regex', pattern: '', replacement: '' }]);
 
@@ -5418,29 +5883,29 @@ function BatchActionsSection({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5">
       {/* Quality Label Toggle Section */}
-      <div className="space-y-3 border-b border-zinc-800 pb-4">
+      <div className="space-y-2 border-b border-zinc-800/80 pb-3">
         <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">
           Quality Label
         </div>
         {withMeta.length === 0 ? (
           <p className="text-[10px] text-zinc-600 italic">No scanned channels in selection</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <p className="text-[10px] text-zinc-500">{withMeta.length} scanned channel{withMeta.length !== 1 ? 's' : ''}</p>
             <div className="flex gap-2">
               <button
                 onClick={() => toggleAll(true)}
                 disabled={allOn}
-                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 {indeterminate ? 'Enable all' : 'Enable'}
               </button>
               <button
                 onClick={() => toggleAll(false)}
                 disabled={allOff}
-                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-zinc-700 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 Disable all
               </button>
@@ -5449,18 +5914,36 @@ function BatchActionsSection({
         )}
       </div>
 
-      {/* Regex Rename Section */}
-      <div className="space-y-3">
-        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Edit3 size={12} /> Rename Options
+      {/* AI Cleanup Section */}
+      {onAiCleanChannels && (
+        <div className="space-y-2 border-b border-zinc-800/80 pb-3">
+          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+            <Sparkles size={11} /> AI Cleanup
+          </div>
+          <button
+            onClick={onAiCleanChannels}
+            disabled={streamIds.length === 0}
+            className="w-full flex justify-center items-center gap-1.5 px-3 py-1.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg text-xs font-bold hover:bg-violet-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Remove quality tags and noise from channel names using the configured LLM"
+          >
+            <Sparkles size={13} />
+            Clean {streamIds.length} channel name{streamIds.length !== 1 ? 's' : ''}
+          </button>
         </div>
-        <div className="bg-zinc-950/50 border border-zinc-800 rounded-2xl p-3 space-y-2">
+      )}
+
+      {/* Regex Rename Section */}
+      <div className="space-y-2">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+          <Edit3 size={11} /> Rename Options
+        </div>
+        <div className="bg-zinc-950/50 border border-zinc-800 rounded-xl p-2.5 space-y-1.5">
           {rules.map((rule, idx) => (
-            <div key={idx} className="flex gap-2">
+            <div key={idx} className="flex gap-1.5">
               <select
                 value={rule.type}
                 onChange={e => { const r = [...rules]; r[idx].type = e.target.value as 'regex' | 'string'; setRules(r); }}
-                className="bg-zinc-900 border border-zinc-800/80 rounded-lg px-2 py-2 text-xs text-zinc-300 focus:border-emerald-500 outline-none transition-colors shrink-0"
+                className="bg-zinc-900 border border-zinc-800/80 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:border-emerald-500 outline-none transition-colors shrink-0"
               >
                 <option value="regex">Regex</option>
                 <option value="string">String</option>
@@ -5468,29 +5951,29 @@ function BatchActionsSection({
               <input
                 value={rule.pattern}
                 onChange={e => { const r = [...rules]; r[idx].pattern = e.target.value; setRules(r); }}
-                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
                 placeholder="Find"
               />
               <input
                 value={rule.replacement}
                 onChange={e => { const r = [...rules]; r[idx].replacement = e.target.value; setRules(r); }}
-                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-3 py-2 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800/80 rounded-lg px-2.5 py-1.5 text-xs text-blue-400 focus:border-emerald-500 outline-none font-mono placeholder:text-zinc-600 transition-colors"
                 placeholder="Replace"
               />
               <button
                 onClick={() => setRules(rules.filter((_, i) => i !== idx))}
-                className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all shrink-0"
+                className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all shrink-0"
                 title="Remove Rule"
               >
-                <Trash2 size={14} />
+                <Trash2 size={13} />
               </button>
             </div>
           ))}
-          <div className="pt-2 flex flex-col gap-2">
+          <div className="pt-1 flex flex-col gap-1.5">
             <div className="flex justify-start">
               <button
                 onClick={() => setRules([...rules, { type: 'regex', pattern: '', replacement: '' }])}
-                className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-1 hover:bg-emerald-500/10 rounded-md"
+                className="text-[10px] font-bold text-zinc-500 hover:text-emerald-500 transition-colors uppercase tracking-wider px-2 py-0.5 hover:bg-emerald-500/10 rounded-md"
               >
                 + Add Rule
               </button>
@@ -5499,14 +5982,14 @@ function BatchActionsSection({
               {onBatchCategoryApply && (
                 <button
                   onClick={() => onBatchCategoryApply(rules)}
-                  className="flex-1 px-4 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black rounded-lg text-[10px] hover:bg-purple-500/20 transition-all uppercase tracking-tighter"
+                  className="flex-1 px-3 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 font-bold rounded-lg text-[10px] hover:bg-purple-500/20 transition-all uppercase tracking-tight"
                 >
                   Apply to Categories
                 </button>
               )}
               <button
                 onClick={() => onBatchApply(rules)}
-                className="flex-1 px-4 py-1.5 bg-emerald-500 text-zinc-950 font-black rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tighter"
+                className="flex-1 px-3 py-1.5 bg-emerald-500 text-zinc-950 font-bold rounded-lg text-[10px] hover:bg-emerald-400 transition-all uppercase tracking-tight"
               >
                 Apply to Channels
               </button>
@@ -5518,9 +6001,9 @@ function BatchActionsSection({
       <div className="h-px w-full bg-zinc-800/50" />
 
       {/* Quality Scan Section */}
-      <div className="space-y-3">
-        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Search size={12} /> Quality Scan
+      <div className="space-y-2">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+          <Search size={11} /> Quality Scan
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -5529,7 +6012,7 @@ function BatchActionsSection({
               value={scanConcurrency}
               onChange={e => setScanConcurrency(Number(e.target.value))}
               disabled={scanPolling}
-              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
+              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-300 outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
             >
               {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
@@ -5545,7 +6028,7 @@ function BatchActionsSection({
             Skip already scanned
           </label>
           {scanJob && (
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
@@ -5563,15 +6046,15 @@ function BatchActionsSection({
             <button
               onClick={startScan}
               disabled={scanableCount === 0 || !playlist}
-              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+              className="w-full flex justify-center items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <Search size={14} />
+              <Search size={13} />
               Scan {scanableCount} channel{scanableCount !== 1 ? 's' : ''}
             </button>
           ) : (
             <button
               onClick={cancelScan}
-              className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all hover:-translate-y-0.5"
+              className="w-full flex justify-center items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-all"
             >
               Cancel
             </button>
@@ -5582,25 +6065,25 @@ function BatchActionsSection({
       <div className="h-px w-full bg-zinc-800/50" />
 
       {/* Visibility Actions */}
-      <div className="space-y-3">
-        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <Eye size={12} /> Visibility
+      <div className="space-y-2">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+          <Eye size={11} /> Visibility
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => onBatchVisibility(false)}
             disabled={streamIds.length === 0}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            className="flex justify-center items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            <Eye size={14} />
+            <Eye size={13} />
             Show All
           </button>
           <button
             onClick={() => onBatchVisibility(true)}
             disabled={streamIds.length === 0}
-            className="flex justify-center items-center gap-2 px-4 py-2.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            className="flex justify-center items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-xs font-bold hover:bg-red-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            <EyeOff size={14} />
+            <EyeOff size={13} />
             Hide All
           </button>
         </div>
@@ -5609,27 +6092,27 @@ function BatchActionsSection({
       <div className="h-px w-full bg-zinc-800/50" />
 
       {/* Move to Top & Reset */}
-      <div className="space-y-3">
-        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
-          <ArrowLeft className="rotate-90" size={12} /> Order & Reset
+      <div className="space-y-2">
+        <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-1.5">
+          <ArrowLeft className="rotate-90" size={11} /> Order & Reset
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <button
             onClick={onBatchMoveToTop}
             disabled={streamIds.length === 0}
-            className="w-full flex justify-center items-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5"
+            className="w-full flex justify-center items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-bold hover:bg-blue-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            <ArrowLeft size={14} className="rotate-90" />
+            <ArrowLeft size={13} className="rotate-90" />
             {onBatchCategoryReset ? 'Move Channels to Top' : 'Move to Top'}
           </button>
           <div className={onBatchCategoryReset ? "grid grid-cols-2 gap-2" : ""}>
             {onBatchCategoryReset && (
               <button
                 onClick={onBatchCategoryReset}
-                className="flex justify-center items-center gap-2 px-4 py-2.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-xl text-xs font-bold hover:bg-purple-500/20 transition-all hover:-translate-y-0.5"
+                className="flex justify-center items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-lg text-xs font-bold hover:bg-purple-500/20 transition-all"
                 title="Reset selected category names to original upstream defaults"
               >
-                <RefreshCw size={14} />
+                <RefreshCw size={13} />
                 Reset Categories
               </button>
             )}
@@ -5652,15 +6135,191 @@ function BatchActionsSection({
                 }
               }}
               disabled={streamIds.length === 0}
-              className={`flex justify-center items-center gap-2 px-4 py-2.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-xl text-xs font-bold hover:bg-orange-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed hover:-translate-y-0.5 ${!onBatchCategoryReset ? 'w-full' : ''}`}
+              className={`flex justify-center items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg text-xs font-bold hover:bg-orange-500/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed ${!onBatchCategoryReset ? 'w-full' : ''}`}
               title="Reset channel names and icons within selected categories to defaults"
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={13} />
               {onBatchCategoryReset ? 'Reset Channels' : 'Reset'}
             </button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface AiCleanupModalProps {
+  kind: 'channels' | 'categories';
+  items: { id: string; name: string }[];
+  onApply: (approved: { id: string; name: string }[]) => void;
+  onClose: () => void;
+}
+
+function AiCleanupModal({ kind, items, onApply, onClose }: AiCleanupModalProps) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<{ id: string; original: string; cleaned: string; approved: boolean }[]>([]);
+
+  const run = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { results } = await api.llm.cleanup(items);
+      const byId = new Map(results.map(r => [r.id, r.name]));
+      setRows(items.map(it => {
+        const cleaned = byId.get(it.id) ?? it.name;
+        return { id: it.id, original: it.name, cleaned, approved: cleaned !== it.name };
+      }));
+    } catch (e: any) {
+      setError(e?.message || 'AI cleanup failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [items]);
+
+  useEffect(() => { run(); }, [run]);
+
+  const changedRows = rows.filter(r => r.cleaned !== r.original);
+  const approvedCount = rows.filter(r => r.approved && r.cleaned !== r.original).length;
+  const allSelected = changedRows.length > 0 && changedRows.every(r => r.approved);
+
+  const toggleAll = (value: boolean) => {
+    setRows(prev => prev.map(r => (r.cleaned !== r.original ? { ...r, approved: value } : r)));
+  };
+
+  const setApproved = (id: string, value: boolean) => {
+    setRows(prev => prev.map(r => (r.id === id ? { ...r, approved: value } : r)));
+  };
+
+  const handleApply = () => {
+    const approved = rows.filter(r => r.approved && r.cleaned !== r.original && r.cleaned.trim());
+    if (approved.length === 0) return;
+    onApply(approved.map(r => ({ id: r.id, name: r.cleaned.trim() })));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-5 w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl"
+      >
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 shrink-0">
+          <div>
+            <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              <Sparkles size={16} className="text-violet-400" />
+              AI Cleanup — {kind === 'channels' ? 'Channels' : 'Categories'}
+            </h3>
+            <p className="text-[11px] text-zinc-500">
+              {loading ? 'Cleaning names with AI…' : `Review ${changedRows.length} proposed change${changedRows.length !== 1 ? 's' : ''}`}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
+            title="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-zinc-500">
+            <RefreshCw size={24} className="animate-spin text-violet-400" />
+            <span className="text-xs animate-pulse">Asking the LLM to clean {items.length} names…</span>
+          </div>
+        ) : error ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 p-4">
+            <p className="text-xs text-red-400 text-center">{error}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={run}
+                className="px-3 py-1.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg text-xs font-bold hover:bg-violet-500/20 transition-all cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded-lg text-xs font-bold hover:bg-zinc-700 transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between py-2 shrink-0">
+              <span className="text-[11px] text-zinc-500 font-mono">
+                {approvedCount} of {changedRows.length} selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => toggleAll(true)}
+                  className="px-2.5 py-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg transition-all cursor-pointer"
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={() => toggleAll(false)}
+                  className="px-2.5 py-1 text-[11px] font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-all cursor-pointer"
+                >
+                  Select none
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar border border-zinc-800 rounded-xl">
+              <div className="divide-y divide-zinc-800/60">
+                {rows.map(r => {
+                  const changed = r.cleaned !== r.original;
+                  return (
+                    <label
+                      key={r.id}
+                      className={`flex items-start gap-2.5 px-3 py-2 text-xs transition-colors ${changed ? 'cursor-pointer hover:bg-zinc-800/40' : 'opacity-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled={!changed}
+                        checked={r.approved}
+                        onChange={e => setApproved(r.id, e.target.checked)}
+                        className="mt-0.5 accent-emerald-500 cursor-pointer shrink-0"
+                      />
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        <div className="text-zinc-500 line-through truncate">{r.original}</div>
+                        <div className="flex items-center gap-1.5">
+                          <ChevronRight size={11} className="text-zinc-600 shrink-0" />
+                          {changed ? (
+                            <span className="text-emerald-400 font-semibold truncate">{r.cleaned}</span>
+                          ) : (
+                            <span className="text-zinc-500 italic truncate">unchanged</span>
+                          )}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 shrink-0">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-lg text-xs font-bold hover:bg-zinc-700 transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApply}
+                disabled={approvedCount === 0}
+                className="px-4 py-2 bg-emerald-500 text-zinc-950 rounded-lg text-xs font-bold hover:bg-emerald-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5"
+              >
+                <Check size={13} />
+                Apply {approvedCount} change{approvedCount !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </>
+        )}
+      </motion.div>
     </div>
   );
 }
@@ -5683,12 +6342,15 @@ interface CategoryPaneProps {
   onBatchCategoryReset?: () => void;
   onBatchStreamVisibility: (hidden: boolean) => void;  // for streams within categories
   onMoveStreamsToTop: () => void;
+  onAiCleanCategories?: () => void;
+  onAiCleanChannels?: () => void;
 }
 
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
   onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchCategoryReset, onBatchStreamVisibility, onMoveStreamsToTop,
+  onAiCleanCategories, onAiCleanChannels,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
@@ -5774,9 +6436,9 @@ function CategoryPane({
   const displayName = mapping?.customName || category?.category_name || category?.name || '(unknown)';
 
   return (
-    <div className="w-96 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
+    <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-88 xl:static xl:w-80 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950 shadow-2xl xl:shadow-none shrink-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-zinc-800 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <Folder size={14} className="text-zinc-400 shrink-0" />
           {isSingle ? (
@@ -5805,6 +6467,13 @@ function CategoryPane({
         <div className="flex items-center gap-1 shrink-0">
           {isSingle && (
             <>
+              <button
+                onClick={onAiCleanCategories}
+                className="p-1.5 rounded hover:bg-violet-500/10 transition-colors text-violet-400 hover:text-violet-300"
+                title="Clean this category name with AI"
+              >
+                <Sparkles size={14} />
+              </button>
               {mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
                 <button
                   onClick={handleResetSingleCategory}
@@ -5837,6 +6506,14 @@ function CategoryPane({
               <button onClick={() => onBatchVisibility(true)} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Hide all</button>
               <button onClick={onMoveToTop} className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Move to top</button>
               <button
+                onClick={onAiCleanCategories}
+                className="px-2 py-1 text-xs bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border border-violet-500/20 rounded transition-colors flex items-center gap-1"
+                title={`Clean ${selectedCategoryIds.size} category names with AI`}
+              >
+                <Sparkles size={12} />
+                <span>AI</span>
+              </button>
+              <button
                 onClick={onBatchCategoryReset}
                 className="px-2 py-1 text-xs bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded transition-colors flex items-center gap-1"
                 title={`Reset ${selectedCategoryIds.size} selected categories to default (restores original upstream names)`}
@@ -5846,7 +6523,7 @@ function CategoryPane({
               </button>
             </>
           )}
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1" title="Close">
             <X size={14} />
           </button>
         </div>
@@ -5854,7 +6531,7 @@ function CategoryPane({
 
       {/* Batch actions for streams in selected categories */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="p-4 space-y-4">
+        <div className="p-3 space-y-3">
           <BatchActionsSection
             streamIds={scopedStreamIds}
             playlistId={playlistId}
@@ -5867,6 +6544,7 @@ function CategoryPane({
             onBatchCategoryReset={onBatchCategoryReset}
             onBatchVisibility={onBatchStreamVisibility}
             onBatchMoveToTop={onMoveStreamsToTop}
+            onAiCleanChannels={onAiCleanChannels}
           />
         </div>
       </div>
@@ -7051,7 +7729,7 @@ function SeriesSeasonsBrowser({ playlistId, seriesId, title, onPlay, source, pla
   );
 }
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop, onPlay }: {
+function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop, onPlay, onAiCleanChannel, onAiCleanChannels }: {
   stream: any;
   mapping?: StreamMapping;
   playlistId: string;
@@ -7068,6 +7746,8 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   onBatchVisibility?: (hidden: boolean) => void;
   onBatchMoveToTop?: () => void;
   onPlay?: (url: string, title: string) => void;
+  onAiCleanChannel?: (rawId: string) => void;
+  onAiCleanChannels?: () => void;
 }) {
   const [customName, setCustomName] = useState(mapping?.customName || "");
   const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
@@ -7232,24 +7912,24 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 
   return (
     <motion.aside
-      initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 380, opacity: 1 }}
-      exit={{ width: 0, opacity: 0 }}
-      className="border-l border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col z-20 shrink-0 overflow-hidden"
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      className="fixed inset-y-0 right-0 z-40 w-full sm:w-88 xl:static xl:w-80 border-l border-zinc-800 bg-zinc-900 shadow-2xl xl:shadow-none flex flex-col shrink-0 overflow-hidden"
     >
       {/* Header: Stream identity on top row, quick actions on second row */}
       <header className="border-b border-zinc-800 bg-zinc-950/60 shrink-0">
-        <div className="px-4 py-3 flex items-center gap-3 min-w-0">
+        <div className="px-3.5 py-2.5 flex items-center gap-2.5 min-w-0">
           {isMulti ? (
-            <div className="w-9 h-9 rounded-xl bg-zinc-800 border border-zinc-700 flex items-center justify-center text-emerald-500 font-bold text-sm shrink-0">
+            <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center text-emerald-500 font-bold text-sm shrink-0">
               {selectedStreamIds.size}
             </div>
           ) : (
-            <div className="w-9 h-9 rounded-xl overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
               {effectiveIcon ? (
                 <img src={proxyImg(effectiveIcon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
               ) : (
-                <Tv size={16} className="text-zinc-700" />
+                <Tv size={15} className="text-zinc-700" />
               )}
             </div>
           )}
@@ -7266,12 +7946,12 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 shrink-0 transition-colors"
             title="Close"
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
 
         {!isMulti && playlist && source && (
-          <div className={`px-4 pb-3 pt-0 grid gap-2 ${onPlay ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          <div className={`px-3.5 pb-2.5 pt-0 grid gap-2 ${onPlay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {onPlay && (
               <button
                 onClick={() => {
@@ -7284,10 +7964,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                   }
                   onPlay(url, customName || originalName || "Stream");
                 }}
-                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 rounded-xl font-bold text-xs transition-all shadow-sm shadow-emerald-950/20"
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-zinc-950 rounded-lg font-bold text-xs transition-all shadow-sm"
                 title={playlist.directStreams ? "Play Upstream Source (Direct)" : "Play Proxied Stream"}
               >
-                <Play size={13} fill="currentColor" />
+                <Play size={12} fill="currentColor" />
                 Play
               </button>
             )}
@@ -7302,10 +7982,10 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 }
                 downloadStreamM3u(url, customName || originalName || "Stream");
               }}
-              className="flex items-center justify-center gap-1.5 py-2 px-3 bg-orange-500/15 hover:bg-orange-500/25 active:scale-[0.98] text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-xl font-bold text-xs transition-all"
+              className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 bg-orange-500/15 hover:bg-orange-500/25 active:scale-[0.98] text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded-lg font-bold text-xs transition-all"
               title="Download .m3u to play in VLC / Native Player"
             >
-              <VlcIcon size={13} />
+              <VlcIcon size={12} />
               External (.m3u)
             </button>
           </div>
@@ -7313,13 +7993,25 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
       </header>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="p-4 space-y-4">
+        <div className="p-3 space-y-3">
 
           {/* Name + Logo — hidden in multi-select */}
           {!isMulti && (
             <>
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Display Name</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Display Name</label>
+                  {onAiCleanChannel && (
+                    <button
+                      onClick={() => onAiCleanChannel(stream._rawId || String(stream.stream_id || stream.series_id || stream._uniqueId))}
+                      className="text-[10px] text-violet-400 hover:underline font-bold flex items-center gap-1"
+                      title="Clean this channel name with AI"
+                    >
+                      <Sparkles size={11} />
+                      AI Clean
+                    </button>
+                  )}
+                </div>
                 <input
                   value={customName}
                   onChange={e => setCustomName(e.target.value)}
@@ -7691,6 +8383,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
                 onBatchApply={onBatchApply}
                 onBatchVisibility={onBatchVisibility}
                 onBatchMoveToTop={onBatchMoveToTop}
+                onAiCleanChannels={onAiCleanChannels}
               />
             </>
           )}
@@ -7764,53 +8457,53 @@ export function UserManager({ user }: { user: User }) {
   }
 
   return (
-    <div className="p-8 space-y-8 max-w-5xl mx-auto">
+    <div className="p-6 space-y-5 max-w-5xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">User Management</h2>
-        <p className="text-zinc-500">Manage system accounts and their associated data</p>
+        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">User Management</h2>
+        <p className="text-xs text-zinc-500">Manage system accounts and their associated data</p>
       </header>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-sm">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-zinc-800 bg-zinc-900/50">
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">User Email</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Playlists</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Role</th>
-              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Actions</th>
+              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500">User Email</th>
+              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Playlists</th>
+              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Role</th>
+              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-zinc-800/80">
             {users.map((u) => (
               <tr key={u.id} className="group hover:bg-zinc-800/30 transition-all">
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 font-bold text-xs">
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 font-bold text-xs">
                       {u.email[0].toUpperCase()}
                     </div>
-                    <span className="font-medium text-zinc-100">{u.email}</span>
+                    <span className="font-medium text-xs text-zinc-200">{u.email}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4 text-center">
-                  <span className="px-3 py-1 bg-zinc-800 rounded-full text-xs font-bold text-zinc-400 border border-zinc-700">
+                <td className="px-4 py-2.5 text-center">
+                  <span className="px-2.5 py-0.5 bg-zinc-800 rounded-full text-[11px] font-bold text-zinc-400 border border-zinc-700">
                     {u.playlistCount}
                   </span>
                 </td>
-                <td className="px-6 py-4">
-                  <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-tighter border ${
-                    u.role === 'admin' ? 'bg-purple-500/10 text-purple-500 border-purple-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+                <td className="px-4 py-2.5">
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter border ${
+                    u.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                   }`}>
                     {u.role}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-right">
+                <td className="px-4 py-2.5 text-right">
                   {u.id !== user.id && (
                     <button 
                       onClick={() => handleDelete(u.id, u.email)}
-                      className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                      className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all cursor-pointer"
                       title="Delete User"
                     >
-                      <Trash2 size={18} />
+                      <Trash2 size={15} />
                     </button>
                   )}
                   {u.id === user.id && (
@@ -7881,53 +8574,53 @@ export function DvrManager({ user }: { user: User }) {
   const totalBytes = recordings.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
 
   return (
-    <div className="p-8 space-y-8 max-w-6xl mx-auto">
+    <div className="p-6 space-y-5 max-w-6xl mx-auto">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-zinc-100">DVR / Aufnahmen</h2>
-          <p className="text-zinc-500">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
+          <h2 className="text-2xl font-bold tracking-tight text-zinc-100">DVR / Aufnahmen</h2>
+          <p className="text-xs text-zinc-500">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
         </div>
       </header>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Aktive Aufnahmen</div>
-          <div className="text-2xl font-black text-red-500 mt-1 flex items-center gap-2">
-            {activeRecordings.length > 0 && <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />}
+          <div className="text-xl font-bold text-red-500 mt-1 flex items-center gap-2">
+            {activeRecordings.length > 0 && <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />}
             {activeRecordings.length}
           </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Gespeicherte Aufnahmen</div>
-          <div className="text-2xl font-black text-zinc-100 mt-1">{completedRecordings.length}</div>
+          <div className="text-xl font-bold text-zinc-100 mt-1">{completedRecordings.length}</div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
+        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
           <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Belegter Speicherplatz</div>
-          <div className="text-2xl font-black text-emerald-500 mt-1">{formatBytes(totalBytes)}</div>
+          <div className="text-xl font-bold text-emerald-500 mt-1">{formatBytes(totalBytes)}</div>
         </div>
       </div>
 
       {/* Active Recordings Section */}
       {activeRecordings.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
-            <h3 className="text-lg font-bold text-zinc-100">Laufende Aufnahmen</h3>
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+            <h3 className="text-sm font-bold text-zinc-100">Laufende Aufnahmen</h3>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {activeRecordings.map(rec => (
-              <div key={rec.id} className="bg-zinc-900 border border-red-500/30 rounded-3xl p-6 space-y-4 shadow-lg shadow-red-500/5">
+              <div key={rec.id} className="bg-zinc-900 border border-red-500/30 rounded-2xl p-4 space-y-3 shadow-lg shadow-red-500/5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30">
+                      <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
                         REC
                       </span>
-                      <h4 className="font-bold text-base text-zinc-100">{rec.streamName}</h4>
+                      <h4 className="font-bold text-sm text-zinc-100 truncate">{rec.streamName}</h4>
                     </div>
                     {rec.extra?.isHandover && (
-                      <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                      <div className="mt-1 inline-flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                         <span>⚠️ Fernseher getrennt – Aufnahme läuft im Hintergrund</span>
                       </div>
                     )}
@@ -7935,23 +8628,23 @@ export function DvrManager({ user }: { user: User }) {
                   <button
                     onClick={() => handleStop(rec.id)}
                     disabled={actionBusy[rec.id]}
-                    className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-red-500/20 disabled:opacity-50"
+                    className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer shrink-0"
                   >
-                    {actionBusy[rec.id] ? 'Stoppe...' : 'Aufnahme stoppen'}
+                    {actionBusy[rec.id] ? 'Stoppe...' : 'Stoppen'}
                   </button>
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800 text-xs text-zinc-400">
                   <div>
-                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Laufzeit</span>
-                    <span className="font-mono text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Laufzeit</span>
+                    <span className="font-mono text-xs text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Größe</span>
-                    <span className="font-mono text-zinc-200">{formatBytes(rec.fileSizeBytes)}</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Größe</span>
+                    <span className="font-mono text-xs text-zinc-200">{formatBytes(rec.fileSizeBytes)}</span>
                   </div>
                   <div>
-                    <span className="block text-[10px] text-zinc-600 uppercase font-bold">Startzeit</span>
-                    <span className="font-mono text-zinc-200">{new Date(rec.startTime).toLocaleTimeString()}</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Startzeit</span>
+                    <span className="font-mono text-xs text-zinc-200">{new Date(rec.startTime).toLocaleTimeString()}</span>
                   </div>
                 </div>
               </div>
@@ -7961,79 +8654,79 @@ export function DvrManager({ user }: { user: User }) {
       )}
 
       {/* Completed Recordings Section */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-zinc-100">Aufnahme-Bibliothek</h3>
+      <div className="space-y-3">
+        <h3 className="text-sm font-bold text-zinc-100">Aufnahme-Bibliothek</h3>
         {loading && recordings.length === 0 ? (
-          <div className="p-8 text-center text-zinc-500 animate-pulse">Lade Aufnahmen...</div>
+          <div className="p-6 text-center text-zinc-500 animate-pulse text-xs">Lade Aufnahmen...</div>
         ) : completedRecordings.length === 0 ? (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-12 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-zinc-800 text-zinc-500 flex items-center justify-center mx-auto">
-              <Radio size={24} />
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-2.5">
+            <div className="w-10 h-10 rounded-xl bg-zinc-800 text-zinc-500 flex items-center justify-center mx-auto">
+              <Radio size={20} />
             </div>
-            <h4 className="text-base font-bold text-zinc-300">Noch keine Aufnahmen vorhanden</h4>
+            <h4 className="text-sm font-bold text-zinc-300">Noch keine Aufnahmen vorhanden</h4>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
               Klicke im <strong>Dashboard</strong> bei einem aktiven Live-Stream auf <strong>Aufnehmen</strong>, um eine Sendung direkt ohne zweite Verbindung mitzuschneiden.
             </p>
           </div>
         ) : (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-sm">
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender / Titel</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Datum & Uhrzeit</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Dauer</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Größe</th>
-                  <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Aktionen</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender / Titel</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Datum & Uhrzeit</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Dauer</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Größe</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Aktionen</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800 text-sm">
+              <tbody className="divide-y divide-zinc-800/80 text-xs">
                 {completedRecordings.map(rec => (
                   <tr key={rec.id} className="group hover:bg-zinc-800/30 transition-all">
-                    <td className="px-6 py-4 font-medium text-zinc-100">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-xl bg-zinc-800 flex items-center justify-center text-zinc-400">
-                          <Film size={16} />
+                    <td className="px-4 py-2.5 font-medium text-zinc-100">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
+                          <Film size={14} />
                         </div>
-                        <div>
-                          <div className="font-bold">{rec.streamName}</div>
-                          {rec.playlistId && <div className="text-xs text-zinc-500">via {rec.playlistId}</div>}
+                        <div className="min-w-0">
+                          <div className="font-bold truncate text-xs">{rec.streamName}</div>
+                          {rec.playlistId && <div className="text-[10px] text-zinc-500">via {rec.playlistId}</div>}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-zinc-400 text-xs font-mono">
+                    <td className="px-4 py-2.5 text-zinc-400 font-mono text-[11px]">
                       {new Date(rec.startTime).toLocaleDateString()} {new Date(rec.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
-                    <td className="px-6 py-4 text-center font-mono text-xs text-zinc-300">
+                    <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
                       {formatDuration(rec.durationSeconds)}
                     </td>
-                    <td className="px-6 py-4 text-center font-mono text-xs text-zinc-300">
+                    <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
                       {formatBytes(rec.fileSizeBytes)}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => setActivePlayback(rec)}
-                          className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-xl transition-all"
+                          className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all cursor-pointer"
                           title="Im Web-Player abspielen"
                         >
-                          <Play size={16} />
+                          <Play size={14} />
                         </button>
                         <a
                           href={api.dvr.getStreamUrl(rec.id, true)}
                           download
-                          className="p-2 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-xl transition-all"
+                          className="p-1.5 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-all cursor-pointer"
                           title="Herunterladen"
                         >
-                          <Download size={16} />
+                          <Download size={14} />
                         </a>
                         <button
                           onClick={() => handleDelete(rec.id, rec.streamName)}
                           disabled={actionBusy[rec.id]}
-                          className="p-2 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all disabled:opacity-50"
+                          className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
                           title="Löschen"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </td>
@@ -8128,37 +8821,38 @@ function DvrPlaybackModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl w-full max-w-4xl overflow-hidden shadow-2xl space-y-4 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xl font-bold text-zinc-100">{recording.streamName}</h3>
-            <p className="text-xs text-zinc-500">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl space-y-3 p-4 sm:p-5">
+        <div className="flex items-center justify-between pb-2 border-b border-zinc-800/80">
+          <div className="min-w-0 pr-3">
+            <h3 className="text-base font-bold text-zinc-100 truncate">{recording.streamName}</h3>
+            <p className="text-[11px] text-zinc-500">
               Aufgenommen am {new Date(recording.startTime).toLocaleString()} ({formatBytes(recording.fileSizeBytes)})
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             <a
               href={api.dvr.getStreamUrl(recording.id, true)}
               download
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-all"
+              className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
               title="Aufnahme als TS-Datei herunterladen"
             >
-              <Download size={14} />
+              <Download size={13} />
               Herunterladen
             </a>
             <button
               onClick={() => downloadStreamM3u(api.dvr.getStreamUrl(recording.id), recording.streamName)}
-              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-medium rounded-xl flex items-center gap-1.5 transition-all"
+              className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
               title="In externem Player (z. B. VLC) öffnen"
             >
-              <VlcIcon size={14} />
+              <VlcIcon size={13} />
               VLC
             </button>
             <button
               onClick={onClose}
-              className="p-2 text-zinc-400 hover:text-white rounded-xl hover:bg-zinc-800 transition-all ml-2"
+              className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-all cursor-pointer ml-1"
+              title="Close"
             >
-              <X size={20} />
+              <X size={16} />
             </button>
           </div>
         </div>

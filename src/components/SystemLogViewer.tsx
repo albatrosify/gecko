@@ -391,17 +391,17 @@ export function SystemLogViewer() {
 
   const viewerContent = (
     <div
-      className={`flex flex-col bg-zinc-950 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl transition-all duration-200 ${
+      className={`flex flex-col bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl transition-all duration-200 ${
         isMaximized
-          ? 'fixed inset-4 z-50 p-6'
-          : 'relative p-6 h-[680px]'
+          ? 'fixed inset-4 z-50 p-5'
+          : 'relative p-4 sm:p-5 h-[calc(100vh-140px)] min-h-[580px] lg:h-full'
       }`}
     >
       {/* Top Header Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-zinc-800/80">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-zinc-100 font-bold">
-            <Activity size={18} className="text-emerald-500" />
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+          <div className="flex items-center gap-2 text-zinc-100 font-bold text-sm sm:text-base">
+            <Activity size={16} className="text-emerald-500" />
             <span>System Logs</span>
           </div>
 
@@ -409,7 +409,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setIsLive(!isLive)}
             title={isLive ? 'Pause live auto-refresh' : 'Resume live auto-refresh'}
-            className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
               isLive
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
                 : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
@@ -417,15 +417,15 @@ export function SystemLogViewer() {
           >
             {isLive ? (
               <>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span>Live</span>
-                <Pause size={12} className="opacity-70" />
+                <Pause size={10} className="opacity-70" />
               </>
             ) : (
               <>
-                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                 <span>Paused</span>
-                <Play size={12} className="opacity-70" />
+                <Play size={10} className="opacity-70" />
               </>
             )}
           </button>
@@ -435,18 +435,18 @@ export function SystemLogViewer() {
             onClick={() => fetchLogs(true)}
             disabled={isLoading}
             title="Refresh logs now"
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50"
+            className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            <RefreshCw size={14} className={isLoading ? 'animate-spin text-emerald-400' : ''} />
+            <RefreshCw size={13} className={isLoading ? 'animate-spin text-emerald-400' : ''} />
           </button>
 
           {/* Buffer Limit Selector */}
-          <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-            <span>Buffer:</span>
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <span className="hidden sm:inline">Buffer:</span>
             <select
               value={limit}
               onChange={e => setLimit(parseInt(e.target.value, 10))}
-              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-zinc-700 cursor-pointer"
+              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs text-zinc-300 focus:outline-none focus:border-zinc-700 cursor-pointer"
             >
               {LIMIT_OPTIONS.map(opt => (
                 <option key={opt} value={opt}>
@@ -458,19 +458,19 @@ export function SystemLogViewer() {
         </div>
 
         {/* Right Action Icons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {/* Word Wrap Toggle */}
           <button
             onClick={() => setWrapLines(!wrapLines)}
             title={wrapLines ? 'Disable line wrap (horizontal scroll)' : 'Enable word wrap'}
-            className={`p-1.5 rounded-lg border text-xs flex items-center gap-1.5 transition-all ${
+            className={`p-1 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-all cursor-pointer ${
               wrapLines
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800'
             }`}
           >
-            <WrapText size={14} />
-            <span className="hidden sm:inline text-[11px] font-medium">{wrapLines ? 'Wrap: On' : 'Wrap: Off'}</span>
+            <WrapText size={13} />
+            <span className="hidden md:inline text-[11px] font-medium">{wrapLines ? 'Wrap: On' : 'Wrap: Off'}</span>
           </button>
 
           {/* Copy Logs */}
@@ -478,10 +478,10 @@ export function SystemLogViewer() {
             onClick={handleCopy}
             disabled={filteredLines.length === 0}
             title="Copy displayed logs to clipboard"
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center gap-1.5 disabled:opacity-40"
+            className="p-1 sm:px-2 sm:py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center gap-1 disabled:opacity-40 cursor-pointer"
           >
-            {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-            <span className="hidden sm:inline text-[11px] font-medium">{copied ? 'Copied' : 'Copy'}</span>
+            {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+            <span className="hidden md:inline text-[11px] font-medium">{copied ? 'Copied' : 'Copy'}</span>
           </button>
 
           {/* Download Logs */}
@@ -489,42 +489,42 @@ export function SystemLogViewer() {
             onClick={handleDownload}
             disabled={filteredLines.length === 0}
             title="Download logs as .txt"
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-40"
+            className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-40 cursor-pointer"
           >
-            <Download size={14} />
+            <Download size={13} />
           </button>
 
           {/* Clear Buffer View */}
           <button
             onClick={() => setCleared(true)}
             title="Clear view (temporary)"
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors"
+            className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
-            <Trash2 size={14} />
+            <Trash2 size={13} />
           </button>
 
           {/* Fullscreen / Maximize */}
           <button
             onClick={() => setIsMaximized(!isMaximized)}
             title={isMaximized ? 'Minimize' : 'Maximize to full window'}
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+            className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
-            {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
         </div>
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="py-3 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 border-b border-zinc-800/50">
-        {/* Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1 md:pb-0">
+      <div className="py-2.5 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/50">
+        {/* Filter Chips - flex-wrap prevents truncation/overflow */}
+        <div className="flex flex-wrap items-center gap-1.5">
           {filterTabs.map(tab => {
             const isActive = filter === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setFilter(tab.id)}
-                className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 py-0.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                   isActive
                     ? 'bg-zinc-100 text-zinc-950 shadow-sm'
                     : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-850 hover:text-zinc-200 border border-zinc-800'
@@ -554,19 +554,19 @@ export function SystemLogViewer() {
         </div>
 
         {/* Search Input */}
-        <div className="relative min-w-[220px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+        <div className="relative w-full sm:w-auto sm:min-w-[170px] lg:min-w-[190px]">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search logs..."
-            className="w-full pl-8 pr-8 py-1.5 bg-zinc-900/90 border border-zinc-800 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20"
+            className="w-full pl-8 pr-7 py-1 bg-zinc-900/90 border border-zinc-800 rounded-lg text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
             >
               <X size={12} />
             </button>

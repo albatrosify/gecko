@@ -1,6 +1,14 @@
 const API_BASE = '';
 
 function getToken(): string | null {
+  if (typeof window !== 'undefined' && window.location) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramToken = urlParams.get('token');
+    if (paramToken) {
+      localStorage.setItem('auth_token', paramToken);
+      return paramToken;
+    }
+  }
   return localStorage.getItem('auth_token');
 }
 
@@ -381,6 +389,11 @@ export interface GlobalSettings {
   telegramChatId?: string;
   telegramEnabled?: boolean;
   telegramKeywords?: string[];
+  llmEnabled?: boolean;
+  llmUrl?: string;
+  llmApiKey?: string;
+  llmModel?: string;
+  llmSystemPrompt?: string;
 }
 
 export const settings = {
@@ -397,6 +410,22 @@ export const settings = {
     return request<{ success: boolean }>('/api/settings/telegram/test', {
       method: 'POST',
       body: JSON.stringify({ botToken, chatId }),
+    });
+  },
+};
+
+// LLM name cleanup
+export const llm = {
+  async cleanup(items: { id: string; name: string }[]): Promise<{ results: { id: string; name: string }[] }> {
+    return request('/api/llm/cleanup', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  },
+  async test(data?: { url?: string; apiKey?: string; model?: string }): Promise<{ success: boolean; model?: string }> {
+    return request('/api/llm/test', {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
     });
   },
 };
@@ -457,5 +486,5 @@ export const dvr = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr };
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr, llm };
 export default api;
