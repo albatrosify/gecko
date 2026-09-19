@@ -5504,7 +5504,7 @@ export function PlaylistEditor({ user }: { user: User }) {
         <div className="flex-1 flex overflow-hidden relative">
           {/* Categories Sidebar */}
           {isCategorySidebarOpen && (
-            <aside className="w-56 md:w-60 lg:w-64 border-r border-zinc-800 flex flex-col bg-zinc-900/20 shrink-0">
+            <aside className="w-60 md:w-64 lg:w-72 border-r border-zinc-800 flex flex-col bg-zinc-900/20 shrink-0">
               <div className="p-2.5 sm:p-3 border-b border-zinc-800">
                 <div className="flex gap-1.5 mb-1.5">
                   <div className="relative flex-1">
@@ -6653,7 +6653,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
       style={style}
       onClick={onClick}
       className={cn(
-        "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-all group relative",
+        "w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm transition-all group relative cursor-pointer",
         isSelected 
           ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.05)]" 
           : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300 border border-transparent",
@@ -6664,10 +6664,11 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         {...attributes} 
         {...listeners}
         className={cn(
-          "p-1 -ml-1 rounded transition-colors",
-          isSelected ? "text-emerald-500/40 hover:text-emerald-500" : "text-zinc-600 hover:text-zinc-400 opacity-0 group-hover:opacity-100"
+          "p-0.5 -ml-1 rounded transition-colors shrink-0 cursor-grab active:cursor-grabbing",
+          isSelected ? "text-emerald-500/50 hover:text-emerald-400" : "hidden group-hover:block text-zinc-600 hover:text-zinc-400"
         )}
         onClick={e => e.stopPropagation()}
+        title="Drag to reorder"
       >
         <GripVertical size={12} />
       </button>
@@ -6680,23 +6681,19 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
               value={newName}
               onChange={e => setNewName(e.target.value)}
               onBlur={() => setIsEditing(false)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-500"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-emerald-500 text-white"
             />
           </form>
         ) : (
-          <div className="flex flex-col truncate">
-            <div className="flex items-center gap-1 min-w-0">
-              <div className="w-1.5 h-1.5 shrink-0 flex items-center justify-center">
-                {mapping?.customName && mapping.customName !== cat.category_name ? (
-                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500" title="Modified: will not update from upstream" />
-                ) : (
-                  <div className="w-1.5 h-1.5" />
-                )}
-              </div>
+          <div className="flex flex-col min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {mapping?.customName && mapping.customName !== cat.category_name && (
+                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" title="Modified name" />
+              )}
               {cat._isCustom && <Star size={10} className="text-yellow-500 shrink-0" />}
               <span className={cn(
                 "text-xs font-medium truncate transition-colors",
-                isSelected ? "text-emerald-400" : "text-zinc-300 group-hover:text-zinc-100"
+                isSelected ? "text-emerald-400 font-semibold" : "text-zinc-300 group-hover:text-zinc-100"
               )}>
                 {mapping?.customName || cat.category_name}
               </span>
@@ -6711,8 +6708,8 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
       </div>
 
       <div className={cn(
-        "flex items-center gap-1 transition-opacity",
-        isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        "items-center gap-0.5 shrink-0 transition-opacity",
+        isSelected ? "flex" : "hidden group-hover:flex"
       )}>
         {cat._isCustom && (
           <button
