@@ -287,11 +287,11 @@ function VpnStatusBar() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {vpnStatus?.vpnBlockedRecent && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="text-amber-400 shrink-0" size={18} />
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="text-amber-400 shrink-0" size={16} />
             <div className="text-xs text-amber-200">
               <span className="font-bold text-amber-300">Upstream CDN Block Detected (HTTP 511):</span>{' '}
               An upstream stream was rejected because your current egress IP is recognized as a VPN or datacenter IP.
@@ -301,7 +301,7 @@ function VpnStatusBar() {
             <button
               onClick={handleRotateVpn}
               disabled={rotating}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 transition disabled:opacity-50"
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 transition disabled:opacity-50"
             >
               <RefreshCw size={12} className={rotating ? "animate-spin" : ""} />
               <span>{rotating ? "Rotating..." : "Rotate VPN Now"}</span>
@@ -310,8 +310,8 @@ function VpnStatusBar() {
         </div>
       )}
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-4 flex-wrap">
+      <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2 shrink-0">
             {error ? (
               <span className="w-2 h-2 rounded-full bg-amber-500" title="IP lookup unavailable" />
@@ -320,7 +320,7 @@ function VpnStatusBar() {
             ) : (
               <span className="w-2 h-2 rounded-full bg-zinc-600 animate-pulse" />
             )}
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Egress IP</span>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Egress IP</span>
           </div>
 
           {error && (
@@ -328,24 +328,24 @@ function VpnStatusBar() {
           )}
 
           {!error && !ipInfo && (
-            <div className="flex gap-4">
-              <div className="h-3 w-28 bg-zinc-800 rounded animate-pulse" />
-              <div className="h-3 w-20 bg-zinc-800 rounded animate-pulse" />
+            <div className="flex gap-3">
+              <div className="h-3 w-24 bg-zinc-800 rounded animate-pulse" />
+              <div className="h-3 w-16 bg-zinc-800 rounded animate-pulse" />
             </div>
           )}
 
           {!error && ipInfo && (
-            <div className="flex items-center gap-6 flex-wrap">
-              <div className="flex items-center gap-2">
-                <span className="text-xl leading-none">{countryToFlag(ipInfo.country)}</span>
-                <span className="font-mono text-sm font-bold text-zinc-100 tracking-tight">{ipInfo.ip}</span>
+            <div className="flex items-center gap-3 sm:gap-4 flex-wrap text-xs">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base leading-none">{countryToFlag(ipInfo.country)}</span>
+                <span className="font-mono text-xs font-bold text-zinc-100 tracking-tight">{ipInfo.ip}</span>
               </div>
               <span className="text-zinc-600">·</span>
-              <span className="text-sm text-zinc-400">{[ipInfo.city, ipInfo.country].filter(Boolean).join(', ')}</span>
+              <span className="text-zinc-400">{[ipInfo.city, ipInfo.country].filter(Boolean).join(', ')}</span>
               {ipInfo.org && (
                 <>
                   <span className="text-zinc-600">·</span>
-                  <span className="text-xs text-zinc-500 font-mono truncate max-w-[240px]">{ipInfo.org}</span>
+                  <span className="text-zinc-500 font-mono truncate max-w-[220px]">{ipInfo.org}</span>
                 </>
               )}
             </div>
@@ -353,14 +353,14 @@ function VpnStatusBar() {
         </div>
 
         {vpnStatus?.configured && (
-          <div className="flex items-center gap-3 shrink-0 ml-auto">
+          <div className="flex items-center gap-2.5 shrink-0 ml-auto">
             {rotateMessage && (
               <span className="text-xs text-zinc-400 animate-pulse">{rotateMessage}</span>
             )}
             <button
               onClick={handleRotateVpn}
               disabled={rotating}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 hover:border-zinc-600 transition disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition disabled:opacity-50"
               title="Disconnect and reconnect VPN via Gluetun to get a new IP address"
             >
               <RefreshCw size={12} className={clsx(rotating && "animate-spin text-emerald-400", !rotating && "text-zinc-400")} />
@@ -423,73 +423,75 @@ export function Dashboard() {
   const historyMbps = (stats.history || []).map((h: any) => h.bps / 1000000);
 
   return (
-    <div className="p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="p-6 space-y-5 max-w-7xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">Overview</h2>
-        <p className="text-zinc-500">Real-time system performance and activity</p>
+        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">Overview</h2>
+        <p className="text-xs text-zinc-500">Real-time system performance and activity</p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
           { label: 'Playlists', value: stats.totalPlaylists, icon: LayoutList, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
           { label: 'Active Users', value: stats.totalUsers, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
           { label: 'Active Streams', value: stats.activeStreams, icon: Wifi, color: 'text-purple-500', bg: 'bg-purple-500/10' },
           { label: 'Current Speed', value: `${mbps} Mbps`, icon: Activity, color: 'text-orange-500', bg: 'bg-orange-500/10' },
         ].map((card, i) => (
-          <div key={i} className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl group hover:border-zinc-700 transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className={`p-3 rounded-2xl ${card.bg} ${card.color} border border-current/10`}>
-                <card.icon size={20} />
+          <div key={i} className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-zinc-700 transition-all flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">{card.label}</span>
+              <div className={`p-1.5 rounded-lg ${card.bg} ${card.color} border border-current/10 shrink-0`}>
+                <card.icon size={15} />
               </div>
             </div>
-            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">{card.label}</div>
-            <div className="text-2xl font-black text-zinc-100 mt-1">{card.value}</div>
+            <div className="text-xl font-bold text-zinc-100 tracking-tight">{card.value}</div>
           </div>
         ))}
         {/* Cache stat card */}
         {stats.cache && (
-          <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl group hover:border-zinc-700 transition-all">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 rounded-2xl bg-yellow-500/10 text-yellow-500 border border-current/10">
-                <Database size={20} />
+          <div className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-zinc-700 transition-all flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">Cache</span>
+              <div className="p-1.5 rounded-lg bg-yellow-500/10 text-yellow-500 border border-current/10 shrink-0">
+                <Database size={15} />
               </div>
             </div>
-            <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Cache</div>
-            <div className="text-2xl font-black text-zinc-100 mt-1">{stats.cache.size}</div>
-            <div className="text-xs text-zinc-500 mt-1">{stats.cache.entries} entries</div>
+            <div>
+              <div className="text-xl font-bold text-zinc-100 tracking-tight">{stats.cache.size}</div>
+              <div className="text-[10px] text-zinc-500">{stats.cache.entries} entries</div>
+            </div>
           </div>
         )}
       </div>
 
       <VpnStatusBar />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col">
-          <div className="flex justify-between items-center mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">
+          <div className="flex justify-between items-center mb-4">
             <div>
-              <h3 className="text-xl font-bold">Bandwidth Usage</h3>
-              <p className="text-sm text-zinc-500">Real-time throughput (last 2 minutes)</p>
+              <h3 className="text-base font-bold text-zinc-100">Bandwidth Usage</h3>
+              <p className="text-xs text-zinc-500">Real-time throughput (last 2 minutes)</p>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-black text-emerald-500 tabular-nums">{mbps} Mbps</div>
-              <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Current</div>
+              <div className="text-xl font-bold text-emerald-500 tabular-nums">{mbps} Mbps</div>
+              <div className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Current</div>
             </div>
           </div>
-          <div className="flex-1 min-h-[200px] flex items-end text-emerald-500/50">
-            <SimpleSparkline data={historyMbps} width={600} height={200} />
+          <div className="flex-1 min-h-[170px] flex items-end text-emerald-500/50">
+            <SimpleSparkline data={historyMbps} width={600} height={170} />
           </div>
         </div>
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-bold">Now Playing</h3>
+        <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-bold text-zinc-100">Now Playing</h3>
             {stats.directStreamsCount > 0 && (
-              <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
-                {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'} not shown
+              <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
+                {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'}
               </span>
             )}
           </div>
-          <div className="space-y-4">
+          <div className="space-y-2.5 flex-1">
             {stats.connections?.length > 0 ? (
               stats.connections.map((conn: any) => {
                 const typeColors: Record<string, string> = {
@@ -502,48 +504,48 @@ export function Dashboard() {
                   : conn.type === 'movie' ? 'text-blue-500 bg-blue-500/10'
                   : 'text-purple-500 bg-purple-500/10';
                 return (
-                  <div key={conn.id} className="bg-zinc-800/50 rounded-2xl p-4 space-y-3">
+                  <div key={conn.id} className="bg-zinc-950/70 border border-zinc-800/70 rounded-xl p-3 space-y-2">
                     {/* Top row: icon + name + type badge */}
-                    <div className="flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
-                      <div className="flex items-center gap-3 min-w-[140px] flex-1">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconColor}`}>
-                          <Play size={16} fill="currentColor" />
+                    <div className="flex items-start justify-between gap-2.5 flex-wrap sm:flex-nowrap">
+                      <div className="flex items-center gap-2.5 min-w-[130px] flex-1">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColor}`}>
+                          <Play size={14} fill="currentColor" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-sm text-zinc-100 truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
+                          <div className="font-bold text-xs text-zinc-100 truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
                             {conn.streamName || `Stream ${conn.streamId}`}
                           </div>
-                          <div className="text-xs text-zinc-500 truncate mt-0.5">
+                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
                             via <span className="text-zinc-400">{conn.playlistName || conn.username}</span>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                         {conn.isPlaceholder && (
-                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
                             🛑 Hinweisanzeige
                           </span>
                         )}
                         {conn.isHandover && (
-                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Aufnahme läuft im Hintergrund weiter">
-                            📁 DVR Handover
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Aufnahme läuft im Hintergrund weiter">
+                            📁 Handover
                           </span>
                         )}
                         {conn.subscriberCount !== undefined && conn.subscriberCount > 1 && (
-                          <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20" title="Dieser Stream wird lokal mit mehreren Clients geteilt (1 Upstream-Verbindung)">
-                            👥 {conn.subscriberCount} Clients (1 Upstream)
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20" title="Dieser Stream wird lokal mit mehreren Clients geteilt (1 Upstream-Verbindung)">
+                            👥 {conn.subscriberCount} (1 Upstream)
                           </span>
                         )}
                         {conn.recordingId ? (
-                          <div className="flex items-center gap-1.5">
-                            <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
+                          <div className="flex items-center gap-1">
+                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-500 border border-red-500/20">
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                               REC
                             </span>
                             <button
                               onClick={() => handleStopRecording(conn.id, conn.recordingId)}
                               disabled={dvrBusy[conn.id]}
-                              className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
+                              className="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
                               title="Aufnahme beenden"
                             >
                               {dvrBusy[conn.id] ? '...' : 'Stopp'}
@@ -554,7 +556,7 @@ export function Dashboard() {
                             <button
                               onClick={() => handleStartRecording(conn.id)}
                               disabled={dvrBusy[conn.id]}
-                              className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
+                              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
                               title="Live-Stream aufnehmen (Stream-Tee)"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
@@ -562,45 +564,46 @@ export function Dashboard() {
                             </button>
                           )
                         )}
-                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0 ${typeColor}`}>
                           {conn.type === 'movie' ? 'VOD' : conn.type}
                         </span>
                       </div>
                     </div>
                     {/* Bottom row: stats */}
-                    <div className="flex items-center gap-4 flex-wrap pl-12">
-                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                    <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-500">
+                      <div className="flex items-center gap-1">
                         <span className="text-zinc-600">⏱</span>
                         <span className="font-mono text-zinc-400">{formatDuration(conn.startTime)}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <div className="flex items-center gap-1">
                         <span className="text-zinc-600">↓</span>
                         <span className="font-mono text-zinc-400">{formatBytes(conn.bytesRead)}</span>
                       </div>
                       {conn.currentBps > 0 && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                        <div className="flex items-center gap-1">
                           <span className="text-zinc-600">~</span>
                           <span className="font-mono text-zinc-400">{(conn.currentBps / 1_000_000).toFixed(1)} Mbps</span>
                         </div>
                       )}
-                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <div className="flex items-center gap-1">
                         <span className="text-zinc-600">IP</span>
                         <span className="font-mono text-zinc-400">{conn.ip}</span>
                       </div>
                       {conn.proxied && (
-                        <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">VPN proxied</span>
+                        <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">VPN</span>
                       )}
                       {conn.isPlaceholder && (
-                        <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">0 Upstream (Placeholder)</span>
+                        <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
                       )}
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="text-center py-12">
-                <div className="text-zinc-600 mb-2 font-medium italic">Quiet on the wire...</div>
-                <div className="text-[10px] text-zinc-700 uppercase font-bold tracking-widest">No active streams</div>
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <Activity size={24} className="text-zinc-600 mb-2 opacity-40" />
+                <div className="text-zinc-400 text-sm font-medium">Quiet on the wire...</div>
+                <div className="text-[10px] text-zinc-600 uppercase font-semibold tracking-wider mt-0.5">No active streams</div>
               </div>
             )}
           </div>
@@ -629,6 +632,7 @@ export function PlaylistManager({ user }: { user: User }) {
   const [editData, setEditData] = useState({ name: '', username: '', password: '', epgIds: [] as string[], qualityLabelFormat: '', sourceOverrides: {} as Record<string, { username?: string; password?: string }> });
   const [availableEpgs, setAvailableEpgs] = useState<any[]>([]);
   const [sources, setSources] = useState<UpstreamSource[]>([]);
+  const [copiedEndpoint, setCopiedEndpoint] = useState<string | null>(null);
 
   const loadPlaylists = useCallback(async () => {
     try {
@@ -704,17 +708,17 @@ export function PlaylistManager({ user }: { user: User }) {
   };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-5">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-white">Custom Playlists</h2>
-          <p className="text-zinc-500">Manage and configure your IPTV playlists</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">Custom Playlists</h2>
+          <p className="text-xs text-zinc-500">Manage and configure your IPTV playlists</p>
         </div>
         <button 
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
+          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
         >
-          <Plus size={20} />
+          <Plus size={16} />
           New Playlist
         </button>
       </header>
@@ -726,9 +730,9 @@ export function PlaylistManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
           >
-            <h3 className="text-2xl font-bold">New Playlist</h3>
+            <h3 className="text-xl font-bold">New Playlist</h3>
             <div className="space-y-4">
               <input 
                 placeholder="Playlist Name" 
@@ -766,16 +770,16 @@ export function PlaylistManager({ user }: { user: User }) {
                 </div>
               </label>
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-3 pt-2">
               <button 
                 onClick={() => setShowAddModal(false)}
-                className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleAdd}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
               >
                 Create
               </button>
@@ -789,11 +793,11 @@ export function PlaylistManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
           >
             <div>
-              <h3 className="text-2xl font-bold">Duplicate Playlist</h3>
-              <p className="text-xs text-zinc-500 mt-1">Copies all categories and mappings. Enter new credentials below.</p>
+              <h3 className="text-xl font-bold">Duplicate Playlist</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">Copies all categories and mappings. Enter new credentials below.</p>
             </div>
             
             <div className="space-y-6">
@@ -853,16 +857,16 @@ export function PlaylistManager({ user }: { user: User }) {
               </div>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex gap-3 pt-2">
               <button 
                 onClick={() => setShowCloneModal(false)}
-                className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleClone}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
               >
                 Duplicate
               </button>
@@ -876,9 +880,9 @@ export function PlaylistManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full flex flex-col max-h-[90vh]"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full flex flex-col max-h-[90vh]"
           >
-            <h3 className="text-2xl font-bold shrink-0 mb-6">Edit Playlist Settings</h3>
+            <h3 className="text-xl font-bold shrink-0 mb-4">Edit Playlist Settings</h3>
             <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-2">
               <div className="space-y-2">
                 <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Playlist Name</label>
@@ -998,16 +1002,16 @@ export function PlaylistManager({ user }: { user: User }) {
                 </p>
               </div>
             </div>
-            <div className="flex gap-4 shrink-0 mt-6">
+            <div className="flex gap-3 shrink-0 mt-4 pt-2 border-t border-zinc-800/60">
               <button 
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
-                className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleUpdate}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
               >
                 Update
               </button>
@@ -1016,22 +1020,36 @@ export function PlaylistManager({ user }: { user: User }) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {playlists.map((playlist) => (
           <motion.div 
             key={playlist.id}
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 space-y-6 hover:border-emerald-500/50 transition-all group"
+            className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 space-y-3.5 hover:border-zinc-700 transition-all flex flex-col justify-between group"
           >
-            <div className="flex justify-between items-start">
-              <div className="space-y-1">
-                <h3 className="text-xl font-bold">{playlist.name}</h3>
-                <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest">
-                  {playlist.sourceIds.length} Sources · {playlist.enabled ? 'Active' : 'Disabled'}
-                </p>
+            <div className="flex justify-between items-start gap-2">
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold text-zinc-100 truncate">{playlist.name}</h3>
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                  <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">
+                    {playlist.sourceIds.length} {playlist.sourceIds.length === 1 ? 'Source' : 'Sources'}
+                  </span>
+                  <span className="text-zinc-600">·</span>
+                  <span className={`text-[10px] font-semibold ${playlist.enabled ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    {playlist.enabled ? 'Active' : 'Disabled'}
+                  </span>
+                  {playlist.directStreams && (
+                    <>
+                      <span className="text-zinc-600">·</span>
+                      <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded">
+                        Direct
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex items-center gap-0.5 shrink-0">
                 <button 
                   onClick={() => {
                     setCloningPlaylist(playlist);
@@ -1044,10 +1062,10 @@ export function PlaylistManager({ user }: { user: User }) {
                     });
                     setShowCloneModal(true);
                   }}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-500"
+                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer"
                   title="Duplicate Playlist"
                 >
-                  <Copy size={18} />
+                  <Copy size={15} />
                 </button>
                 <button 
                   onClick={() => {
@@ -1055,78 +1073,102 @@ export function PlaylistManager({ user }: { user: User }) {
                     setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '', sourceOverrides: playlist.sourceOverrides || {} });
                     setShowEditModal(true);
                   }}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100" 
+                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors cursor-pointer" 
                   title="Edit Settings"
                 >
-                  <Edit3 size={18} />
+                  <Edit3 size={15} />
                 </button>
                 <button 
                   onClick={() => handleDelete(playlist.id)}
-                  className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-500"
+                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
                   title="Delete"
                 >
-                  <Trash2 size={18} />
+                  <Trash2 size={15} />
                 </button>
               </div>
             </div>
 
-            <div className="bg-zinc-950 rounded-2xl p-4 border border-zinc-800/50 space-y-4">
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 uppercase font-bold tracking-tighter">API Endpoint</span>
-                  <button
-                    onClick={() => {
-                      const url = `${window.location.origin}/player_api.php?username=${playlist.username}&password=${playlist.password}`;
-                      copyToClipboard(url);
-                    }}
-                    className="text-emerald-500 hover:underline flex items-center gap-1"
-                  >
-                    Copy <ExternalLink size={12} />
-                  </button>
+            <div className="bg-zinc-950/70 rounded-xl p-3 border border-zinc-800/60 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Credentials</span>
+                <div className="font-mono text-xs text-zinc-300 flex items-center gap-1.5">
+                  <span className="text-zinc-200 font-semibold">{playlist.username}</span>
+                  <span className="text-zinc-600">/</span>
+                  <span className="text-zinc-500">••••••••</span>
                 </div>
-                <code className="block text-[10px] text-zinc-400 break-all font-mono">
-                  {window.location.origin}/player_api.php?username={playlist.username}&password={playlist.password}
-                </code>
               </div>
 
-              <div className="h-px w-full bg-zinc-800/50" />
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800/50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}/player_api.php?username=${playlist.username}&password=${playlist.password}`;
+                    copyToClipboard(url);
+                    setCopiedEndpoint(`${playlist.id}-api`);
+                    setTimeout(() => setCopiedEndpoint(null), 2000);
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer"
+                  title="Copy Xtream player_api.php URL"
+                >
+                  {copiedEndpoint === `${playlist.id}-api` ? (
+                    <>
+                      <Check size={13} className="text-emerald-400" />
+                      <span className="text-emerald-400 font-semibold text-[11px]">API Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={13} className="text-zinc-400" />
+                      <span className="text-[11px]">Copy API</span>
+                    </>
+                  )}
+                </button>
 
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-zinc-500 uppercase font-bold tracking-tighter">M3U Endpoint</span>
-                  <button
-                    onClick={() => {
-                      const url = `${window.location.origin}/get.php?username=${playlist.username}&password=${playlist.password}&type=m3u_plus&output=ts`;
-                      copyToClipboard(url);
-                    }}
-                    className="text-emerald-500 hover:underline flex items-center gap-1"
-                  >
-                    Copy <ExternalLink size={12} />
-                  </button>
-                </div>
-                <code className="block text-[10px] text-zinc-400 break-all font-mono">
-                  {window.location.origin}/get.php?username={playlist.username}&password={playlist.password}&type=m3u_plus&output=ts
-                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}/get.php?username=${playlist.username}&password=${playlist.password}&type=m3u_plus&output=ts`;
+                    copyToClipboard(url);
+                    setCopiedEndpoint(`${playlist.id}-m3u`);
+                    setTimeout(() => setCopiedEndpoint(null), 2000);
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer"
+                  title="Copy M3U Plus playlist URL"
+                >
+                  {copiedEndpoint === `${playlist.id}-m3u` ? (
+                    <>
+                      <Check size={13} className="text-emerald-400" />
+                      <span className="text-emerald-400 font-semibold text-[11px]">M3U Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={13} className="text-zinc-400" />
+                      <span className="text-[11px]">Copy M3U</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center justify-between px-2">
-              <span className="text-xs font-bold text-zinc-400">Direct Streams</span>
-              <button
-                onClick={() => handleToggleDirectStreams(playlist)}
-                className={`w-10 h-5 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+            <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <button
+                  type="button"
+                  onClick={() => handleToggleDirectStreams(playlist)}
+                  className={`w-8 h-4 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                >
+                  <div className={`w-2.5 h-2.5 bg-white rounded-full absolute top-[3px] transition-all ${playlist.directStreams ? 'left-4.5' : 'left-1'}`} />
+                </button>
+                <span className="text-xs text-zinc-400 font-medium">Direct Streams</span>
+              </label>
+
+              <Link 
+                to={`/playlist/${playlist.id}`}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-200 rounded-xl text-xs font-bold transition-all"
               >
-                <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${playlist.directStreams ? 'left-6' : 'left-1'}`} />
-              </button>
+                <Play size={13} />
+                <span>Open Editor</span>
+              </Link>
             </div>
-
-            <Link 
-              to={`/playlist/${playlist.id}`}
-              className="flex items-center justify-center gap-2 w-full py-3 bg-zinc-800 text-zinc-100 rounded-xl font-bold hover:bg-zinc-700 transition-all"
-            >
-              <Play size={16} />
-              Open Editor
-            </Link>
           </motion.div>
         ))}
       </div>
@@ -1662,35 +1704,35 @@ export function SourceManager({ user }: { user: User }) {
   };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-5">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Upstream Sources</h2>
-          <p className="text-zinc-500">Connect your IPTV providers</p>
+          <h2 className="text-2xl font-bold tracking-tight">Upstream Sources</h2>
+          <p className="text-xs text-zinc-500">Connect your IPTV providers</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
-          className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all"
+          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
         >
-          <Plus size={20} />
+          <Plus size={16} />
           Add Source
         </button>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {sources.map((source) => {
           const expiryInfo = formatExpiryDate(source.expiryDate);
           return (
-            <div key={source.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between gap-6">
-              <div className="space-y-4">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-zinc-800 rounded-2xl text-emerald-500">
-                      <Database size={24} />
+            <div key={source.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4">
+              <div className="space-y-3.5">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-zinc-800/80 rounded-xl text-emerald-500 shrink-0">
+                      <Database size={18} />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold">{source.name}</h3>
+                        <h3 className="font-bold text-zinc-100 truncate">{source.name}</h3>
                         {source.autoSyncEnabled && (
                           <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded text-[8px] font-black uppercase tracking-tighter flex items-center gap-1">
                             <RefreshCw size={8} />
@@ -1746,42 +1788,44 @@ export function SourceManager({ user }: { user: User }) {
                       <p className="text-xs text-zinc-500 font-mono">{source.url}</p>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-0.5 shrink-0">
                     {source.type === 'xtream' && (
                       <button 
                         onClick={() => handleShowConnections(source)}
-                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-purple-400 transition-colors"
+                        className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-purple-400 transition-colors cursor-pointer"
                         title="View Connection Timeline & Usage"
                       >
-                        <Radio size={20} />
+                        <Radio size={15} />
                       </button>
                     )}
                     <button 
                       onClick={() => handleShowChangelog(source)}
-                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-blue-500 transition-colors"
+                      className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-blue-400 transition-colors cursor-pointer"
                       title="View Sync History"
                     >
-                      <History size={20} />
+                      <History size={15} />
                     </button>
                     <button 
                       onClick={() => {
                         setEditingSource({ ...source });
                         setShowEdit(true);
                       }}
-                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-emerald-500 transition-colors"
+                      className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                      title="Edit Source"
                     >
-                      <Edit3 size={20} />
+                      <Edit3 size={15} />
                     </button>
                     <button 
                       onClick={() => handleDelete(source.id)}
-                      className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+                      className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete Source"
                     >
-                      <Trash2 size={20} />
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-zinc-950/50 rounded-2xl p-4 border border-zinc-800">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-zinc-950/60 rounded-xl p-3 border border-zinc-800/60">
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 uppercase font-black tracking-widest">
                       <Calendar size={12} className="text-zinc-500" />
@@ -2029,23 +2073,23 @@ export function SourceManager({ user }: { user: User }) {
                 )}
               </div>
 
-              <div className="flex justify-end items-center gap-2">
+              <div className="flex justify-end items-center gap-2 pt-2 border-t border-zinc-800/40">
                 {source.type === 'xtream' && (
                   <button 
                     onClick={() => handleBenchmark(source)}
                     disabled={benchmarkingSource[source.id]}
-                    className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
                   >
-                    <Gauge size={14} className={benchmarkingSource[source.id] ? 'animate-pulse' : ''} />
+                    <Gauge size={13} className={benchmarkingSource[source.id] ? 'animate-pulse' : ''} />
                     {benchmarkingSource[source.id] ? 'Benchmarking...' : 'Benchmark'}
                   </button>
                 )}
                 <button 
                   onClick={() => handleRefresh(source)}
                   disabled={refreshingSources[source.id]}
-                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  <RefreshCw size={14} className={refreshingSources[source.id] ? 'animate-spin' : ''} />
+                  <RefreshCw size={13} className={refreshingSources[source.id] ? 'animate-spin' : ''} />
                   {refreshingSources[source.id] ? 'Syncing...' : 'Sync Now'}
                 </button>
               </div>
@@ -2069,7 +2113,7 @@ export function SourceManager({ user }: { user: User }) {
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl my-auto overflow-hidden"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col shadow-2xl my-auto overflow-hidden"
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-5 border-b border-zinc-800 shrink-0 bg-zinc-900">
@@ -2591,53 +2635,60 @@ export function SourceManager({ user }: { user: User }) {
         </div>
       )}
       {showChangelog && selectedLogSource && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
+        >
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-2xl w-full max-h-[85vh] flex flex-col space-y-6"
+            onClick={e => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 max-w-2xl w-full max-h-[88vh] flex flex-col space-y-3.5 shadow-2xl"
           >
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-500">
-                  <History size={24} />
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400 border border-blue-500/20">
+                  <History size={18} />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold">Sync History</h3>
-                  <p className="text-sm text-zinc-500 font-medium italic">{selectedLogSource.name}</p>
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="text-lg font-bold text-zinc-100">Sync History</h3>
+                    <span className="text-xs text-zinc-400 font-medium truncate max-w-[280px]">({selectedLogSource.name})</span>
+                  </div>
                 </div>
               </div>
               <button 
                 onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
-                className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-500 transition-colors"
+                className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                title="Close"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
             {!loadingLogs && changelogs.length > 0 && (
               <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Filter by channel name..."
                   value={changelogSearch}
                   onChange={e => setChangelogSearch(e.target.value)}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-8 pr-4 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                  className="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl pl-8.5 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
                 />
               </div>
             )}
 
-            <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-1.5 custom-scrollbar">
               {loadingLogs ? (
-                <div className="flex flex-col items-center justify-center py-20 gap-4">
-                  <RefreshCw size={32} className="text-zinc-700 animate-spin" />
-                  <p className="text-sm text-zinc-500 font-bold uppercase tracking-tighter">Loading History...</p>
+                <div className="flex flex-col items-center justify-center py-14 gap-3">
+                  <RefreshCw size={24} className="text-zinc-600 animate-spin" />
+                  <p className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Loading History...</p>
                 </div>
               ) : changelogs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50 grayscale">
-                  <Clock size={32} className="text-zinc-700" />
-                  <p className="text-sm text-zinc-500 font-bold tracking-tighter uppercase">No history found for this source</p>
+                <div className="flex flex-col items-center justify-center py-14 gap-3 opacity-50">
+                  <Clock size={24} className="text-zinc-600" />
+                  <p className="text-xs text-zinc-500 font-semibold tracking-wider uppercase">No history found for this source</p>
                 </div>
               ) : (
                 changelogs.map((log: any, idx: number) => {
@@ -2650,87 +2701,89 @@ export function SourceManager({ user }: { user: User }) {
                   const showAllAdded = expandedSections[addedKey] || !!q;
                   const showAllRemoved = expandedSections[removedKey] || !!q;
                   return (
-                  <div key={idx} className="bg-zinc-950/50 rounded-2xl border border-zinc-800 p-5 space-y-4">
-                    <div className="flex justify-between items-center border-b border-zinc-800 pb-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${
-                          log.type === 'categories' ? 'bg-purple-500/10 text-purple-400' : 'bg-emerald-500/10 text-emerald-400'
-                        }`}>
-                          {log.type}
-                        </span>
-                        <span className="text-xs text-zinc-500 font-bold">{new Date(log.timestamp).toLocaleString()}</span>
+                    <div key={idx} className="bg-zinc-950/60 rounded-xl border border-zinc-800/70 p-3 space-y-2.5">
+                      <div className="flex justify-between items-center pb-2 border-b border-zinc-800/50">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                            log.type === 'categories' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}>
+                            {log.type}
+                          </span>
+                          <span className="text-xs text-zinc-400 font-medium">{new Date(log.timestamp).toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {(log.totalAdded || 0) > 0 && (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                              +{log.totalAdded} Added
+                            </span>
+                          )}
+                          {(log.totalRemoved || 0) > 0 && (
+                            <span className="text-[10px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-md">
+                              -{log.totalRemoved} Removed
+                            </span>
+                          )}
+                          {(log.totalRenamed || 0) > 0 && (
+                            <span className="text-[10px] font-bold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-md">
+                              {log.totalRenamed} Renamed
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex gap-4">
-                        {(log.totalAdded || 0) > 0 && <span className="text-[10px] font-bold text-emerald-500">+{log.totalAdded} Added</span>}
-                        {(log.totalRemoved || 0) > 0 && <span className="text-[10px] font-bold text-red-500">-{log.totalRemoved} Removed</span>}
-                        {(log.totalRenamed || 0) > 0 && <span className="text-[10px] font-bold text-blue-400">{log.totalRenamed} Renamed</span>}
-                      </div>
-                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {filteredAdded.length > 0 && (
-                        <div className="space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Added Items</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {filteredAdded.length > 0 && (
                           <div className="space-y-1">
-                            {(showAllAdded ? filteredAdded : filteredAdded.slice(0, 5)).map((item: any, i: number) => (
-                              <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate">
-                                <Plus size={8} className="text-emerald-500 shrink-0" />
-                                {item.name}
-                              </div>
-                            ))}
-                            {!showAllAdded && filteredAdded.length > 5 && (
-                              <button
-                                onClick={() => setExpandedSections(prev => ({ ...prev, [addedKey]: true }))}
-                                className="text-[9px] text-zinc-500 italic hover:text-zinc-300 transition-colors cursor-pointer"
-                              >
-                                ...and {filteredAdded.length - 5} more
-                              </button>
-                            )}
+                            <p className="text-[9px] uppercase font-bold tracking-wider text-zinc-500">Added Items</p>
+                            <div className="space-y-0.5">
+                              {(showAllAdded ? filteredAdded : filteredAdded.slice(0, 5)).map((item: any, i: number) => (
+                                <div key={i} className="text-xs text-zinc-300 flex items-center gap-1.5 truncate">
+                                  <Plus size={10} className="text-emerald-500 shrink-0" />
+                                  <span className="truncate">{item.name}</span>
+                                </div>
+                              ))}
+                              {!showAllAdded && filteredAdded.length > 5 && (
+                                <button
+                                  onClick={() => setExpandedSections(prev => ({ ...prev, [addedKey]: true }))}
+                                  className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                                >
+                                  ...and {filteredAdded.length - 5} more
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                      {filteredRemoved.length > 0 && (
-                        <div className="space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Removed Items</p>
+                        )}
+                        {filteredRemoved.length > 0 && (
                           <div className="space-y-1">
-                            {(showAllRemoved ? filteredRemoved : filteredRemoved.slice(0, 5)).map((item: any, i: number) => (
-                              <div key={i} className="text-[11px] text-zinc-400 flex items-center gap-1.5 truncate line-through opacity-50">
-                                <X size={8} className="text-red-500 shrink-0" />
-                                {item.name}
-                              </div>
-                            ))}
-                            {!showAllRemoved && filteredRemoved.length > 5 && (
-                              <button
-                                onClick={() => setExpandedSections(prev => ({ ...prev, [removedKey]: true }))}
-                                className="text-[9px] text-zinc-500 italic hover:text-zinc-300 transition-colors cursor-pointer"
-                              >
-                                ...and {filteredRemoved.length - 5} more
-                              </button>
-                            )}
+                            <p className="text-[9px] uppercase font-bold tracking-wider text-zinc-500">Removed Items</p>
+                            <div className="space-y-0.5">
+                              {(showAllRemoved ? filteredRemoved : filteredRemoved.slice(0, 5)).map((item: any, i: number) => (
+                                <div key={i} className="text-xs text-zinc-400 flex items-center gap-1.5 truncate line-through opacity-60">
+                                  <X size={10} className="text-red-500 shrink-0" />
+                                  <span className="truncate">{item.name}</span>
+                                </div>
+                              ))}
+                              {!showAllRemoved && filteredRemoved.length > 5 && (
+                                <button
+                                  onClick={() => setExpandedSections(prev => ({ ...prev, [removedKey]: true }))}
+                                  className="text-[10px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                                >
+                                  ...and {filteredRemoved.length - 5} more
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                      {(!log.added?.length && !log.removed?.length && log.renamed?.length > 0) && (
-                        <div className="col-span-2 space-y-1.5">
-                          <p className="text-[8px] uppercase font-black tracking-widest text-zinc-600">Renamed Items</p>
-                          <div className="text-[11px] text-zinc-500 italic">
+                        )}
+                        {(!log.added?.length && !log.removed?.length && log.renamed?.length > 0) && (
+                          <div className="col-span-2 text-xs text-zinc-400 italic">
                             {log.renamed.length} items were renamed upstream
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </div>
                   );
                 })
               )}
             </div>
-
-            <button
-              onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
-              className="w-full py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm"
-            >
-              Close History
-            </button>
           </motion.div>
         </div>
       )}
@@ -3060,38 +3113,39 @@ export function EPGManager
   };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-5">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">EPG Providers</h2>
-          <p className="text-zinc-500">Manage your XMLTV guides</p>
+          <h2 className="text-2xl font-bold tracking-tight">EPG Providers</h2>
+          <p className="text-xs text-zinc-500">Manage your XMLTV guides</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
-          className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-zinc-950 font-bold rounded-2xl hover:bg-emerald-400 transition-all"
+          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
         >
-          <Plus size={20} />
+          <Plus size={16} />
           Add EPG
         </button>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {epgs.map((epg) => (
-          <div key={epg.id} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-zinc-800 rounded-2xl text-emerald-500">
-                <Tv size={24} />
+          <div key={epg.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 flex justify-between items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 bg-zinc-800/80 rounded-xl text-emerald-400 shrink-0">
+                <Tv size={18} />
               </div>
-              <div>
-                <h3 className="font-bold">{epg.name}</h3>
-                <p className="text-xs text-zinc-500 font-mono">{epg.url}</p>
+              <div className="min-w-0">
+                <h3 className="font-bold text-zinc-100 truncate">{epg.name}</h3>
+                <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">{epg.url}</p>
               </div>
             </div>
             <button 
               onClick={() => handleDelete(epg.id)}
-              className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-red-500 transition-colors"
+              className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer shrink-0"
+              title="Delete EPG"
             >
-              <Trash2 size={20} />
+              <Trash2 size={16} />
             </button>
           </div>
         ))}
@@ -3100,11 +3154,11 @@ export function EPGManager
       {showAdd && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
+            initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full space-y-6"
+            className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 max-w-md w-full space-y-4"
           >
-            <h3 className="text-2xl font-bold">Add EPG Provider</h3>
+            <h3 className="text-xl font-bold">Add EPG Provider</h3>
             <div className="space-y-4">
               <input 
                 placeholder="EPG Name" 
@@ -3113,22 +3167,22 @@ export function EPGManager
                 onChange={e => setNewEpg({...newEpg, name: e.target.value})}
               />
               <input 
-                placeholder="XMLTV URL (supports .gz)" 
+                placeholder="XMLTV URL (http://...)" 
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 focus:border-emerald-500 outline-none transition-all"
                 value={newEpg.url}
                 onChange={e => setNewEpg({...newEpg, url: e.target.value})}
               />
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-3 pt-2">
               <button 
                 onClick={() => setShowAdd(false)}
-                className="flex-1 py-3 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all"
+                className="flex-1 py-2.5 bg-zinc-800 rounded-xl font-bold hover:bg-zinc-700 transition-all text-sm cursor-pointer"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleAdd}
-                className="flex-1 py-3 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all"
+                className="flex-1 py-2.5 bg-emerald-500 text-zinc-950 rounded-xl font-bold hover:bg-emerald-400 transition-all text-sm cursor-pointer"
               >
                 Save EPG
               </button>
@@ -3220,7 +3274,7 @@ function VpnSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">VPN Connection</h3>
@@ -3381,7 +3435,7 @@ function TelegramSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -3531,29 +3585,29 @@ export function Settings({ user }: { user: User }) {
   }
 
   return (
-    <div className="p-8 space-y-8 max-w-6xl mx-auto">
+    <div className="p-6 space-y-5 max-w-6xl mx-auto">
       <header>
-        <h2 className="text-3xl font-black tracking-tight text-zinc-100">Settings</h2>
-        <p className="text-zinc-500">Global application configuration and monitoring</p>
+        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">Settings</h2>
+        <p className="text-xs text-zinc-500">Global application configuration and monitoring</p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold">User Profile</h3>
-              <p className="text-sm text-zinc-500">Logged in as <span className="text-zinc-100 font-mono">{user.email}</span></p>
-              <p className="text-xs text-zinc-600">Role: <span className="text-zinc-400 font-mono uppercase tracking-tighter">{user.role}</span></p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="lg:col-span-1 space-y-4">
+          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold">User Profile</h3>
+              <p className="text-xs text-zinc-400">Logged in as <span className="text-zinc-200 font-mono">{user.email}</span></p>
+              <p className="text-[11px] text-zinc-500">Role: <span className="text-zinc-400 font-mono uppercase tracking-wider">{user.role}</span></p>
             </div>
             
-            <div className="pt-6 border-t border-zinc-800 space-y-4">
+            <div className="pt-3 border-t border-zinc-800/60 space-y-3">
               <div className="flex justify-between items-center opacity-50 grayscale cursor-not-allowed">
                 <div>
-                  <h4 className="font-bold text-sm">Advanced Analytics</h4>
+                  <h4 className="font-semibold text-xs text-zinc-300">Advanced Analytics</h4>
                   <p className="text-[10px] text-zinc-500">Coming soon</p>
                 </div>
-                <div className="w-10 h-5 bg-zinc-800 rounded-full relative">
-                  <div className="absolute left-1 top-1 w-3 h-3 bg-zinc-600 rounded-full"></div>
+                <div className="w-8 h-4 bg-zinc-800 rounded-full relative">
+                  <div className="absolute left-1 top-0.5 w-3 h-3 bg-zinc-600 rounded-full"></div>
                 </div>
               </div>
             </div>
@@ -3563,14 +3617,14 @@ export function Settings({ user }: { user: User }) {
 
           <TelegramSettingsCard />
 
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-6">
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold">Quality Labels</h3>
-              <p className="text-sm text-zinc-500">Default format for quality labels in channel names</p>
+          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold">Quality Labels</h3>
+              <p className="text-xs text-zinc-500">Default format for quality labels in channel names</p>
             </div>
 
-            <div className="space-y-3">
-              <label className="block text-sm font-medium text-zinc-400">Label Format</label>
+            <div className="space-y-2.5">
+              <label className="block text-xs font-semibold text-zinc-400">Label Format</label>
               <div className="space-y-2">
                 <QualityPresetButtons onSelect={t => setQualityFormat(t)} />
                 <textarea
@@ -3578,17 +3632,17 @@ export function Settings({ user }: { user: User }) {
                   value={qualityFormat}
                   onChange={e => setQualityFormat(e.target.value)}
                   placeholder={QUALITY_PRESETS[0].template}
-                  className="w-full px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-sm"
+                  className="w-full px-3 py-2 bg-zinc-950/80 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 resize-none font-mono text-xs"
                 />
                 <button
                   onClick={saveQualityFormat}
                   disabled={qualityFormatSaving}
-                  className="px-6 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 rounded-xl font-bold hover:bg-emerald-500 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {qualityFormatSaving ? 'Saving...' : 'Save'}
+                  {qualityFormatSaving ? 'Saving...' : 'Save Format'}
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-600 mt-1 leading-relaxed select-text">
+              <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed select-text">
                 Simple: <span className="font-mono">{'{label}'}</span> · <span className="font-mono">{'{res}'}</span> · <span className="font-mono">{'{codec}'}</span> · <span className="font-mono">{'{hdr}'}</span> · <span className="font-mono">{'{audio}'}</span> · <span className="font-mono">{'{fps}'}</span><br/>
                 Smart (empty when normal): <span className="font-mono">{'{surround}'}</span> (5.1/Mono) · <span className="font-mono">{'{premium}'}</span> (DD+/TrueHD) · <span className="font-mono">{'{hdr}'}</span> (empty if SDR)<br/>
                 More: <span className="font-mono">{'{height}'}</span> · <span className="font-mono">{'{colorDepth}'}</span> · <span className="font-mono">{'{scanType}'}</span> · <span className="font-mono">{'{videoProfile}'}</span> · <span className="font-mono">{'{audioLayout}'}</span><br/>
@@ -3597,13 +3651,13 @@ export function Settings({ user }: { user: User }) {
             </div>
           </div>
 
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 space-y-4 shadow-2xl shadow-red-500/5">
-            <div className="flex items-center gap-2 text-red-500 mb-2">
-              <Trash2 size={18} />
-              <h3 className="text-lg font-bold">Danger Zone</h3>
+          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 space-y-3">
+            <div className="flex items-center gap-2 text-red-400">
+              <Trash2 size={16} />
+              <h3 className="text-sm font-bold">Danger Zone</h3>
             </div>
-            <p className="text-xs text-zinc-500 leading-relaxed">Careful: These actions permanently delete data and cannot be recovered.</p>
-            <button className="w-full py-3 border border-red-500/30 text-red-500 rounded-xl font-bold hover:bg-red-500 hover:text-white transition-all text-sm">
+            <p className="text-[11px] text-zinc-500 leading-relaxed">Careful: These actions permanently delete data and cannot be recovered.</p>
+            <button className="w-full py-2 border border-red-500/30 text-red-400 hover:bg-red-500 hover:text-white rounded-lg font-semibold transition-all text-xs cursor-pointer">
               Delete All Cache
             </button>
           </div>
