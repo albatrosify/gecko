@@ -479,7 +479,12 @@ export function createProxyRouter() {
       if (err.message === 'Access to local network is forbidden') {
         return res.status(403).send('Access to local network is forbidden');
       }
-      res.status(502).send('Failed to fetch image');
+      const is404 = err.response?.status === 404;
+      const statusCode = is404 ? 404 : 502;
+      // Cache 404 for 24h so clients don't hammer the server for dead logos;
+      // cache transient 502 errors for 5 minutes.
+      res.set('Cache-Control', is404 ? 'public, max-age=86400' : 'public, max-age=300');
+      res.status(statusCode).send(is404 ? 'Image not found' : 'Failed to fetch image');
     }
   });
 
