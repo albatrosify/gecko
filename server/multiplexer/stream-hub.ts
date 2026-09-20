@@ -11,6 +11,7 @@ export interface DownstreamSubscriber {
   playlistName: string;
   ip: string;
   startTime: number;
+  stalledSince?: number;
 }
 
 export interface ActiveStreamChannel {
@@ -106,10 +107,21 @@ class StreamHub {
 
     this.channels.set(channelKey, channel);
 
-    // Maximum bytes allowed to sit un-flushed in a single subscriber's write
-    // buffer before we declare it too slow for live streaming and evict it.
-    // At a typical 4–8 Mbps IPTV bitrate this gives ~1–2 s of grace time.
-    const MAX_SUBSCRIBER_BUFFER_BYTES = 1 * 1024 * 1024; // 1 MB
+    // ── Backpressure & Stalled Subscriber Management ─────────────────────────
+    // 1. Startup grace: When a client connects, initial burst from upstream + TCP slow-start
+    //    can easily buffer a few MBs in the first seconds. Don't evict during startup grace.
+    const STARTUP_GRACE_MS = 15_000;
+
+    // 2. Soft buffer threshold: ~16 MB (~15-20s of FHD stream). Normal transient Wi-Fi jitter
+    //    can buffer several MBs without being dead. Configurable via STREAM_BUFFER_MB env.
+    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
+
+    // 3. Max stall duration: Client's buffer must stay continuously above the threshold for 15s
+    //    before being declared dead/stalled.
+    const MAX_STALL_MS = 15_000;
+
+    // 4. Hard safety cap: Emergency limit to prevent memory exhaustion if a client completely freezes.
+    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2; // e.g. 32 MB
 
     // ── Diagnostic: upstream gap detection ───────────────────────────────────
     // Reset every time a chunk arrives. If the upstream goes silent for >3 s we
@@ -161,23 +173,43 @@ class StreamHub {
             conn.intervalBytes += chunk.length;
           }
 
+          if (sub.res.destroyed || sub.res.writableEnded) {
+            deadSubscribers.push(subId);
+            continue;
+          }
+
           if (!ok) {
-            if (sub.res.destroyed || sub.res.writableEnded) {
-              // Connection already gone
+            const bufLen = sub.res.writableLength || 0;
+            const now = Date.now();
+            const inStartupGrace = (now - sub.startTime) < STARTUP_GRACE_MS;
+
+            if (bufLen > HARD_BUFFER_CAP_BYTES) {
+              // Hard emergency limit exceeded
+              log(`[StreamHub] Evicting runaway subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB > ${HARD_BUFFER_CAP_BYTES / 1024} KB hard limit.`);
+              try { sub.res.destroy(); } catch {}
               deadSubscribers.push(subId);
-            } else if (sub.res.writableLength > MAX_SUBSCRIBER_BUFFER_BYTES) {
-              // Subscriber's TCP send buffer has grown beyond the threshold —
-              // they can't keep up with the live stream rate.  Evict them so
-              // their stalled socket doesn't accumulate memory or delay chunk
-              // dispatch for the other viewers on this channel.
-              log(`[StreamHub] Evicting slow subscriber ${subId} — buffer ${Math.round(sub.res.writableLength / 1024)} KB > ${MAX_SUBSCRIBER_BUFFER_BYTES / 1024} KB limit.`);
-              deadSubscribers.push(subId);
+              continue;
             }
-            // If buffer is within limits, write() buffered the chunk normally;
-            // Node will flush it when the socket drains — no action needed.
+
+            if (bufLen > BUFFER_WARN_BYTES && !inStartupGrace) {
+              if (!sub.stalledSince) {
+                sub.stalledSince = now;
+              } else if (now - sub.stalledSince > MAX_STALL_MS) {
+                log(`[StreamHub] Evicting stalled subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB sustained for >${MAX_STALL_MS / 1000}s.`);
+                try { sub.res.destroy(); } catch {}
+                deadSubscribers.push(subId);
+                continue;
+              }
+            } else if (bufLen <= BUFFER_WARN_BYTES) {
+              sub.stalledSince = undefined;
+            }
+          } else {
+            // write() returned true — buffer is completely clear
+            sub.stalledSince = undefined;
           }
         } catch (err: any) {
           log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
+          try { sub.res.destroy(); } catch {}
           deadSubscribers.push(subId);
         }
       }
@@ -300,6 +332,11 @@ class StreamHub {
     sub.res.on('close', cleanup);
     sub.res.on('error', cleanup);
 
+    // Reset backpressure stall tracking whenever socket drains
+    sub.res.on('drain', () => {
+      sub.stalledSince = undefined;
+    });
+
     log(`[StreamHub] Subscriber ${sub.id} joined ${channelKey} (${channel.subscribers.size} active viewers on this stream)`);
     return true;
   }
@@ -311,7 +348,13 @@ class StreamHub {
     const channel = this.channels.get(channelKey);
     if (!channel) return;
 
-    if (channel.subscribers.has(subId)) {
+    const sub = channel.subscribers.get(subId);
+    if (sub) {
+      if (!sub.res.destroyed) {
+        try {
+          sub.res.destroy();
+        } catch {}
+      }
       channel.subscribers.delete(subId);
 
       if (proxyStats.connections.has(subId)) {

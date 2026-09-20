@@ -171,5 +171,96 @@ describe('StreamHub', () => {
     expect(streamHub.hasChannel('source-dvr', '200')).toBe(false);
     expect((fakeDataStream as any).destroy).toHaveBeenCalled();
   });
+
+  it('does not evict newly joined subscriber with 1MB+ buffer during startup grace', () => {
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const fakeUpstreamResponse = { data: fakeDataStream };
+
+    const channel = streamHub.registerChannel(
+      'source-grace',
+      '300',
+      'La Sexta',
+      'live',
+      'http://upstream.tv',
+      fakeUpstreamResponse
+    );
+
+    const subRes: any = new EventEmitter();
+    subRes.setHeader = vi.fn();
+    subRes.destroy = vi.fn();
+    // Simulate write returning false and buffer having 1031 KB (the exact user log condition)
+    subRes.writableLength = 1031 * 1024;
+    subRes.write = vi.fn().mockReturnValue(false);
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-tivimate',
+      res: subRes,
+      username: 'tv-user',
+      playlistName: 'Living Room TV',
+      ip: '192.168.100.41',
+      startTime: Date.now(), // newly joined
+    });
+
+    expect(channel.subscribers.size).toBe(1);
+
+    // Incoming chunk from upstream
+    fakeDataStream.emit('data', Buffer.from('test-video-chunk'));
+
+    // Should NOT be evicted
+    expect(channel.subscribers.has('sub-tivimate')).toBe(true);
+    expect(subRes.destroy).not.toHaveBeenCalled();
+    expect(streamHub.hasChannel('source-grace', '300')).toBe(true);
+  });
+
+  it('evicts subscriber if buffer exceeds limit and sustains stall for >15s after startup grace', () => {
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const fakeUpstreamResponse = { data: fakeDataStream };
+
+    const channel = streamHub.registerChannel(
+      'source-stall',
+      '400',
+      'Stall Channel',
+      'live',
+      'http://upstream.tv',
+      fakeUpstreamResponse
+    );
+
+    const subRes: any = new EventEmitter();
+    subRes.setHeader = vi.fn();
+    subRes.destroy = vi.fn();
+    // Buffer exceeds soft threshold (16 MB)
+    subRes.writableLength = 20 * 1024 * 1024;
+    subRes.write = vi.fn().mockReturnValue(false);
+
+    // Subscriber joined 30s ago (past 15s startup grace)
+    const thirtySecAgo = Date.now() - 30_000;
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-stalled',
+      res: subRes,
+      username: 'stalled-user',
+      playlistName: 'TV',
+      ip: '192.168.1.50',
+      startTime: thirtySecAgo,
+    });
+
+    // First chunk marks subscriber as stalled
+    fakeDataStream.emit('data', Buffer.from('chunk-1'));
+    const sub = channel.subscribers.get('sub-stalled');
+    expect(sub?.stalledSince).toBeDefined();
+    expect(channel.subscribers.has('sub-stalled')).toBe(true);
+
+    // Fast-forward stalledSince by 16s (exceeds 15s MAX_STALL_MS)
+    if (sub) {
+      sub.stalledSince = Date.now() - 16_000;
+    }
+
+    // Next chunk triggers eviction
+    fakeDataStream.emit('data', Buffer.from('chunk-2'));
+    expect(channel.subscribers.has('sub-stalled')).toBe(false);
+    expect(subRes.destroy).toHaveBeenCalled();
+  });
 });
+
 
