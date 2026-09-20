@@ -5173,18 +5173,38 @@ export function PlaylistEditor({ user }: { user: User }) {
     if (selectedCategoryIds.size === 0) return;
     try {
       setLoading(true);
-      const updates = Array.from(selectedCategoryIds).map(catId => {
-        const mapping = categoryMappings.find(m => m.originalId === catId && m.type === activeTab);
-        return {
-          id: mapping?.id,
-          originalId: catId,
-          playlistId: id,
-          type: activeTab,
-          hidden
-        };
-      });
-      await api.categoryMappings.batchUpdate(updates);
+      const standardUpdates: any[] = [];
+      const customPromises: Promise<any>[] = [];
+
+      for (const catId of selectedCategoryIds) {
+        if (catId.startsWith('custom_')) {
+          const rawId = catId.replace('custom_', '');
+          customPromises.push(api.customCategories.update(rawId, { hidden }));
+        } else {
+          const cc = customCategories.find(c => c.id === catId);
+          if (cc) {
+            customPromises.push(api.customCategories.update(cc.id, { hidden }));
+          } else {
+            const mapping = categoryMappings.find(m => m.originalId === catId && m.type === activeTab);
+            standardUpdates.push({
+              id: mapping?.id,
+              originalId: catId,
+              playlistId: id,
+              type: activeTab,
+              hidden
+            });
+          }
+        }
+      }
+
+      await Promise.all([
+        standardUpdates.length > 0 ? api.categoryMappings.batchUpdate(standardUpdates) : Promise.resolve(),
+        ...customPromises
+      ]);
       await refreshMappings();
+      if (hidden && !showHiddenCategories) {
+        setSelectedCategoryIds(new Set());
+      }
     } catch (error) {
       console.error("Batch visibility update failed:", error);
     } finally {
@@ -5593,8 +5613,12 @@ export function PlaylistEditor({ user }: { user: User }) {
                             onClick={(e) => handleCategoryClick(catId, e)}
                             customCategories={customCategories}
                             allMappings={categoryMappings}
-                            playlistId={id}
+                            playlistId={id || ""}
                             onUpdate={refreshMappings}
+                            onMappingChange={refreshMappings}
+                            onBatchVisibilityToggle={handleCategoryBatchVisibility}
+                            allSources={allSources}
+                            playlistSourceIds={playlist?.sourceIds || []}
                           />
                         );
                       })}
@@ -5748,6 +5772,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   selectedCategoryIds={selectedCategoryIds}
                   categories={categories}
                   categoryMappings={categoryMappings}
+                  customCategories={customCategories}
                   playlistId={id!}
                   activeTab={activeTab}
                   sortedStreams={sortedStreams}
@@ -6350,19 +6375,22 @@ interface CategoryPaneProps {
   onAiCleanCategories?: () => void;
   onAiCleanChannels?: () => void;
   onAutoMatchEpg?: () => void;
+  customCategories?: any[];
 }
 
 function CategoryPane({
   selectedCategoryIds, categories, categoryMappings, playlistId, activeTab,
   sortedStreams, mappings, playlist, onClose, onMappingChange,
   onBatchVisibility, onMoveToTop, onBatchApplyRegex, onBatchCategoryApplyRegex, onBatchCategoryReset, onBatchStreamVisibility, onMoveStreamsToTop,
-  onAiCleanCategories, onAiCleanChannels, onAutoMatchEpg,
+  onAiCleanCategories, onAiCleanChannels, onAutoMatchEpg, customCategories,
 }: CategoryPaneProps) {
   const isSingle = selectedCategoryIds.size === 1;
   const catId = isSingle ? Array.from(selectedCategoryIds)[0] : null;
 
-  const category = catId ? categories.find(c => String(c.category_id) === catId) : null;
-  const mapping = catId ? categoryMappings.find(m => String(m.originalId) === catId && m.type === activeTab) : null;
+  const isCustom = Boolean(catId?.startsWith('custom_') || customCategories?.some(c => c.id === catId));
+  const customCat = isCustom ? customCategories?.find(c => `custom_${c.id}` === catId || c.id === catId) : null;
+  const category = isCustom ? customCat : (catId ? categories.find(c => String(c.category_id) === catId) : null);
+  const mapping = (!isCustom && catId) ? categoryMappings.find(m => String(m.originalId) === catId && m.type === activeTab) : null;
 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState('');
@@ -6370,9 +6398,9 @@ function CategoryPane({
 
   // Sync nameVal when selection changes
   useEffect(() => {
-    setNameVal(mapping?.customName || category?.category_name || category?.name || '');
+    setNameVal(mapping?.customName || (isCustom ? customCat?.name : (category?.category_name || category?.name)) || '');
     setEditingName(false);
-  }, [catId, mapping?.customName, category?.category_name, category?.name]);
+  }, [catId, mapping?.customName, category?.category_name, category?.name, isCustom, customCat?.name]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -6383,7 +6411,9 @@ function CategoryPane({
     if (!catId) return;
     const trimmed = nameVal.trim();
     if (!trimmed) return;
-    if (mapping?.id) {
+    if (isCustom && customCat) {
+      await api.customCategories.update(customCat.id, { name: trimmed });
+    } else if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { customName: trimmed });
     } else {
       await api.categoryMappings.create({ playlistId, type: activeTab, originalId: catId, originalName: category?.category_name || category?.name || '', customName: trimmed, order: 999999, hidden: false });
@@ -6394,6 +6424,11 @@ function CategoryPane({
 
   const handleToggleVisible = async () => {
     if (!catId) return;
+    if (isCustom && customCat) {
+      await api.customCategories.update(customCat.id, { hidden: !customCat.hidden });
+      onMappingChange();
+      return;
+    }
     const newHidden = !mapping?.hidden;
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { hidden: newHidden });
@@ -6404,7 +6439,7 @@ function CategoryPane({
   };
 
   const handleToggleSync = async () => {
-    if (!catId) return;
+    if (!catId || isCustom) return;
     const newSync = !mapping?.syncOnDemand;
     if (mapping?.id) {
       await api.categoryMappings.update(mapping.id, { syncOnDemand: newSync });
@@ -6415,7 +6450,7 @@ function CategoryPane({
   };
 
   const handleResetSingleCategory = async () => {
-    if (!catId) return;
+    if (!catId || isCustom) return;
     const catName = category?.category_name || category?.name || '';
     if (!confirm(`Reset category "${mapping?.customName || catName}" to original upstream name "${catName}"?`)) return;
     try {
@@ -6437,9 +6472,9 @@ function CategoryPane({
     [sortedStreams, selectedCategoryIds]
   );
 
-  const isHidden = mapping?.hidden ?? false;
+  const isHidden = isCustom ? Boolean(customCat?.hidden) : (mapping?.hidden ?? false);
   const isSynced = mapping?.syncOnDemand ?? false;
-  const displayName = mapping?.customName || category?.category_name || category?.name || '(unknown)';
+  const displayName = mapping?.customName || (isCustom ? customCat?.name : (category?.category_name || category?.name)) || '(unknown)';
 
   return (
     <div className="fixed inset-y-0 right-0 z-40 w-full sm:w-88 xl:static xl:w-80 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950 shadow-2xl xl:shadow-none shrink-0">
@@ -6473,7 +6508,7 @@ function CategoryPane({
         <div className="flex items-center gap-1 shrink-0 ml-2">
           {isSingle && (
             <>
-              {onAiCleanCategories && (
+              {!isCustom && onAiCleanCategories && (
                 <button
                   onClick={onAiCleanCategories}
                   className="p-1.5 rounded hover:bg-violet-500/10 transition-colors text-violet-400 hover:text-violet-300 cursor-pointer"
@@ -6482,7 +6517,7 @@ function CategoryPane({
                   <Sparkles size={14} />
                 </button>
               )}
-              {mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
+              {!isCustom && mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
                 <button
                   onClick={handleResetSingleCategory}
                   className="p-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors cursor-pointer"
@@ -6498,13 +6533,15 @@ function CategoryPane({
               >
                 {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
-              <button
-                onClick={handleToggleSync}
-                className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
-                title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
-              >
-                <Activity size={14} />
-              </button>
+              {!isCustom && (
+                <button
+                  onClick={handleToggleSync}
+                  className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
+                  title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
+                >
+                  <Activity size={14} />
+                </button>
+              )}
             </>
           )}
           <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close">
@@ -6612,28 +6649,46 @@ function CategoryPane({
   );
 }
 
-function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onClick, onMappingChange, onBatchVisibilityToggle, allSources, playlistSourceIds }: { 
-
+function SortableCategory({ 
+  cat, 
+  mapping, 
+  playlistId, 
+  activeTab, 
+  isSelected, 
+  onClick, 
+  onMappingChange, 
+  onUpdate,
+  onBatchVisibilityToggle, 
+  allSources, 
+  playlistSourceIds,
+  customCategories,
+  allMappings
+}: { 
   cat: any; 
   mapping?: CategoryMapping;
   playlistId: string;
   activeTab: string;
   isSelected: boolean; 
   onClick: (e: React.MouseEvent) => void; 
-  onMappingChange: () => void;
+  onMappingChange?: () => void;
+  onUpdate?: () => void;
   onBatchVisibilityToggle?: (hidden: boolean) => void;
-  allSources: any[];
-  playlistSourceIds: string[];
+  allSources?: any[];
+  playlistSourceIds?: string[];
+  customCategories?: any[];
+  allMappings?: CategoryMapping[];
 }) {
+  const notifyChange = onMappingChange || onUpdate || (() => {});
   const catId = String(cat.category_id || cat.id);
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: catId });
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(mapping?.customName || cat.category_name || "");
   const style = { transform: CSS.Transform.toString(transform), transition };
+  const isHidden = cat._isCustom ? Boolean(cat.hidden) : Boolean(mapping?.hidden);
 
   const toggleVisibility = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const newHidden = !mapping?.hidden;
+    const newHidden = !isHidden;
     
     if (isSelected && onBatchVisibilityToggle) {
       onBatchVisibilityToggle(newHidden);
@@ -6641,7 +6696,9 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
     }
 
     try {
-      if (mapping?.id) {
+      if (cat._isCustom) {
+        await api.customCategories.update(cat.id, { hidden: newHidden });
+      } else if (mapping?.id) {
         await api.categoryMappings.update(mapping.id, { hidden: newHidden });
       } else {
         await api.categoryMappings.create({
@@ -6654,7 +6711,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           hidden: newHidden
         });
       }
-      onMappingChange();
+      notifyChange();
     } catch (error) {
       console.error('Failed to toggle category visibility:', error);
     }
@@ -6662,7 +6719,9 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
 
   const handleRename = async () => {
     try {
-      if (mapping?.id) {
+      if (cat._isCustom) {
+        await api.customCategories.update(cat.id, { name: newName });
+      } else if (mapping?.id) {
         await api.categoryMappings.update(mapping.id, { customName: newName });
       } else {
         await api.categoryMappings.create({
@@ -6676,7 +6735,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         });
       }
       setIsEditing(false);
-      onMappingChange();
+      notifyChange();
     } catch (error) {
       console.error('Failed to rename category:', error);
     }
@@ -6701,7 +6760,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           syncOnDemand: newSync
         });
       }
-      onMappingChange();
+      notifyChange();
     } catch (error) {
       console.error('Failed to toggle category sync on demand:', error);
     }
@@ -6717,7 +6776,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         isSelected 
           ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.05)]" 
           : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300 border border-transparent",
-        mapping?.hidden && "opacity-40 grayscale-[0.5]"
+        isHidden && "opacity-40 grayscale-[0.5]"
       )}
     >
       <button 
@@ -6777,7 +6836,7 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
                e.stopPropagation();
                if (window.confirm('Delete custom category? Streams copied here will be removed from this category.')) {
                  await api.customCategories.remove(cat.id);
-                 onMappingChange();
+                 notifyChange();
                }
             }}
             className="p-1 hover:bg-red-500/20 rounded text-red-500 transition-colors"
@@ -6786,16 +6845,18 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
             <X size={12} />
           </button>
         )}
-        <button 
-          onClick={toggleSyncOnDemand}
-          className={cn(
-            "p-1 hover:bg-zinc-800 rounded transition-colors", 
-            mapping?.syncOnDemand ? "text-emerald-500 hover:text-emerald-400" : "text-zinc-600 hover:text-zinc-400"
-          )}
-          title={mapping?.syncOnDemand ? "Disable Dynamic Name Sync" : "Enable Dynamic Name Sync (Updates on Player access)"}
-        >
-          <Activity size={12} />
-        </button>
+        {!cat._isCustom && (
+          <button 
+            onClick={toggleSyncOnDemand}
+            className={cn(
+              "p-1 hover:bg-zinc-800 rounded transition-colors", 
+              mapping?.syncOnDemand ? "text-emerald-500 hover:text-emerald-400" : "text-zinc-600 hover:text-zinc-400"
+            )}
+            title={mapping?.syncOnDemand ? "Disable Dynamic Name Sync" : "Enable Dynamic Name Sync (Updates on Player access)"}
+          >
+            <Activity size={12} />
+          </button>
+        )}
         <button 
           onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
           className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-300"
@@ -6803,14 +6864,14 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
         >
           <Edit2 size={12} />
         </button>
-        {mapping?.customName && mapping.customName !== (cat.category_name || cat.name) && (
+        {!cat._isCustom && mapping?.customName && mapping.customName !== (cat.category_name || cat.name) && (
           <button
             onClick={async (e) => {
               e.stopPropagation();
               const catName = cat.category_name || cat.name || '';
               if (window.confirm(`Reset category "${mapping.customName}" to original upstream name "${catName}"?`)) {
                 await api.categoryMappings.reset([mapping.id]);
-                onMappingChange();
+                notifyChange();
               }
             }}
             className="p-1 hover:bg-orange-500/20 rounded text-orange-400 hover:text-orange-300 transition-colors"
@@ -6823,11 +6884,11 @@ function SortableCategory({ cat, mapping, playlistId, activeTab, isSelected, onC
           onClick={toggleVisibility}
           className={cn(
             "p-1 hover:bg-zinc-800 rounded transition-colors", 
-            mapping?.hidden ? "text-zinc-500 hover:text-zinc-300" : "text-emerald-500 hover:text-emerald-400 transition-colors"
+            isHidden ? "text-zinc-500 hover:text-zinc-300" : "text-emerald-500 hover:text-emerald-400 transition-colors"
           )}
-          title={mapping?.hidden ? "Show" : "Hide"}
+          title={isHidden ? "Show" : "Hide"}
         >
-          {mapping?.hidden ? <EyeOff size={12} /> : <Eye size={12} className="fill-emerald-500/20" />}
+          {isHidden ? <EyeOff size={12} /> : <Eye size={12} className="fill-emerald-500/20" />}
         </button>
       </div>
     </div>
