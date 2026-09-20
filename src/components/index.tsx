@@ -741,7 +741,7 @@ export function PlaylistManager({ user }: { user: User }) {
     <div className="p-6 space-y-5">
       <header className="flex justify-between items-end">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">Custom Playlists</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-white">Playlists</h2>
           <p className="text-xs text-zinc-500">Manage and configure your IPTV playlists</p>
         </div>
         <button 

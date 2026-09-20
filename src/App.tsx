@@ -72,7 +72,7 @@ export default function App() {
               <nav className="flex-1 p-3 space-y-2 mt-2">
                 <NavLink to="/" icon={<LayoutGrid size={20} />} label="Dashboard" />
                 <NavLink to="/dvr" icon={<Radio size={20} />} label="DVR / Aufnahmen" />
-                <NavLink to="/playlists" icon={<Library size={20} />} label="Custom Playlists" />
+                <NavLink to="/playlists" icon={<Library size={20} />} label="Playlists" />
                 <NavLink to="/sources" icon={<Database size={20} />} label="Upstream Sources" />
                 <NavLink to="/epgs" icon={<Tv size={20} />} label="EPG Providers" />
                 <NavLink to="/settings" icon={<SettingsIcon size={20} />} label="Settings" />
