@@ -733,7 +733,8 @@ export function createProxyRouter() {
              seenStreams.add(originalId);
 
              const prefixedStreamId = `${s._sourceIdx}_${originalId}`;
-             const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId);
+             const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId)
+               || (s._isCopy && (s as any)._originalStreamId ? (mappingMap.get(`${s._sourceIdx}_${(s as any)._originalStreamId}`) || mappingMap.get(String((s as any)._originalStreamId))) : null);
              if (mapping?.hidden) continue;
 
              // Determine target category ID (respect mapping override)
@@ -955,7 +956,8 @@ export function createProxyRouter() {
               seenStreams.add(originalId);
 
               const prefixedStreamId = `${s._sourceIdx}_${originalId}`;
-              const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId);
+              const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(originalId)
+                || (s._isCopy && (s as any)._originalStreamId ? (mappingMap.get(`${s._sourceIdx}_${(s as any)._originalStreamId}`) || mappingMap.get(String((s as any)._originalStreamId))) : null);
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
@@ -983,6 +985,7 @@ export function createProxyRouter() {
                 s.name = (mapping.regexRenames && mapping.regexRenames.length > 0)
                   ? applyRegex(baseName, mapping.regexRenames)
                   : baseName;
+                if (mapping.customIcon) s.stream_icon = mapping.customIcon;
                 s.sourceIdx = mapping.sourceIdx ?? -1;
               }
 
@@ -1174,7 +1177,8 @@ export function createProxyRouter() {
               seenStreams.add(sid);
 
               const prefixedStreamId = `${s._sourceIdx}_${sid}`;
-              const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(sid);
+              const mapping = mappingMap.get(prefixedStreamId) || mappingMap.get(sid)
+                || (s._isCopy && (s as any)._originalStreamId ? (mappingMap.get(`${s._sourceIdx}_${(s as any)._originalStreamId}`) || mappingMap.get(String((s as any)._originalStreamId))) : null);
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
@@ -1202,6 +1206,7 @@ export function createProxyRouter() {
                 s.name = (mapping.regexRenames && mapping.regexRenames.length > 0)
                   ? applyRegex(baseName, mapping.regexRenames)
                   : baseName;
+                if (mapping.customIcon) s.cover = mapping.customIcon;
                 s.sourceIdx = mapping.sourceIdx ?? -1;
               }
 
@@ -1570,7 +1575,8 @@ export function createProxyRouter() {
         if (seenStreams.has(originalId)) return false;
         seenStreams.add(originalId);
 
-        const mapping = mappingMap.get(originalId);
+        const mapping = mappingMap.get(originalId)
+          || (s._isCopy && (s as any)._originalStreamId ? (mappingMap.get(`${s._sourceIdx}_${(s as any)._originalStreamId}`) || mappingMap.get(String((s as any)._originalStreamId))) : null);
         if (mapping?.hidden) return false;
 
         // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)

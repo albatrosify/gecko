@@ -4051,8 +4051,11 @@ export function PlaylistEditor({ user }: { user: User }) {
           _customItemId: item.id,
           _originalStream: originalStream
         };
-        if (clone.stream_id) clone.stream_id = item.streamId;
-        if (clone.series_id) clone.series_id = item.streamId;
+        clone.stream_id = item.streamId;
+        if (tab === 'series' || originalStream.series_id !== undefined) clone.series_id = item.streamId;
+        if (item.extra?.name) clone.name = item.extra.name;
+        if (item.extra?.stream_icon) clone.stream_icon = item.extra.stream_icon;
+        if (item.extra?.cover) clone.cover = item.extra.cover;
         extraStreams.push(clone);
       } else {
         extraStreams.push({
@@ -4504,18 +4507,21 @@ export function PlaylistEditor({ user }: { user: User }) {
     const mappingByOriginalId = new Map();
     mappings.forEach(m => {
       if (m.type === activeTab) {
-        mappingByOriginalId.set(m.originalId, m);
+        mappingByOriginalId.set(String(m.originalId), m);
       }
     });
 
     const streamsWithOrder = streams.map((s, idx) => {
-      const originalId = (s.stream_id || s.series_id || `idx-${idx}`).toString();
+      const rawId = s._isCopy
+        ? String(s._rawId || s.stream_id || s.series_id)
+        : (s.stream_id || s.series_id || `idx-${idx}`).toString();
       // _uniqueId uses sourceIdx prefix internally to avoid collisions between upstreams with overlapping IDs.
       // It is never shown to the user and never stored in the DB — originalId (raw upstream ID) is stored instead.
-      const uniqueId = s._sourceIdx != null ? `${s._sourceIdx}_${originalId}` : originalId;
-      const mapping = originalId ? mappingByOriginalId.get(originalId) : null;
+      const uniqueId = s._sourceIdx != null ? `${s._sourceIdx}_${rawId}` : rawId;
+      const mapping = mappingByOriginalId.get(rawId)
+        || (s._isCopy && s._originalId ? mappingByOriginalId.get(String(s._originalId)) : null);
       // _rawId = raw upstream ID for DB operations; _uniqueId = sourceIdx-prefixed key for UI deduplication only
-      return { ...s, _uniqueId: uniqueId, _rawId: originalId, order: mapping ? (mapping.order ?? 999999) : 999999, _detectedMeta: mapping?.detectedMeta ?? null };
+      return { ...s, _uniqueId: uniqueId, _rawId: rawId, order: mapping ? (mapping.order ?? 999999) : 999999, _detectedMeta: mapping?.detectedMeta ?? null };
     });
     return streamsWithOrder.sort((a, b) => a.order - b.order);
   }, [streams, mappings, activeTab]);
@@ -4972,13 +4978,15 @@ export function PlaylistEditor({ user }: { user: User }) {
 
       // Streams to name-match: unmatched ones, plus already-matched if re-match is on
       const streamsToMatch = filteredStreams.filter(s => {
-        const m = mappings.find(mp => mp.originalId === String(s._rawId || s._uniqueId));
+        const rawId = String(s._rawId || s._uniqueId);
+        const m = mappings.find(mp => String(mp.originalId) === rawId && mp.type === activeTab);
         return autoMatchRematch ? true : !m?.epgMapping;
       });
 
       // Streams already matched but missing or stale icon — only when not doing a full re-match
       const streamsToUpdateIcon = autoMatchRematch ? [] : filteredStreams.filter(s => {
-        const m = mappings.find(mp => mp.originalId === String(s._rawId || s._uniqueId));
+        const rawId = String(s._rawId || s._uniqueId);
+        const m = mappings.find(mp => String(mp.originalId) === rawId && mp.type === activeTab);
         if (!m?.epgMapping) return false;
         const epgCh = epgChannels.find(c => c.id === m.epgMapping);
         return !m.epgIcon || (epgCh && m.epgIcon !== epgCh.icon);
@@ -4989,7 +4997,7 @@ export function PlaylistEditor({ user }: { user: User }) {
       // Full name-based auto-match
       for (const stream of streamsToMatch) {
         const rawId = String(stream._rawId || stream._uniqueId);
-        const existing = mappings.find(mp => mp.originalId === rawId);
+        const existing = mappings.find(mp => String(mp.originalId) === rawId && mp.type === activeTab);
         const effectiveName = existing?.customName || stream.name || stream.title || '';
         const target = normalize(effectiveName);
         if (!target) continue;
@@ -5010,7 +5018,8 @@ export function PlaylistEditor({ user }: { user: User }) {
 
       // Icon-only update for already-matched streams missing their icon
       for (const stream of streamsToUpdateIcon) {
-        const existing = mappings.find(mp => mp.originalId === String(stream._rawId || stream._uniqueId));
+        const rawId = String(stream._rawId || stream._uniqueId);
+        const existing = mappings.find(mp => String(mp.originalId) === rawId && mp.type === activeTab);
         if (!existing?.id || !existing.epgMapping) continue;
         const ch = epgChannels.find(c => c.id === existing.epgMapping);
         if (ch?.icon || ch?.source) {
@@ -5746,9 +5755,6 @@ export function PlaylistEditor({ user }: { user: User }) {
                   globalFormat={globalFormat}
                   scrollToId={scrollToStreamId}
                   onScrolled={() => setScrollToStreamId(null)}
-                  onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
-                  customCategories={customCategories}
-                  categories={sortedCategories}
                 />
 
               </div>
@@ -5758,12 +5764,17 @@ export function PlaylistEditor({ user }: { user: User }) {
                 const firstStream = sortedStreams.find((s: any) => s._uniqueId === firstId || String(s.stream_id) === firstId);
                 if (!firstStream) return null;
                 const firstRawId = firstStream._rawId || firstId;
-                const firstMapping = mappings.find(m => m.originalId === firstRawId && m.type === activeTab);
+                const ownMapping = mappings.find(m => String(m.originalId) === String(firstRawId) && m.type === activeTab);
+                const origMapping = firstStream._isCopy && firstStream._originalId
+                  ? mappings.find(m => String(m.originalId) === String(firstStream._originalId) && m.type === activeTab)
+                  : null;
                 return (
                   <EditorPane
-                    key="editor-pane"
+                    key={firstStream._uniqueId}
                     stream={firstStream}
-                    mapping={firstMapping}
+                    mapping={ownMapping}
+                    inheritedMapping={origMapping}
+                    epgChannels={epgChannels}
                     playlistId={id!}
                     type={activeTab}
                     source={sources[firstStream._sourceIdx ?? 0]}
@@ -5780,13 +5791,16 @@ export function PlaylistEditor({ user }: { user: User }) {
                     onAiCleanChannel={(rawId) => {
                       const s = sortedStreams.find(st => String(st._rawId) === rawId);
                       if (!s) return;
-                      const m = mappings.find(mp => mp.originalId === rawId && mp.type === activeTab);
+                      const m = mappings.find(mp => String(mp.originalId) === String(rawId) && mp.type === activeTab);
                       const name = m?.customName || s.name || s.title || '';
                       if (!name) return;
                       setAiCleanup({ kind: 'channels', items: [{ id: rawId, name }] });
                     }}
                     onAiCleanChannels={selectedStreamIds.size > 1 ? () => openAiCleanupStreams('streams') : undefined}
                     onPlay={(url, title) => setPlayerInfo({ url, title })}
+                    onBatchCopy={(target, stream) => handleBatchCopy(target, selectedStreamIds.size > 1 ? 'streams' : 'single', stream || firstStream)}
+                    customCategories={customCategories}
+                    categories={sortedCategories}
                   />
                 );
               })()}
@@ -6954,8 +6968,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories, categories }: {
-
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled }: {
   streams: any[];
   selectedCategoryIds: Set<string>;
   activeTab: string;
@@ -6974,12 +6987,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   globalFormat?: string;
   scrollToId?: string | null;
   onScrolled?: () => void;
-  onBatchCopy?: (target: string, stream?: any) => void;
-  customCategories?: any[];
-  categories?: any[];
 }) {
-  const showCopyColumn = !!onBatchCopy;
-
   const filteredStreams = streams;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -7044,7 +7052,6 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
             <div className="w-16 shrink-0 text-center">HDR</div>
             <div className="w-20 shrink-0 text-center">Audio</div>
             <div className="w-12 shrink-0 text-center">Res</div>
-            {showCopyColumn && <div className="w-8 shrink-0" />}
             <div className="w-8 shrink-0 text-center">Vis</div>
           </div>
           <div className="flex-1 min-h-0">
@@ -7071,9 +7078,6 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   playlistSourceIds,
                   playlist,
                   globalFormat,
-                  onBatchCopy,
-                  customCategories,
-                  categories,
                 }}
               >
                 {VirtualStreamRow}
@@ -7136,9 +7140,6 @@ const VirtualStreamRow = React.memo(({
     playlistSourceIds,
     playlist,
     globalFormat,
-    onBatchCopy,
-    customCategories,
-    categories
   } = data;
   
   const stream = filteredStreams[index];
@@ -7150,7 +7151,11 @@ const VirtualStreamRow = React.memo(({
 
   if (!stream) return <div style={style} />;
 
-  const mapping = mappings.find(m => m.originalId === originalId && m.type === activeTab);
+  const ownMapping = mappings.find((m: StreamMapping) => String(m.originalId) === String(originalId) && m.type === activeTab);
+  const origMapping = (stream?._isCopy && stream?._originalId)
+    ? mappings.find((m: StreamMapping) => String(m.originalId) === String(stream._originalId) && m.type === activeTab)
+    : null;
+  const mapping = ownMapping || origMapping;
   const originalName = stream.name || stream.title || "";
   const baseName = mapping
     ? computeDisplayName(mapping, playlist?.qualityLabelFormat, globalFormat, originalName)
@@ -7188,9 +7193,6 @@ const VirtualStreamRow = React.memo(({
       epgChannels={epgChannels}
       allSources={allSources}
       playlistSourceIds={playlistSourceIds}
-      onBatchCopy={onBatchCopy}
-      customCategories={customCategories}
-      categories={categories}
     />
   );
 });
@@ -7214,9 +7216,6 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   epgChannels?: {id: string; name: string; icon?: string; source: string}[];
   allSources?: any[];
   playlistSourceIds?: string[];
-  onBatchCopy?: (target: string, stream?: any) => void;
-  customCategories?: any[];
-  categories?: any[];
 }>(({ 
   style, 
   stream, 
@@ -7235,26 +7234,11 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   isDragging, 
   epgChannels,
   allSources,
-  playlistSourceIds,
-  onBatchCopy,
-  customCategories,
-  categories
+  playlistSourceIds
 }, ref) => {
-  const [showCopyDropdown, setShowCopyDropdown] = useState(false);
-  const [copyDropdownPos, setCopyDropdownPos] = useState({ top: 0, right: 0 });
-  const [categorySearch, setCategorySearch] = useState('');
-  const copyBtnRef = useRef<HTMLButtonElement>(null);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
-  const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
-
-  const availableCategories = useMemo(() => {
-    if (!categories) return [];
-    const q = categorySearch.toLowerCase().trim();
-    return categories.filter((c: any) => {
-      const name = (c.customName || c.category_name || c.name || '').toLowerCase();
-      return !q || name.includes(q);
-    });
-  }, [categories, categorySearch]);
+  const effectiveEpgMapping = mapping?.epgMapping || stream.epg_channel_id;
+  const epgSource = mapping?.epgSource || (effectiveEpgMapping ? epgChannels?.find(c => c.id === effectiveEpgMapping)?.source : undefined);
 
   const toggleVisibility = async () => {
     try {
@@ -7382,9 +7366,9 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
               </span>
             )}
         </div>
-        {mapping?.epgMapping ? (
+        {effectiveEpgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[10px] text-zinc-600 font-mono truncate">{mapping.epgMapping}</span>
+            <span className="text-[10px] text-zinc-600 font-mono truncate">{effectiveEpgMapping}</span>
             {epgSource && (() => { const c = epgSourceColor(epgSource); return (
               <span className="text-[9px] rounded px-1 py-px shrink-0 font-sans border" style={{ background: c.bg, borderColor: c.border, color: c.text }}>{epgSource}</span>
             ); })()}
@@ -7465,113 +7449,6 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
           </div>
         );
       })()}
-
-      {/* Link to Category (Symlink) */}
-      {onBatchCopy && (
-        <div className="w-8 shrink-0 flex items-center justify-center">
-          {!stream._isCopy && (
-            <button
-              ref={copyBtnRef}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!showCopyDropdown) {
-                  const rect = copyBtnRef.current?.getBoundingClientRect();
-                  if (rect) {
-                    setCopyDropdownPos({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
-                  }
-                  setCategorySearch('');
-                  setShowCopyDropdown(true);
-                } else {
-                  setShowCopyDropdown(false);
-                }
-              }}
-              className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
-              title="Kanal in Kategorie verlinken (Symlink)"
-            >
-              <Link2 size={14} />
-            </button>
-          )}
-
-          {!stream._isCopy && showCopyDropdown && createPortal(
-            <>
-              <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
-              <div
-                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-64 flex flex-col max-h-72"
-                style={{ top: copyDropdownPos.top, right: copyDropdownPos.right }}
-              >
-                <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between text-[11px] font-bold text-zinc-400">
-                  <div className="flex items-center gap-1.5 text-purple-400">
-                    <Link2 size={12} />
-                    <span>In Kategorie verlinken</span>
-                  </div>
-                  <span className="text-[9px] text-zinc-500 font-normal">Symlink</span>
-                </div>
-                <div className="p-2 border-b border-zinc-800">
-                  <div className="relative">
-                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
-                    <input
-                      type="text"
-                      placeholder="Kategorie suchen..."
-                      value={categorySearch}
-                      onChange={(e) => setCategorySearch(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
-                      autoFocus
-                    />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-zinc-800/40">
-                  {availableCategories.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-xs text-zinc-600 italic">
-                      Keine Kategorie gefunden
-                    </div>
-                  ) : (
-                    availableCategories.map((cat: any) => {
-                      const catId = String(cat.category_id || cat.id);
-                      const isCurrent = catId === String(stream.category_id);
-                      const isCustom = !!cat._isCustom || catId.startsWith('custom_');
-                      const catName = cat.customName || cat.category_name || cat.name;
-
-                      return (
-                        <button
-                          key={catId}
-                          disabled={isCurrent}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowCopyDropdown(false);
-                            setCategorySearch('');
-                            onBatchCopy(catId, stream);
-                          }}
-                          className={cn(
-                            "w-full text-left px-3 py-1.5 text-xs transition-colors truncate flex items-center justify-between gap-2",
-                            isCurrent
-                              ? "text-zinc-600 cursor-not-allowed bg-zinc-950/40"
-                              : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                          )}
-                          title={isCurrent ? "Kanal befindet sich bereits in dieser Kategorie" : `In "${catName}" verlinken`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            {isCustom ? (
-                              <Star size={11} className="text-yellow-500 shrink-0" />
-                            ) : (
-                              <Folder size={11} className="text-blue-400 shrink-0" />
-                            )}
-                            <span className="truncate">{catName}</span>
-                          </div>
-                          {isCurrent && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 font-medium">Aktuell</span>
-                          )}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </>,
-            document.body
-          )}
-        </div>
-      )}
 
       {/* Visibility toggle / Remove Symlink / Remove Missing */}
       <div className="w-8 shrink-0 flex items-center justify-center">
@@ -7977,9 +7854,35 @@ function SeriesSeasonsBrowser({ playlistId, seriesId, title, onPlay, source, pla
   );
 }
 
-function EditorPane({ stream, mapping, playlistId, type, source, playlist, globalFormat, onClose, onUpdate, selectedStreamIds, allStreams, allMappings, onBatchApply, onBatchVisibility, onBatchMoveToTop, onPlay, onAiCleanChannel, onAiCleanChannels }: {
+function EditorPane({
+  stream,
+  mapping,
+  inheritedMapping,
+  epgChannels: initialEpgChannels,
+  playlistId,
+  type,
+  source,
+  playlist,
+  globalFormat,
+  onClose,
+  onUpdate,
+  selectedStreamIds,
+  allStreams,
+  allMappings,
+  onBatchApply,
+  onBatchVisibility,
+  onBatchMoveToTop,
+  onPlay,
+  onAiCleanChannel,
+  onAiCleanChannels,
+  onBatchCopy,
+  customCategories,
+  categories,
+}: {
   stream: any;
-  mapping?: StreamMapping;
+  mapping?: StreamMapping | null;
+  inheritedMapping?: StreamMapping | null;
+  epgChannels?: {id: string; name: string; icon?: string; source: string}[];
   playlistId: string;
   type: string;
   source?: UpstreamSource;
@@ -7996,27 +7899,40 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
   onPlay?: (url: string, title: string) => void;
   onAiCleanChannel?: (rawId: string) => void;
   onAiCleanChannels?: () => void;
+  onBatchCopy?: (target: string, stream?: any) => void;
+  customCategories?: any[];
+  categories?: any[];
 }) {
-  const [customName, setCustomName] = useState(mapping?.customName || "");
-  const [customIcon, setCustomIcon] = useState(mapping?.customIcon || "");
-  const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || "");
+  const [customName, setCustomName] = useState(mapping?.customName || (stream._isCopy ? inheritedMapping?.customName : "") || "");
+  const [customIcon, setCustomIcon] = useState(mapping?.customIcon || (stream._isCopy ? inheritedMapping?.customIcon : "") || "");
+  const [epgMapping, setEpgMapping] = useState(mapping?.epgMapping || (stream._isCopy ? inheritedMapping?.epgMapping : "") || "");
   const [loading, setLoading] = useState(false);
   const [showTechInfo, setShowTechInfo] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [detectedMeta, setDetectedMeta] = useState(mapping?.detectedMeta ?? null);
+  const [detectedMeta, setDetectedMeta] = useState(mapping?.detectedMeta || (stream._isCopy ? inheritedMapping?.detectedMeta : null) || null);
 
   // EPG channel search
-  const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
+  const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>(initialEpgChannels || []);
   const [epgSearch, setEpgSearch] = useState('');
   const [epgOpen, setEpgOpen] = useState(false);
   const epgRef = useRef<HTMLDivElement>(null);
 
+  // Link to category dropdown
+  const [showLinkDropdown, setShowLinkDropdown] = useState(false);
+  const [linkCategorySearch, setLinkCategorySearch] = useState('');
+  const linkBtnRef = useRef<HTMLButtonElement>(null);
+  const [linkDropdownPos, setLinkDropdownPos] = useState({ top: 0, right: 0 });
+
   useEffect(() => {
-    api.epgs.channels(playlistId).then(r => setEpgChannels(r.channels)).catch(() => {
-      // Background fetch: silently ignore if fails
-    });
-  }, [playlistId]);
+    if (initialEpgChannels && initialEpgChannels.length > 0) {
+      setEpgChannels(initialEpgChannels);
+    } else {
+      api.epgs.channels(playlistId).then(r => setEpgChannels(r.channels)).catch(() => {
+        // Background fetch: silently ignore if fails
+      });
+    }
+  }, [playlistId, initialEpgChannels]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -8056,29 +7972,37 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 
   const selectedChannel = epgChannels.find(ch => ch.id === epgMapping);
 
+  const availableCategories = useMemo(() => {
+    if (!categories) return [];
+    const q = linkCategorySearch.toLowerCase().trim();
+    return categories.filter((c: any) => {
+      const name = (c.customName || c.category_name || c.name || '').toLowerCase();
+      return !q || name.includes(q);
+    });
+  }, [categories, linkCategorySearch]);
+
   useEffect(() => {
-    setCustomName(mapping?.customName || "");
-    setCustomIcon(mapping?.customIcon || "");
-    setEpgMapping(mapping?.epgMapping || "");
+    setCustomName(mapping?.customName || (stream._isCopy ? inheritedMapping?.customName : "") || "");
+    setCustomIcon(mapping?.customIcon || (stream._isCopy ? inheritedMapping?.customIcon : "") || "");
+    setEpgMapping(mapping?.epgMapping || (stream._isCopy ? inheritedMapping?.epgMapping : "") || "");
     setEpgSearch('');
     setEpgOpen(false);
-    // Always sync detectedMeta from mapping when it has data (e.g. after a re-scan).
-    // If mapping has no detectedMeta, keep whatever local state was set by the scan
-    // handler so toggling useDetectedQuality doesn't wipe a freshly-scanned result.
-    if (mapping?.detectedMeta) setDetectedMeta(mapping.detectedMeta);
-  }, [mapping, stream._uniqueId]);
+    setShowLinkDropdown(false);
+    const meta = mapping?.detectedMeta || (stream._isCopy ? inheritedMapping?.detectedMeta : null);
+    if (meta) setDetectedMeta(meta);
+  }, [mapping, inheritedMapping, stream._uniqueId]);
 
   // Reset all local state (including detectedMeta) when the stream itself changes
   useEffect(() => {
-    setDetectedMeta(mapping?.detectedMeta ?? null);
+    setDetectedMeta(mapping?.detectedMeta || (stream._isCopy ? inheritedMapping?.detectedMeta : null) || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream._uniqueId]);
 
   const originalName = stream.name || stream.title || "";
   const originalIcon = stream.stream_icon || stream.cover || "";
-  const originalEpg = stream.epg_channel_id || "";
+  const originalEpg = stream.epg_channel_id || (stream._isCopy ? inheritedMapping?.epgMapping : "") || "";
 
-  const effectiveIcon = customIcon || selectedChannel?.icon || mapping?.epgIcon || originalIcon;
+  const effectiveIcon = customIcon || selectedChannel?.icon || mapping?.epgIcon || (stream._isCopy ? inheritedMapping?.customIcon || inheritedMapping?.epgIcon : "") || originalIcon;
 
   const handleResetToDefault = async () => {
     if (!mapping?.id) return;
@@ -8134,10 +8058,11 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
         if (mapping?.id) {
           await api.mappings.update(mapping.id, data);
         } else {
+          const rawId = String(stream._rawId || stream.stream_id || stream.series_id || stream._uniqueId);
           await api.mappings.create({
             playlistId,
             type,
-            originalId: stream._rawId || stream._uniqueId,
+            originalId: rawId,
             originalName,
             order: mapping?.order ?? 999999,
             hidden: mapping?.hidden || false,
@@ -8147,7 +8072,7 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
           });
         }
       }
-      onUpdate();
+      await onUpdate();
       onClose();
     } catch (error) {
       console.error('Failed to save mapping:', error);
@@ -8244,6 +8169,143 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-3 space-y-3">
+
+          {/* Link single stream to category (Symlink) */}
+          {!isMulti && onBatchCopy && !stream._isCopy && !stream._isMissing && (
+            <button
+              ref={linkBtnRef}
+              type="button"
+              onClick={() => {
+                if (!showLinkDropdown) {
+                  const rect = linkBtnRef.current?.getBoundingClientRect();
+                  if (rect) {
+                    setLinkDropdownPos({
+                      top: Math.min(rect.bottom + 4, window.innerHeight - 320),
+                      right: Math.max(8, window.innerWidth - rect.right)
+                    });
+                  }
+                  setLinkCategorySearch('');
+                  setShowLinkDropdown(true);
+                } else {
+                  setShowLinkDropdown(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-purple-500/10 hover:bg-purple-500/20 active:scale-[0.99] text-purple-300 border border-purple-500/30 rounded-xl font-bold text-xs transition-all shadow-sm"
+              title="Diesen Kanal in eine andere Kategorie verlinken (Symlink)"
+            >
+              <Link2 size={13} className="text-purple-400" />
+              <span>In Kategorie verlinken (Symlink)...</span>
+            </button>
+          )}
+
+          {/* Link multi stream to category (Symlink) */}
+          {isMulti && onBatchCopy && (
+            <button
+              ref={linkBtnRef}
+              type="button"
+              onClick={() => {
+                if (!showLinkDropdown) {
+                  const rect = linkBtnRef.current?.getBoundingClientRect();
+                  if (rect) {
+                    setLinkDropdownPos({
+                      top: Math.min(rect.bottom + 4, window.innerHeight - 320),
+                      right: Math.max(8, window.innerWidth - rect.right)
+                    });
+                  }
+                  setLinkCategorySearch('');
+                  setShowLinkDropdown(true);
+                } else {
+                  setShowLinkDropdown(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-purple-500/10 hover:bg-purple-500/20 active:scale-[0.99] text-purple-300 border border-purple-500/30 rounded-xl font-bold text-xs transition-all shadow-sm"
+              title="Ausgewählte Kanäle in eine Kategorie verlinken"
+            >
+              <Link2 size={13} className="text-purple-400" />
+              <span>{selectedStreamIds?.size ?? 0} Kanäle verlinken (Symlink)...</span>
+            </button>
+          )}
+
+          {showLinkDropdown && onBatchCopy && createPortal(
+            <>
+              <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowLinkDropdown(false); }} />
+              <div
+                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-64 sm:w-72 flex flex-col max-h-72"
+                style={{ top: linkDropdownPos.top, right: linkDropdownPos.right }}
+              >
+                <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between text-[11px] font-bold text-zinc-400">
+                  <div className="flex items-center gap-1.5 text-purple-400">
+                    <Link2 size={12} />
+                    <span>In Kategorie verlinken</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-500 font-normal">
+                    {isMulti ? `${selectedStreamIds?.size ?? 0} Kanäle` : 'Symlink'}
+                  </span>
+                </div>
+                <div className="p-2 border-b border-zinc-800">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Kategorie suchen..."
+                      value={linkCategorySearch}
+                      onChange={(e) => setLinkCategorySearch(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-zinc-800/40">
+                  {availableCategories.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-zinc-600 italic">
+                      Keine Kategorie gefunden
+                    </div>
+                  ) : (
+                    availableCategories.map((cat: any) => {
+                      const catId = String(cat.category_id || cat.id);
+                      const isCurrent = !isMulti && catId === String(stream.category_id);
+                      const isCustom = !!cat._isCustom || catId.startsWith('custom_');
+                      const catName = cat.customName || cat.category_name || cat.name;
+
+                      return (
+                        <button
+                          key={catId}
+                          disabled={isCurrent}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowLinkDropdown(false);
+                            setLinkCategorySearch('');
+                            onBatchCopy(catId, !isMulti ? stream : undefined);
+                          }}
+                          className={cn(
+                            "w-full text-left px-3 py-1.5 text-xs transition-colors truncate flex items-center justify-between gap-2",
+                            isCurrent
+                              ? "text-zinc-600 cursor-not-allowed bg-zinc-950/40"
+                              : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                          )}
+                          title={isCurrent ? "Kanal befindet sich bereits in dieser Kategorie" : `In "${catName}" verlinken`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isCustom ? (
+                              <Star size={11} className="text-yellow-500 shrink-0" />
+                            ) : (
+                              <Folder size={11} className="text-blue-400 shrink-0" />
+                            )}
+                            <span className="truncate">{catName}</span>
+                          </div>
+                          {isCurrent && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 font-medium">Aktuell</span>
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </>,
+            document.body
+          )}
 
           {/* Symlink Banner */}
           {stream._isCopy && (
