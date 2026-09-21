@@ -12,6 +12,7 @@ export interface SourceHost {
   latencyMs?: number | null;      // Auth latency measured during benchmark
   authOk?: boolean | null;        // Whether authentication succeeded during benchmark
   throughputMbps?: number | null; // Stream throughput probe result
+  speedMbps?: number | null;      // Alias for throughputMbps
   probeOk?: boolean | null;       // Whether the throughput probe succeeded
   networkType?: 'cdn' | 'direct' | null; // Detected network routing (CDN vs Direct)
   cdnProvider?: string | null;    // Detected CDN provider (e.g. Cloudflare, CloudFront, Fastly)

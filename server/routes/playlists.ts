@@ -195,6 +195,37 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         log(`[Clone] Stream mappings duplicated successfully.`);
       }
 
+      // 4. Clone Custom Categories & Items (Symlinks)
+      const { customCategories: schemaCustomCategories, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
+      const existingCustomCats = db.select().from(schemaCustomCategories).where(eq(schemaCustomCategories.playlistId, playlistId)).all();
+      const oldToNewCatId = new Map<string, string>();
+      if (existingCustomCats.length > 0) {
+        const newCats = existingCustomCats.map(cc => {
+          const newCatId = generateId();
+          oldToNewCatId.set(cc.id, newCatId);
+          return { id: newCatId, playlistId: newPlaylistId, type: cc.type, name: cc.name, order: cc.order, hidden: cc.hidden };
+        });
+        db.insert(schemaCustomCategories).values(newCats).run();
+      }
+
+      const existingCustomItems = db.select().from(schemaCustomCategoryItems).where(eq(schemaCustomCategoryItems.playlistId, playlistId)).all();
+      if (existingCustomItems.length > 0) {
+        const newItems = existingCustomItems.map(item => {
+          const targetCatId = oldToNewCatId.get(item.customCategoryId) || item.customCategoryId;
+          return {
+            id: generateId(),
+            customCategoryId: targetCatId,
+            playlistId: newPlaylistId,
+            type: item.type,
+            upstreamStreamId: item.upstreamStreamId,
+            upstreamSourceId: item.upstreamSourceId,
+            streamId: String(Math.floor(100000000 + Math.random() * 900000000)),
+            extra: item.extra
+          };
+        });
+        db.insert(schemaCustomCategoryItems).values(newItems).run();
+      }
+
       log(`[Clone] Success: Playlist duplicated to ${newPlaylistId}`);
       res.json({ id: newPlaylistId });
     } catch (err: any) {

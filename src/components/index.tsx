@@ -74,6 +74,7 @@ import {
   Users,
   LayoutList,
   Copy,
+  Link2,
   History,
   Clock,
   Download,
@@ -4023,6 +4024,58 @@ export function PlaylistEditor({ user }: { user: User }) {
   const [customCategories, setCustomCategories] = useState<any[]>([]);
   const [customCategoryItems, setCustomCategoryItems] = useState<any[]>([]);
   const [streams, setStreams] = useState<any[]>([]);
+  const rawStreamsRef = useRef<any[]>([]);
+
+  const buildStreamsWithCustomItems = useCallback((rawStreams: any[], cItems: any[], cCats: any[], activeSourceIds: string[], tab: string) => {
+    const activeTabItems = cItems.filter(item => item.type === tab);
+    const extraStreams: any[] = [];
+
+    activeTabItems.forEach(item => {
+      const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
+      const originalStream = rawStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
+      const isCustom = cCats.some((c: any) => c.id === item.customCategoryId || `custom_${c.id}` === item.customCategoryId);
+      const targetCatId = isCustom
+        ? (item.customCategoryId.startsWith('custom_') ? item.customCategoryId : `custom_${item.customCategoryId}`)
+        : item.customCategoryId;
+
+      if (originalStream) {
+        const clone = {
+          ...originalStream,
+          _rawId: item.streamId,
+          _uniqueId: item.streamId,
+          _originalId: String(originalStream.stream_id ?? originalStream.series_id),
+          _upstreamStreamId: item.upstreamStreamId,
+          _upstreamSourceId: item.upstreamSourceId,
+          category_id: targetCatId,
+          _isCopy: true,
+          _customItemId: item.id,
+          _originalStream: originalStream
+        };
+        if (clone.stream_id) clone.stream_id = item.streamId;
+        if (clone.series_id) clone.series_id = item.streamId;
+        extraStreams.push(clone);
+      } else {
+        extraStreams.push({
+          _rawId: item.streamId,
+          _uniqueId: item.streamId,
+          stream_id: item.streamId,
+          series_id: item.streamId,
+          _originalId: item.upstreamStreamId,
+          _upstreamStreamId: item.upstreamStreamId,
+          _upstreamSourceId: item.upstreamSourceId,
+          category_id: targetCatId,
+          name: item.extra?.name || 'Unknown Channel',
+          stream_icon: item.extra?.stream_icon,
+          cover: item.extra?.cover,
+          _isMissing: true,
+          _isCopy: true,
+          _customItemId: item.id
+        });
+      }
+    });
+
+    return [...rawStreams, ...extraStreams];
+  }, []);
   const [mappings, setMappings] = useState<StreamMapping[]>([]);
   const [categoryMappings, setCategoryMappings] = useState<CategoryMapping[]>([]);
   const [epgChannels, setEpgChannels] = useState<{id: string; name: string; icon?: string; source: string}[]>([]);
@@ -4126,39 +4179,17 @@ export function PlaylistEditor({ user }: { user: User }) {
         api.upstream.fetchStreams(s, activeTab, forceRefresh, activeSourceIds.indexOf(s.id))
       ));
       const mergedStreams = streamResults.flatMap(r => r.streams || []);
+      rawStreamsRef.current = mergedStreams;
 
       // Inject copied streams from customCategoryItems
-      const cItems = await api.customCategoryItems.list(id as string);
-      const activeTabItems = cItems.filter(item => item.type === activeTab);
-      const extraStreams: any[] = [];
+      const [cItems, cCats] = await Promise.all([
+        api.customCategoryItems.list(id as string),
+        api.customCategories.list(id as string)
+      ]);
+      setCustomCategoryItems(cItems);
+      setCustomCategories(cCats);
 
-      activeTabItems.forEach(item => {
-        const sourceIdx = activeSourceIds.indexOf(item.upstreamSourceId);
-        const originalStream = mergedStreams.find(s => String(s.stream_id ?? s.series_id) === item.upstreamStreamId && s._sourceIdx === sourceIdx);
-        if (originalStream) {
-          const clone = { ...originalStream, _rawId: item.streamId, _uniqueId: item.streamId, category_id: `custom_${item.customCategoryId}`, _isCopy: true, _customItemId: item.id };
-          if (clone.stream_id) clone.stream_id = item.streamId;
-          if (clone.series_id) clone.series_id = item.streamId;
-          extraStreams.push(clone);
-        } else {
-          // Add a dummy missing item representation
-          extraStreams.push({
-            _rawId: item.streamId,
-            _uniqueId: item.streamId,
-            stream_id: item.streamId,
-            series_id: item.streamId,
-            category_id: `custom_${item.customCategoryId}`,
-            name: item.extra?.name || 'Unknown Channel',
-            stream_icon: item.extra?.stream_icon,
-            cover: item.extra?.cover,
-            _isMissing: true,
-            _isCopy: true,
-            _customItemId: item.id
-          });
-        }
-      });
-
-      setStreams([...mergedStreams, ...extraStreams]);
+      setStreams(buildStreamsWithCustomItems(mergedStreams, cItems, cCats, activeSourceIds, activeTab));
 
       // Apply pending spotlight navigation (cross-tab: tab change cleared selections before load)
       const nav = pendingNavRef.current;
@@ -4797,7 +4828,7 @@ export function PlaylistEditor({ user }: { user: User }) {
     }
   };
 
-  const handleBatchCopy = async (targetCustomCategoryIdStr: string, scope: 'all' | 'categories' | 'streams' | 'single', specificStream?: any) => {
+  const handleBatchCopy = async (targetCategoryIdStr: string, scope: 'all' | 'categories' | 'streams' | 'single', specificStream?: any) => {
     let activeStreams: any[] = [];
 
     if (scope === 'all') {
@@ -4815,33 +4846,28 @@ export function PlaylistEditor({ user }: { user: User }) {
       return;
     }
 
-    let targetCustomCategoryId = targetCustomCategoryIdStr;
-    if (targetCustomCategoryIdStr.startsWith('custom_')) {
-      targetCustomCategoryId = targetCustomCategoryIdStr.substring(7);
+    let targetCustomCategoryId = targetCategoryIdStr;
+    if (targetCategoryIdStr.startsWith('custom_')) {
+      targetCustomCategoryId = targetCategoryIdStr.substring(7);
     }
 
-    // Find the custom category
-    const cc = customCategories.find(c => c.id === targetCustomCategoryId || c.name === targetCustomCategoryIdStr);
-    if (!cc) {
-      alert("Target custom category not found.");
-      return;
-    }
-
-    const trueCustomCategoryId = cc.id;
+    // Target can be a custom category OR an upstream category
+    const cc = customCategories.find(c => c.id === targetCustomCategoryId || c.name === targetCategoryIdStr);
+    const finalTargetCategoryId = cc ? cc.id : targetCategoryIdStr;
 
     // Build custom category items
     const items = activeStreams.map(stream => {
-      // Avoid copying copies for simplicity, or handle resolving their original IDs
-      if (stream._isCopy) return null;
+      if (stream._isMissing) return null;
 
-      const upstreamStreamId = String(stream.stream_id ?? stream.series_id);
-      const upstreamSourceId = playlist!.sourceIds[stream._sourceIdx ?? 0];
-      if (!upstreamSourceId) return null;
+      const orig = stream._originalStream || stream;
+      const upstreamStreamId = String(orig.stream_id ?? orig.series_id ?? stream._upstreamStreamId);
+      const upstreamSourceId = stream._upstreamSourceId || (orig._sourceIdx != null ? playlist!.sourceIds[orig._sourceIdx] : undefined);
+      if (!upstreamSourceId || !upstreamStreamId) return null;
 
-      const streamId = crypto.randomUUID();
+      const streamId = String(Math.floor(100000000 + Math.random() * 900000000));
 
       return {
-        customCategoryId: trueCustomCategoryId,
+        customCategoryId: finalTargetCategoryId,
         playlistId: id,
         type: activeTab,
         upstreamStreamId,
@@ -4858,18 +4884,16 @@ export function PlaylistEditor({ user }: { user: User }) {
     if (items.length > 0) {
       try {
         setLoading(true);
-        await api.customCategoryItems.batchCreate(items);
+        await api.customCategoryItems.batchCreate(items as any[]);
         await refreshMappings();
-        // Since loadData depends on these to inject clones into the UI stream array, we should re-load data.
-        await loadData(true);
       } catch (error) {
-        console.error("Batch copy failed:", error);
-        alert("Failed to apply batch changes.");
+        console.error("Batch link failed:", error);
+        alert("Failed to link channels.");
       } finally {
         setLoading(false);
       }
     } else {
-      alert("No suitable channels to copy.");
+      alert("No suitable channels to link.");
     }
   };
 
@@ -5021,7 +5045,10 @@ export function PlaylistEditor({ user }: { user: User }) {
     setCategoryMappings(catMappingData);
     setCustomCategories(customCatData);
     setCustomCategoryItems(customItemData);
-  }, [id]);
+    if (playlist && rawStreamsRef.current.length > 0) {
+      setStreams(buildStreamsWithCustomItems(rawStreamsRef.current, customItemData, customCatData, playlist.sourceIds, activeTab));
+    }
+  }, [id, playlist, activeTab, buildStreamsWithCustomItems]);
 
   const openAiCleanupStreams = (scope: 'categories' | 'streams') => {
     let activeStreams: any[] = [];
@@ -5721,6 +5748,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                   onScrolled={() => setScrollToStreamId(null)}
                   onBatchCopy={(target, stream) => handleBatchCopy(target, 'single', stream)}
                   customCategories={customCategories}
+                  categories={sortedCategories}
                 />
 
               </div>
@@ -6926,7 +6954,7 @@ function SourceBadge({ index, allSources, playlistSourceIds }: { index?: number,
   );
 }
 
-function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories }: {
+function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playlistId, applyRegex, onMappingChange, onDragEnd, loading, onSelectStream, selectedStreamIds, epgChannels, allSources, playlistSourceIds, playlist, globalFormat, scrollToId, onScrolled, onBatchCopy, customCategories, categories }: {
 
   streams: any[];
   selectedCategoryIds: Set<string>;
@@ -6948,8 +6976,9 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
   onScrolled?: () => void;
   onBatchCopy?: (target: string, stream?: any) => void;
   customCategories?: any[];
+  categories?: any[];
 }) {
-  const showCopyColumn = (customCategories?.filter(c => c.type === activeTab).length ?? 0) > 0 && !!onBatchCopy;
+  const showCopyColumn = !!onBatchCopy;
 
   const filteredStreams = streams;
 
@@ -7044,6 +7073,7 @@ function StreamTable({ streams, selectedCategoryIds, activeTab, mappings, playli
                   globalFormat,
                   onBatchCopy,
                   customCategories,
+                  categories,
                 }}
               >
                 {VirtualStreamRow}
@@ -7107,7 +7137,8 @@ const VirtualStreamRow = React.memo(({
     playlist,
     globalFormat,
     onBatchCopy,
-    customCategories
+    customCategories,
+    categories
   } = data;
   
   const stream = filteredStreams[index];
@@ -7159,6 +7190,7 @@ const VirtualStreamRow = React.memo(({
       playlistSourceIds={playlistSourceIds}
       onBatchCopy={onBatchCopy}
       customCategories={customCategories}
+      categories={categories}
     />
   );
 });
@@ -7184,6 +7216,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   playlistSourceIds?: string[];
   onBatchCopy?: (target: string, stream?: any) => void;
   customCategories?: any[];
+  categories?: any[];
 }>(({ 
   style, 
   stream, 
@@ -7204,15 +7237,24 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
   allSources,
   playlistSourceIds,
   onBatchCopy,
-  customCategories
+  customCategories,
+  categories
 }, ref) => {
   const [showCopyDropdown, setShowCopyDropdown] = useState(false);
   const [copyDropdownPos, setCopyDropdownPos] = useState({ top: 0, right: 0 });
+  const [categorySearch, setCategorySearch] = useState('');
   const copyBtnRef = useRef<HTMLButtonElement>(null);
   const icon = mapping?.customIcon || mapping?.epgIcon || stream.stream_icon || stream.cover;
   const epgSource = mapping?.epgSource || (mapping?.epgMapping ? epgChannels?.find(c => c.id === mapping.epgMapping)?.source : undefined);
 
-  const availableCustomCategories = customCategories?.filter(c => c.type === type) || [];
+  const availableCategories = useMemo(() => {
+    if (!categories) return [];
+    const q = categorySearch.toLowerCase().trim();
+    return categories.filter((c: any) => {
+      const name = (c.customName || c.category_name || c.name || '').toLowerCase();
+      return !q || name.includes(q);
+    });
+  }, [categories, categorySearch]);
 
   const toggleVisibility = async () => {
     try {
@@ -7296,7 +7338,11 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
 
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
-        {icon ? (
+        {stream._isMissing ? (
+          <div className="w-full h-full flex items-center justify-center text-sm select-none" title="Toter Symlink (Parent existiert nicht mehr)">
+            💀
+          </div>
+        ) : icon ? (
           <img src={proxyImg(icon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-zinc-800">
@@ -7321,7 +7367,20 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
               {displayName}
             </span>
             <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
-          {stream._isMissing && <span className="text-[9px] text-red-400 font-bold shrink-0">Missing</span>}
+            {stream._isCopy && !stream._isMissing && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-medium shrink-0 flex items-center gap-1" title="Verlinkter Kanal (Symlink)">
+                <Link2 size={9} /> Link
+              </span>
+            )}
+            {stream._isMissing && (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-bold shrink-0 flex items-center gap-1"
+                title="Toter Symlink: Der Original-Kanal (Parent) existiert nicht mehr im Upstream"
+              >
+                <span>💀</span>
+                <span>Tot</span>
+              </span>
+            )}
         </div>
         {mapping?.epgMapping ? (
           <div className="flex items-center gap-1.5 min-w-0">
@@ -7407,8 +7466,8 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         );
       })()}
 
-      {/* Copy to Custom Category */}
-      {availableCustomCategories.length > 0 && onBatchCopy && (
+      {/* Link to Category (Symlink) */}
+      {onBatchCopy && (
         <div className="w-8 shrink-0 flex items-center justify-center">
           {!stream._isCopy && (
             <button
@@ -7418,17 +7477,18 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
                 if (!showCopyDropdown) {
                   const rect = copyBtnRef.current?.getBoundingClientRect();
                   if (rect) {
-                    setCopyDropdownPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+                    setCopyDropdownPos({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
                   }
+                  setCategorySearch('');
                   setShowCopyDropdown(true);
                 } else {
                   setShowCopyDropdown(false);
                 }
               }}
               className="p-1 rounded text-purple-500 hover:text-purple-400 hover:bg-purple-500/20 transition-colors"
-              title="Copy to Custom Category"
+              title="Kanal in Kategorie verlinken (Symlink)"
             >
-              <Copy size={14} />
+              <Link2 size={14} />
             </button>
           )}
 
@@ -7436,21 +7496,75 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
             <>
               <div className="fixed inset-0 z-[9998]" onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); }} />
               <div
-                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-48"
+                className="fixed bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-[9999] py-1 w-64 flex flex-col max-h-72"
                 style={{ top: copyDropdownPos.top, right: copyDropdownPos.right }}
               >
-                <div className="px-3 py-2 border-b border-zinc-800 text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Copy to Category</div>
-                <div className="max-h-48 overflow-y-auto custom-scrollbar">
-                  {availableCustomCategories.map(cc => (
-                    <button
-                      key={cc.id}
-                      onClick={(e) => { e.stopPropagation(); setShowCopyDropdown(false); onBatchCopy(`custom_${cc.id}`, stream); }}
-                      className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors truncate flex items-center gap-2"
-                    >
-                      <Star size={10} className="text-yellow-500 shrink-0" />
-                      {cc.name}
-                    </button>
-                  ))}
+                <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between text-[11px] font-bold text-zinc-400">
+                  <div className="flex items-center gap-1.5 text-purple-400">
+                    <Link2 size={12} />
+                    <span>In Kategorie verlinken</span>
+                  </div>
+                  <span className="text-[9px] text-zinc-500 font-normal">Symlink</span>
+                </div>
+                <div className="p-2 border-b border-zinc-800">
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Kategorie suchen..."
+                      value={categorySearch}
+                      onChange={(e) => setCategorySearch(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-7 pr-2 py-1 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-purple-500"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-zinc-800/40">
+                  {availableCategories.length === 0 ? (
+                    <div className="px-3 py-4 text-center text-xs text-zinc-600 italic">
+                      Keine Kategorie gefunden
+                    </div>
+                  ) : (
+                    availableCategories.map((cat: any) => {
+                      const catId = String(cat.category_id || cat.id);
+                      const isCurrent = catId === String(stream.category_id);
+                      const isCustom = !!cat._isCustom || catId.startsWith('custom_');
+                      const catName = cat.customName || cat.category_name || cat.name;
+
+                      return (
+                        <button
+                          key={catId}
+                          disabled={isCurrent}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowCopyDropdown(false);
+                            setCategorySearch('');
+                            onBatchCopy(catId, stream);
+                          }}
+                          className={cn(
+                            "w-full text-left px-3 py-1.5 text-xs transition-colors truncate flex items-center justify-between gap-2",
+                            isCurrent
+                              ? "text-zinc-600 cursor-not-allowed bg-zinc-950/40"
+                              : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                          )}
+                          title={isCurrent ? "Kanal befindet sich bereits in dieser Kategorie" : `In "${catName}" verlinken`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {isCustom ? (
+                              <Star size={11} className="text-yellow-500 shrink-0" />
+                            ) : (
+                              <Folder size={11} className="text-blue-400 shrink-0" />
+                            )}
+                            <span className="truncate">{catName}</span>
+                          </div>
+                          {isCurrent && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 font-medium">Aktuell</span>
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </>,
@@ -7459,7 +7573,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         </div>
       )}
 
-      {/* Visibility toggle / Remove Missing */}
+      {/* Visibility toggle / Remove Symlink / Remove Missing */}
       <div className="w-8 shrink-0 flex items-center justify-center">
         {stream._isMissing ? (
           <button
@@ -7471,7 +7585,23 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
               }
             }}
             className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
-            title="Remove Missing Stream"
+            title="Tote Verlinkung entfernen"
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : stream._isCopy ? (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (confirm("Möchtest du diese Verlinkung wirklich entfernen? Der Original-Kanal bleibt erhalten.")) {
+                if (stream._customItemId) {
+                  await api.customCategoryItems.remove(stream._customItemId);
+                  onMappingChange();
+                }
+              }
+            }}
+            className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
+            title="Verlinkung entfernen"
           >
             <Trash2 size={14} />
           </button>
@@ -8044,7 +8174,9 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
             </div>
           ) : (
             <div className="w-8 h-8 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
-              {effectiveIcon ? (
+              {stream._isMissing ? (
+                <span className="text-base select-none" title="Original-Kanal (Parent) existiert nicht mehr">💀</span>
+              ) : effectiveIcon ? (
                 <img src={proxyImg(effectiveIcon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
               ) : (
                 <Tv size={15} className="text-zinc-700" />
@@ -8112,6 +8244,69 @@ function EditorPane({ stream, mapping, playlistId, type, source, playlist, globa
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         <div className="p-3 space-y-3">
+
+          {/* Symlink Banner */}
+          {stream._isCopy && (
+            <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-300">
+                  <Link2 size={13} className="text-purple-400" />
+                  <span>Verlinkter Kanal (Symlink)</span>
+                </div>
+                {source && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                    Quelle: {source.name}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Dieser Kanal verweist auf den Stream aus der Originalquelle. Playback und Streamdaten nutzen dieselbe Upstream-Quelle.
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm("Möchtest du diese Verlinkung wirklich entfernen? Der Original-Kanal bleibt erhalten.")) {
+                    if (stream._customItemId) {
+                      await api.customCategoryItems.remove(stream._customItemId);
+                      onUpdate();
+                      onClose();
+                    }
+                  }
+                }}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-red-500/15 hover:bg-red-500/25 active:scale-[0.98] text-red-400 hover:text-red-300 border border-red-500/30 rounded-lg font-bold text-xs transition-all w-full"
+              >
+                <Trash2 size={12} />
+                Verlinkung entfernen
+              </button>
+            </div>
+          )}
+
+          {/* Missing Stream Banner */}
+          {stream._isMissing && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-red-300">
+                <span className="text-base select-none">💀</span>
+                <span>Toter Symlink: Original-Kanal (Parent) nicht gefunden</span>
+              </div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Der Original-Kanal existiert nicht mehr im Upstream. Dieser Symlink liefert keinen Stream mehr und kann entfernt werden.
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (stream._customItemId) {
+                    await api.customCategoryItems.remove(stream._customItemId);
+                    onUpdate();
+                    onClose();
+                  }
+                }}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 rounded-lg font-bold text-xs transition-all w-full"
+              >
+                <Trash2 size={12} />
+                Toten Symlink entfernen
+              </button>
+            </div>
+          )}
 
           {/* Name + Logo — hidden in multi-select */}
           {!isMulti && (

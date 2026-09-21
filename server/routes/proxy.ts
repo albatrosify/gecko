@@ -137,39 +137,49 @@ export function createProxyRouter() {
     const { eq, and, inArray } = await import('drizzle-orm');
 
     const customItem = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.streamId, streamId))).get();
+    let customItemSourceDoc: any = null;
     if (customItem) {
       const targetOriginalId = customItem.upstreamStreamId;
       const targetSourceId = customItem.upstreamSourceId;
       const sourceRow = db.select().from(schemaSources).where(eq(schemaSources.id, targetSourceId)).get();
       if (!sourceRow) return res.status(404).send("Custom item source not found");
-      const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
-      const effectiveUsername = overrides?.username || sourceRow.username;
-      const effectivePassword = overrides?.password || sourceRow.password;
-      const cl = new XtreamClient({ ...sourceRow, username: effectiveUsername, password: effectivePassword } as any);
-      const targetExt = ext || (type === 'live' ? 'ts' : 'mp4');
-      const targetUrl = type === 'live' ? cl.getLiveStreamUrl(targetOriginalId) : (type === 'movie' ? cl.getVodStreamUrl(targetOriginalId, targetExt) : cl.getSeriesStreamUrl(targetOriginalId, targetExt));
-      return res.redirect(targetUrl);
+
+      if (playlist.directStreams) {
+        const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
+        const effectiveUsername = overrides?.username || sourceRow.username;
+        const effectivePassword = overrides?.password || sourceRow.password;
+        const cl = new XtreamClient({ ...sourceRow, username: effectiveUsername, password: effectivePassword } as any);
+        const targetExt = ext || (type === 'live' ? 'ts' : 'mp4');
+        const targetUrl = type === 'live' ? cl.getLiveStreamUrl(targetOriginalId) : (type === 'movie' ? cl.getVodStreamUrl(targetOriginalId, targetExt) : cl.getSeriesStreamUrl(targetOriginalId, targetExt));
+        return res.redirect(targetUrl);
+      }
+
+      originalId = targetOriginalId;
+      customItemSourceDoc = sourceRow;
     }
 
     // Look up stream mapping by raw upstream stream ID.
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
-    const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, streamId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
+    const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, originalId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
     const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
-    const mappedName = streamMapping
+    const customItemName = (customItem?.extra as any)?.name;
+    const mappedName = customItemName || (streamMapping
       ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
-      : null;
-    const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${streamId}`;
+      : null);
+    const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
     };
     if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'] as string;
 
-    // Use sourceIdx from the mapping to route to the correct upstream
+    // Use sourceIdx from the mapping to route to the correct upstream, or customItemSourceDoc
     const sourceIdx = streamMapping?.sourceIdx ?? -1;
-    const targetSourceIds = (sourceIdx >= 0 && sourceIdx < sourceIds.length)
-      ? [sourceIds[sourceIdx]]
-      : sourceIds;
+    const targetSourceIds = customItemSourceDoc
+      ? [customItemSourceDoc.id]
+      : ((sourceIdx >= 0 && sourceIdx < sourceIds.length)
+        ? [sourceIds[sourceIdx]]
+        : sourceIds);
 
     // Bulk fetch target sources to avoid N+1 queries
     const targetSourceDocs = targetSourceIds.length > 0
@@ -653,6 +663,8 @@ export function createProxyRouter() {
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
 
+           const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'live'))).all();
+           const customCatsSet = new Set(customCats.map(c => c.id));
            const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'live'))).all();
            const liveSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
            const liveDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
@@ -662,7 +674,18 @@ export function createProxyRouter() {
              const original = liveDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
              if (!original) return null;
 
-             const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+             const targetCatId = (item.customCategoryId.startsWith('custom_') || customCatsSet.has(item.customCategoryId))
+               ? (item.customCategoryId.startsWith('custom_') ? item.customCategoryId : `custom_${item.customCategoryId}`)
+               : item.customCategoryId;
+
+             const clone = { 
+               ...(original as any), 
+               stream_id: item.streamId, 
+               category_id: targetCatId, 
+               _rawId: item.streamId, 
+               _isCopy: true,
+               _originalStreamId: item.upstreamStreamId
+             };
              const extra = item.extra as any || {};
              if (extra.name) clone.name = extra.name;
              if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
@@ -695,6 +718,9 @@ export function createProxyRouter() {
              const prefixedId = `${c._sourceIdx}_${originalId}`;
              catOrderMap.set(prefixedId, idx);
            });
+           customCats.forEach(cc => {
+             catOrderMap.set(`custom_${cc.id}`, cc.order);
+           });
 
            const seenStreams = new Set<string>();
            const filteredData = [];
@@ -711,17 +737,19 @@ export function createProxyRouter() {
              if (mapping?.hidden) continue;
 
              // Determine target category ID (respect mapping override)
-             let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-             if (mapping?.categoryId) {
+             let targetCatId = s._isCopy
+               ? String(s.category_id || '')
+               : `${s._sourceIdx}_${String(s.category_id || '')}`;
+             if (!s._isCopy && mapping?.categoryId) {
                targetCatId = mapping.categoryId;
              }
 
              // Check if the final category is hidden
-             const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
+             const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
              if (catMapping?.hidden) continue;
 
-             // Apply category override to the stream object for output
-             if (mapping?.categoryId) {
+             // Apply category override to the stream object for output (only for non-copies)
+             if (!s._isCopy && mapping?.categoryId) {
                s.category_id = mapping.categoryId;
              }
 
@@ -742,10 +770,10 @@ export function createProxyRouter() {
              }
 
              if (playlist.directStreams && s._client) {
-               s.direct_source = s._client.getLiveStreamUrl(originalId);
+               s.direct_source = s._client.getLiveStreamUrl(s._isCopy ? ((s as any)._originalStreamId || originalId) : originalId);
              }
 
-             s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
+             s._catOrder = catOrderMap.get(targetCatId) ?? catOrderMap.get(String(s.category_id)) ?? 2000000000;
              s._streamOrder = mapping?.order ?? idx;
 
 
@@ -857,6 +885,8 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'vod'))).all();
+            const customCatsSet = new Set(customCats.map(c => c.id));
             const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'vod'))).all();
             const vodSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
             const vodDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
@@ -865,7 +895,19 @@ export function createProxyRouter() {
               if (sourceIdx === undefined) return null;
               const original = vodDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
               if (!original) return null;
-              const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+
+              const targetCatId = (item.customCategoryId.startsWith('custom_') || customCatsSet.has(item.customCategoryId))
+                ? (item.customCategoryId.startsWith('custom_') ? item.customCategoryId : `custom_${item.customCategoryId}`)
+                : item.customCategoryId;
+
+              const clone = { 
+                ...(original as any), 
+                stream_id: item.streamId, 
+                category_id: targetCatId, 
+                _rawId: item.streamId, 
+                _isCopy: true,
+                _originalStreamId: item.upstreamStreamId
+              };
               const extra = item.extra as any || {};
               if (extra.name) clone.name = extra.name;
               if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
@@ -898,6 +940,9 @@ export function createProxyRouter() {
               const prefixedId = `${c._sourceIdx}_${originalId}`;
               catOrderMap.set(prefixedId, idx);
             });
+            customCats.forEach(cc => {
+              catOrderMap.set(`custom_${cc.id}`, cc.order);
+            });
 
             const seenStreams = new Set<string>();
             const filteredData = [];
@@ -914,17 +959,19 @@ export function createProxyRouter() {
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
-              let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-              if (mapping?.categoryId) {
+              let targetCatId = s._isCopy
+                ? String(s.category_id || '')
+                : `${s._sourceIdx}_${String(s.category_id || '')}`;
+              if (!s._isCopy && mapping?.categoryId) {
                 targetCatId = mapping.categoryId;
               }
 
               // Check if the final category is hidden
-              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
+              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
               if (catMapping?.hidden) continue;
 
-              // Apply category override to the stream object for output
-              if (mapping?.categoryId) {
+              // Apply category override to the stream object for output (only for non-copies)
+              if (!s._isCopy && mapping?.categoryId) {
                 s.category_id = mapping.categoryId;
               }
 
@@ -939,7 +986,7 @@ export function createProxyRouter() {
                 s.sourceIdx = mapping.sourceIdx ?? -1;
               }
 
-              s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
+              s._catOrder = catOrderMap.get(targetCatId) ?? catOrderMap.get(String(s.category_id)) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
 
@@ -1058,6 +1105,8 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'series'))).all();
+            const customCatsSet = new Set(customCats.map(c => c.id));
             const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'series'))).all();
             const seriesSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
             const seriesDataMap = new Map(data.map((s: any) => [`${s._sourceIdx}_${s.series_id}`, s]));
@@ -1066,7 +1115,19 @@ export function createProxyRouter() {
               if (sourceIdx === undefined) return null;
               const original = seriesDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
               if (!original) return null;
-              const clone = { ...(original as any), series_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+
+              const targetCatId = (item.customCategoryId.startsWith('custom_') || customCatsSet.has(item.customCategoryId))
+                ? (item.customCategoryId.startsWith('custom_') ? item.customCategoryId : `custom_${item.customCategoryId}`)
+                : item.customCategoryId;
+
+              const clone = { 
+                ...(original as any), 
+                series_id: item.streamId, 
+                category_id: targetCatId, 
+                _rawId: item.streamId, 
+                _isCopy: true,
+                _originalStreamId: item.upstreamStreamId
+              };
               const extra = item.extra as any || {};
               if (extra.name) clone.name = extra.name;
               if (extra.cover) clone.cover = extra.cover;
@@ -1099,6 +1160,9 @@ export function createProxyRouter() {
               const prefixedId = `${c._sourceIdx}_${originalId}`;
               catOrderMap.set(prefixedId, idx);
             });
+            customCats.forEach(cc => {
+              catOrderMap.set(`custom_${cc.id}`, cc.order);
+            });
 
             const seenStreams = new Set<string>();
             const filteredData = [];
@@ -1114,17 +1178,19 @@ export function createProxyRouter() {
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
-              let targetCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
-              if (mapping?.categoryId) {
+              let targetCatId = s._isCopy
+                ? String(s.category_id || '')
+                : `${s._sourceIdx}_${String(s.category_id || '')}`;
+              if (!s._isCopy && mapping?.categoryId) {
                 targetCatId = mapping.categoryId;
               }
 
               // Check if the final category is hidden
-              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null);
+              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
               if (catMapping?.hidden) continue;
 
-              // Apply category override to the stream object for output
-              if (mapping?.categoryId) {
+              // Apply category override to the stream object for output (only for non-copies)
+              if (!s._isCopy && mapping?.categoryId) {
                 s.category_id = mapping.categoryId;
               }
 
@@ -1139,7 +1205,7 @@ export function createProxyRouter() {
                 s.sourceIdx = mapping.sourceIdx ?? -1;
               }
 
-              s._catOrder = catOrderMap.get(targetCatId) ?? 2000000000;
+              s._catOrder = catOrderMap.get(targetCatId) ?? catOrderMap.get(String(s.category_id)) ?? 2000000000;
               s._streamOrder = mapping?.order ?? idx;
 
 
@@ -1372,7 +1438,7 @@ export function createProxyRouter() {
     if (!playlist) return res.status(401).send("Invalid credentials");
 
     const db = getDb();
-    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
+    const { sources: schemaSources, mappings: schemaMappings, categoryMappings: schemaCategoryMappings, customCategories: schemaCustomCategories, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
     const { eq, inArray, and } = await import('drizzle-orm');
 
     // Bulk fetch all sources used in this playlist to avoid N+1 queries later.
@@ -1424,6 +1490,8 @@ export function createProxyRouter() {
 
       let rawStreams = allResults.flat();
 
+      const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, activeTabStr))).all();
+      const customCatsSet = new Set(customCats.map(c => c.id));
       const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, activeTabStr))).all();
       const m3uSourceIdxMap = new Map(playlistSourceIds.map((id, idx) => [id, idx]));
       const m3uDataMap = new Map(rawStreams.map((s: any) => [`${s._sourceIdx}_${s.stream_id}`, s]));
@@ -1432,7 +1500,19 @@ export function createProxyRouter() {
         if (sourceIdx === undefined) return null;
         const original = m3uDataMap.get(`${sourceIdx}_${item.upstreamStreamId}`);
         if (!original) return null;
-        const clone = { ...(original as any), stream_id: item.streamId, category_id: `custom_${item.customCategoryId}`, _rawId: item.streamId, _isCopy: true };
+
+        const targetCatId = (item.customCategoryId.startsWith('custom_') || customCatsSet.has(item.customCategoryId))
+          ? (item.customCategoryId.startsWith('custom_') ? item.customCategoryId : `custom_${item.customCategoryId}`)
+          : item.customCategoryId;
+
+        const clone = { 
+          ...(original as any), 
+          stream_id: item.streamId, 
+          category_id: targetCatId, 
+          _rawId: item.streamId, 
+          _isCopy: true,
+          _originalStreamId: item.upstreamStreamId
+        };
         const extra = item.extra as any || {};
         if (extra.name) clone.name = extra.name;
         if (extra.stream_icon) clone.stream_icon = extra.stream_icon;
@@ -1475,6 +1555,13 @@ export function createProxyRouter() {
           hidden: mapping?.hidden || false
         });
       });
+      customCats.forEach(cc => {
+        catOrderMap.set(`custom_${cc.id}`, {
+          order: cc.order,
+          name: cc.name,
+          hidden: Boolean(cc.hidden)
+        });
+      });
 
       const seenStreams = new Set<string>();
       const streams = rawStreams.filter((s: any, idx: number) => {
@@ -1489,16 +1576,17 @@ export function createProxyRouter() {
         // Use PREFIXED category ID for consistency (s.category_id is raw from upstream, never prefixed)
         const prefixedCatId = `${s._sourceIdx}_${String(s.category_id || '')}`;
 
-        if (mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
+        if (!s._isCopy && mapping?.categoryId && mapping.categoryId !== prefixedCatId) {
           s.category_id = mapping.categoryId;
         }
 
-        const catInfo = catOrderMap.get(prefixedCatId);
-        if (!catInfo || catInfo.hidden) return false;
+        const targetCatKey = s._isCopy ? String(s.category_id) : prefixedCatId;
+        const catInfo = catOrderMap.get(targetCatKey) || catOrderMap.get(String(s.category_id)) || catOrderMap.get(prefixedCatId);
+        if (catInfo && catInfo.hidden) return false;
 
-        s._catOrder = catInfo.order;
+        s._catOrder = catInfo ? catInfo.order : 2000000000;
         s._streamOrder = mapping?.order ?? idx;
-        s._displayCategoryName = catInfo.name;
+        s._displayCategoryName = catInfo?.name || String(s.category_id || 'Other');
         s._mapping = mapping;
         s.sourceIdx = mapping?.sourceIdx ?? -1;
         return true;
@@ -1524,10 +1612,11 @@ export function createProxyRouter() {
         const categoryName = stream._displayCategoryName;
 
         let url;
+        const directStreamId = stream._isCopy ? ((stream as any)._originalStreamId || streamId) : streamId;
         if (playlist.directStreams && stream._client) {
-          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(streamId, stream.container_extension);
-          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(streamId, stream.container_extension);
-          else url = stream._client.getLiveStreamUrl(streamId);
+          if (m3uType === 'vod') url = stream._client.getVodStreamUrl(directStreamId, stream.container_extension);
+          else if (m3uType === 'series') url = stream._client.getSeriesStreamUrl(directStreamId, stream.container_extension);
+          else url = stream._client.getLiveStreamUrl(directStreamId);
         } else {
           const pathType = m3uType === 'vod' ? 'movie' : m3uType === 'series' ? 'series' : 'live';
           const streamExt = m3uType === 'live' ? 'ts' : (stream.container_extension || 'mp4');

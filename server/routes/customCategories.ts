@@ -196,17 +196,18 @@ export function createCustomCategoriesRouter() {
     }
 
     try {
-      // Validate category belongs to this verified playlist
+      // If customCategoryId references an existing customCategory, ensure it belongs to this playlist
+      const rawCatId = customCategoryId.startsWith('custom_') ? customCategoryId.slice(7) : customCategoryId;
       const category = db.select().from(customCategories)
-        .where(and(eq(customCategories.id, customCategoryId), eq(customCategories.playlistId, playlistId)))
+        .where(eq(customCategories.id, rawCatId))
         .get();
 
-      if (!category) {
-        return res.status(400).json({ error: "customCategoryId does not belong to the verified playlist" });
+      if (category && category.playlistId !== playlistId) {
+        return res.status(403).json({ error: "customCategoryId does not belong to the verified playlist" });
       }
 
       const newId = generateId();
-      const safeStreamId = streamId ? String(streamId) : generateId();
+      const safeStreamId = streamId ? String(streamId) : String(Math.floor(100000000 + Math.random() * 900000000));
 
       db.insert(customCategoryItems).values({
         id: newId,
@@ -252,22 +253,22 @@ export function createCustomCategoriesRouter() {
     }
 
     try {
-      // Collect and verify customCategoryIds
-      const catIds = [...new Set(items.map(i => i.customCategoryId).filter(Boolean))];
-      if (catIds.length > 0) {
-        const ownedCats = db.select({ id: customCategories.id }).from(customCategories)
-          .where(and(inArray(customCategories.id, catIds), eq(customCategories.playlistId, playlistId)))
+      // If any customCategoryId references an existing customCategory, ensure it belongs to this playlist
+      const rawCatIds = [...new Set(items.map(i => i.customCategoryId.startsWith('custom_') ? i.customCategoryId.slice(7) : i.customCategoryId).filter(Boolean))];
+      if (rawCatIds.length > 0) {
+        const matchedCats = db.select({ id: customCategories.id, playlistId: customCategories.playlistId })
+          .from(customCategories)
+          .where(inArray(customCategories.id, rawCatIds))
           .all();
-        const ownedSet = new Set(ownedCats.map(c => c.id));
-        const missing = catIds.find(catId => !ownedSet.has(catId));
-        if (missing) {
-          return res.status(400).json({ error: `Category ${missing} does not belong to this playlist` });
+        const foreignCat = matchedCats.find(c => c.playlistId !== playlistId);
+        if (foreignCat) {
+          return res.status(403).json({ error: `Category ${foreignCat.id} does not belong to this playlist` });
         }
       }
 
       db.transaction((tx) => {
         for (const item of items) {
-          const safeStreamId = item.streamId ? String(item.streamId) : generateId();
+          const safeStreamId = item.streamId ? String(item.streamId) : String(Math.floor(100000000 + Math.random() * 900000000));
           tx.insert(customCategoryItems).values({
             id: generateId(),
             customCategoryId: item.customCategoryId,
