@@ -7295,24 +7295,24 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       style={style}
       onClick={(e) => onSelectStream(stream, e)}
       className={cn(
-        "flex items-center gap-2 px-2 border-b border-zinc-800/50 transition-colors cursor-pointer group border-l-2",
+        "flex items-center gap-2 px-2 border-b border-zinc-800/50 transition-colors cursor-pointer group border-l-4",
         mapping?.hidden && "opacity-40",
         isCopy
           ? (isSelected
-              ? "bg-amber-500/20 border-l-amber-500"
+              ? "bg-amber-500/25 border-l-amber-500"
               : isDragging
               ? "bg-zinc-800 border-l-amber-500"
               : (index % 2 === 0
-                  ? "bg-amber-500/[0.08] hover:bg-amber-500/[0.14] border-l-amber-500/70"
-                  : "bg-amber-500/[0.04] hover:bg-amber-500/[0.12] border-l-amber-500/70"))
+                  ? "bg-amber-500/15 hover:bg-amber-500/25 border-l-amber-500"
+                  : "bg-amber-500/10 hover:bg-amber-500/20 border-l-amber-500"))
           : isDeadCopy
           ? (isSelected
-              ? "bg-red-500/20 border-l-red-500"
+              ? "bg-red-500/25 border-l-red-500"
               : isDragging
               ? "bg-zinc-800 border-l-red-500"
-              : "bg-red-950/20 hover:bg-red-950/30 border-l-red-500/70")
+              : "bg-red-950/40 hover:bg-red-950/60 border-l-red-500")
           : (isSelected
-              ? "bg-emerald-500/10 border-l-emerald-500"
+              ? "bg-emerald-500/15 border-l-emerald-500"
               : isDragging
               ? "bg-zinc-800 border-l-transparent"
               : (index % 2 === 0
