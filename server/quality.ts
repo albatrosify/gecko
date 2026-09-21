@@ -7,20 +7,26 @@ import { DetectedStreamMeta } from '../src/types.ts';
  */
 export async function probeStream(
   url: string,
-  timeoutMs = 8000
+  timeoutMs = 15000
 ): Promise<DetectedStreamMeta> {
   return new Promise((resolve, reject) => {
     const args = [
       '-v', 'quiet',
       '-print_format', 'json',
       '-show_streams',
-      '-probesize', '5000000',
-      '-analyzeduration', '5000000',
-      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
+      '-probesize', '2500000',
+      '-analyzeduration', '3000000',
+      '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       url,
     ];
 
-    const proc = spawn('ffprobe', args);
+    const ffprobeCmd = process.env.FFPROBE_PATH || 'ffprobe';
+    const proc = spawn(ffprobeCmd, args, {
+      env: {
+        ...process.env,
+        PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`
+      }
+    });
     let stdout = '';
     let stderr = '';
 

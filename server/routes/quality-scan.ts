@@ -37,7 +37,7 @@ export function createQualityScanRouter() {
     }
 
     const db = getDb();
-    const { playlists: schemaPlaylists, sources: schemaSources } = await import('../schema.ts');
+    const { playlists: schemaPlaylists, sources: schemaSources, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
     const { eq, and, inArray } = await import('drizzle-orm');
 
     const playlistDoc = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, playlistId), eq(schemaPlaylists.userId, req.user!.id))).get();
@@ -47,9 +47,20 @@ export function createQualityScanRouter() {
     const sourceDocs = sourceIds.length > 0
       ? db.select().from(schemaSources).where(inArray(schemaSources.id, sourceIds)).all()
       : [];
-    const sourcesMap = new Map(sourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
+    const playlistExtra = (playlistDoc.extra as any) || {};
+    const sourceOverrides = playlistExtra.sourceOverrides || {};
+    const sourcesMap = new Map(sourceDocs.map(doc => {
+      const merged = { ...doc, ...(doc.extra as any || {}) };
+      if (sourceOverrides[doc.id]?.username) merged.username = sourceOverrides[doc.id].username;
+      if (sourceOverrides[doc.id]?.password) merged.password = sourceOverrides[doc.id].password;
+      if (sourceOverrides[doc.id]?.url) merged.url = sourceOverrides[doc.id].url;
+      return [doc.id, merged];
+    }));
     const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
     if (!validSources.length) return res.status(400).json({ error: 'No sources found for playlist' });
+
+    const customItems = db.select().from(schemaCustomCategoryItems).where(eq(schemaCustomCategoryItems.playlistId, playlistId)).all();
+    const customItemByStreamId = new Map(customItems.map(item => [item.streamId, item]));
 
     const jobId = Math.random().toString(36).slice(2);
     const job: ScanJob = {
@@ -87,9 +98,21 @@ export function createQualityScanRouter() {
             const firstPart = parseInt(parts[0]);
             if (!isNaN(firstPart)) { sIdx = firstPart; originalStreamId = parts.slice(1).join('_'); }
           }
-          const targetSources = (sIdx !== null && sIdx < validSources.length)
+
+          // Check if this stream is a symlink (customCategoryItem)
+          const customItem = customItemByStreamId.get(streamId) || customItemByStreamId.get(originalStreamId);
+          let targetStreamId = originalStreamId;
+          let targetSources = (sIdx !== null && sIdx < validSources.length)
             ? [validSources[sIdx]]
             : validSources;
+
+          if (customItem) {
+            targetStreamId = customItem.upstreamStreamId;
+            const src = sourcesMap.get(customItem.upstreamSourceId);
+            if (src) {
+              targetSources = [src];
+            }
+          }
 
           let meta: any = null;
           let lastError = '';
@@ -104,12 +127,12 @@ export function createQualityScanRouter() {
                 const cached = getCached(`${sourceDoc.id}_streams_${type}`);
                 if (cached?.data) {
                   const streamData = (cached.data as any[]).find(
-                    (s: any) => String(s.stream_id ?? s.series_id) === originalStreamId
+                    (s: any) => String(s.stream_id ?? s.series_id) === targetStreamId
                   );
                   extension = streamData?.container_extension || undefined;
                 }
               }
-              const url = buildStreamUrl(sourceDoc, originalStreamId, type, extension);
+              const url = buildStreamUrl(sourceDoc, targetStreamId, type, extension);
               meta = await probeStream(url);
               break;
             } catch (e: any) {
@@ -122,17 +145,24 @@ export function createQualityScanRouter() {
             const { mappings: schemaMappings } = await import('../schema.ts');
             const { eq, and } = await import('drizzle-orm');
 
-            const existingMapping = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlistId), eq(schemaMappings.originalId, originalStreamId), eq(schemaMappings.type, type))).get();
-            if (existingMapping) {
-               const currentExtra = (existingMapping.extra as any) || {};
-               currentExtra.detectedMeta = meta;
-               if (sIdx !== null) currentExtra.sourceIdx = sIdx;
-               db.update(schemaMappings).set({ extra: currentExtra }).where(eq(schemaMappings.id, existingMapping.id)).run();
-            } else {
-               const newExtra = { detectedMeta: meta, originalName: '', customName: '', hidden: false, order: 999999, categoryId: '' } as any;
-               if (sIdx !== null) newExtra.sourceIdx = sIdx;
+            // Save mapping for the queried streamId (symlink and/or regular stream)
+            const idsToUpdate = customItem
+              ? Array.from(new Set([originalStreamId, customItem.upstreamStreamId]))
+              : [originalStreamId];
 
-               db.insert(schemaMappings).values({ id: generateId(), playlistId, originalId: originalStreamId, type, extra: newExtra }).run();
+            for (const idToSave of idsToUpdate) {
+              const existingMapping = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, playlistId), eq(schemaMappings.originalId, idToSave), eq(schemaMappings.type, type))).get();
+              if (existingMapping) {
+                const currentExtra = (existingMapping.extra as any) || {};
+                currentExtra.detectedMeta = meta;
+                if (sIdx !== null) currentExtra.sourceIdx = sIdx;
+                db.update(schemaMappings).set({ extra: currentExtra }).where(eq(schemaMappings.id, existingMapping.id)).run();
+              } else {
+                const newExtra = { detectedMeta: meta, originalName: '', customName: '', hidden: false, order: 999999, categoryId: '' } as any;
+                if (sIdx !== null) newExtra.sourceIdx = sIdx;
+
+                db.insert(schemaMappings).values({ id: generateId(), playlistId, originalId: idToSave, type, extra: newExtra }).run();
+              }
             }
 
             job.results.push({ streamId, meta });

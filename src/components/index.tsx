@@ -7286,18 +7286,38 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
      }
    };
 
+  const isCopy = stream._isCopy && !stream._isMissing;
+  const isDeadCopy = stream._isMissing;
+
   return (
     <div
       ref={ref}
       style={style}
       onClick={(e) => onSelectStream(stream, e)}
       className={cn(
-        "flex items-center gap-2 px-2 border-b border-zinc-800/50 transition-colors cursor-pointer group",
+        "flex items-center gap-2 px-2 border-b border-zinc-800/50 transition-colors cursor-pointer group border-l-2",
         mapping?.hidden && "opacity-40",
-        isSelected
-          ? "bg-emerald-500/10"
-          : isDragging ? "bg-zinc-800" : (index % 2 === 0 ? "bg-zinc-950/30" : "bg-transparent"),
-        !isDragging && !isSelected && "hover:bg-zinc-900/80"
+        isCopy
+          ? (isSelected
+              ? "bg-amber-500/20 border-l-amber-500"
+              : isDragging
+              ? "bg-zinc-800 border-l-amber-500"
+              : (index % 2 === 0
+                  ? "bg-amber-500/[0.08] hover:bg-amber-500/[0.14] border-l-amber-500/70"
+                  : "bg-amber-500/[0.04] hover:bg-amber-500/[0.12] border-l-amber-500/70"))
+          : isDeadCopy
+          ? (isSelected
+              ? "bg-red-500/20 border-l-red-500"
+              : isDragging
+              ? "bg-zinc-800 border-l-red-500"
+              : "bg-red-950/20 hover:bg-red-950/30 border-l-red-500/70")
+          : (isSelected
+              ? "bg-emerald-500/10 border-l-emerald-500"
+              : isDragging
+              ? "bg-zinc-800 border-l-transparent"
+              : (index % 2 === 0
+                  ? "bg-zinc-950/30 hover:bg-zinc-900/80 border-l-transparent"
+                  : "bg-transparent hover:bg-zinc-900/80 border-l-transparent"))
       )}
     >
       {/* Drag handle */}
@@ -7352,7 +7372,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
             </span>
             <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
             {stream._isCopy && !stream._isMissing && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-medium shrink-0 flex items-center gap-1" title="Verlinkter Kanal (Symlink)">
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium shrink-0 flex items-center gap-1" title="Verlinkter Kanal (Symlink)">
                 <Link2 size={9} /> Link
               </span>
             )}
@@ -8309,10 +8329,10 @@ function EditorPane({
 
           {/* Symlink Banner */}
           {stream._isCopy && (
-            <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 flex flex-col gap-2">
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-300">
-                  <Link2 size={13} className="text-purple-400" />
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                  <Link2 size={13} className="text-amber-400" />
                   <span>Verlinkter Kanal (Symlink)</span>
                 </div>
                 {source && (
@@ -8330,7 +8350,7 @@ function EditorPane({
                   if (confirm("Möchtest du diese Verlinkung wirklich entfernen? Der Original-Kanal bleibt erhalten.")) {
                     if (stream._customItemId) {
                       await api.customCategoryItems.remove(stream._customItemId);
-                      onUpdate();
+                      await onUpdate();
                       onClose();
                     }
                   }
@@ -8358,7 +8378,7 @@ function EditorPane({
                 onClick={async () => {
                   if (stream._customItemId) {
                     await api.customCategoryItems.remove(stream._customItemId);
-                    onUpdate();
+                    await onUpdate();
                     onClose();
                   }
                 }}
@@ -8413,25 +8433,35 @@ function EditorPane({
                   <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Detected Quality</label>
                   <button
                     onClick={async () => {
-                      const streamId = stream._rawId || stream.stream_id || mapping?.originalId || String(stream.series_id || stream._uniqueId);
+                      const scanStreamId = stream._isCopy
+                        ? String(stream._rawId || stream.stream_id)
+                        : (stream._sourceIdx != null
+                          ? `${stream._sourceIdx}_${stream._rawId || stream.stream_id}`
+                          : String(stream._rawId || stream.stream_id || stream._uniqueId));
                       setScanLoading(true);
                       setScanError(null);
                       try {
                         const { jobId } = await api.qualityScan.start({
                           playlistId,
-                          streamIds: [streamId],
+                          streamIds: [scanStreamId],
                           type: type as 'live' | 'vod' | 'series',
                           concurrency: 1,
                         });
                         let job: any;
                         do {
-                          await new Promise(r => setTimeout(r, 2000));
+                          await new Promise(r => setTimeout(r, 1500));
                           job = await api.qualityScan.status(jobId);
                         } while (job.status === 'running');
-                        const result = job.results.find((r: any) => r.streamId === streamId);
+                        const result = job.results.find((r: any) =>
+                          r.streamId === scanStreamId ||
+                          r.streamId === stream._rawId ||
+                          r.streamId === stream._uniqueId ||
+                          (stream._originalId && r.streamId === stream._originalId) ||
+                          (stream._upstreamStreamId && r.streamId === stream._upstreamStreamId)
+                        );
                         if (result?.meta) {
                           setDetectedMeta(result.meta); // show immediately, no parent round-trip needed
-                          onUpdate(); // also refresh parent so mapping is in sync
+                          await onUpdate(); // also refresh parent so mapping is in sync
                         } else if (result?.error) {
                           setScanError(result.error);
                         }
@@ -8479,19 +8509,37 @@ function EditorPane({
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={!!mapping?.useDetectedQuality}
+                    checked={!!(mapping?.useDetectedQuality || (stream._isCopy ? inheritedMapping?.useDetectedQuality : false))}
                     onChange={async e => {
-                      if (!mapping?.id) return;
-                      await api.mappings.update(mapping.id, { useDetectedQuality: e.target.checked } as any);
-                      onUpdate();
+                      if (mapping?.id) {
+                        await api.mappings.update(mapping.id, { useDetectedQuality: e.target.checked } as any);
+                      } else {
+                        const rawId = String(stream._rawId || stream.stream_id || stream._uniqueId);
+                        await api.mappings.create({
+                          playlistId,
+                          type,
+                          originalId: rawId,
+                          originalName,
+                          order: mapping?.order ?? 999999,
+                          hidden: mapping?.hidden || false,
+                          categoryId: String(stream.category_id || ""),
+                          sourceIdx: stream._sourceIdx ?? 0,
+                          customName: customName || originalName,
+                          customIcon,
+                          epgMapping,
+                          detectedMeta,
+                          useDetectedQuality: e.target.checked,
+                        } as any);
+                      }
+                      await onUpdate();
                     }}
-                    disabled={!mapping?.detectedMeta?.resolution}
+                    disabled={!detectedMeta?.resolution}
                     className="rounded accent-emerald-500"
                   />
                   <span className="text-xs text-zinc-400">Show quality in name</span>
                 </label>
 
-                {mapping?.useDetectedQuality && detectedMeta?.resolution && (
+                {detectedMeta?.resolution && (
                   <p className="text-[10px] text-zinc-500 truncate">
                     Preview: &ldquo;{computeDisplayName({ ...mapping, detectedMeta }, playlist?.qualityLabelFormat, globalFormat)}&rdquo;
                   </p>
