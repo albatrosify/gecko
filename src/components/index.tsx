@@ -92,7 +92,9 @@ import {
   Network,
   Send,
   Bell,
-  Sparkles
+  Sparkles,
+  BarChart3,
+  HardDrive
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -460,7 +462,7 @@ export function Dashboard() {
         <p className="text-xs text-zinc-500">Real-time system performance and activity</p>
       </header>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
           { label: 'Playlists', value: stats.totalPlaylists, icon: LayoutList, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
           { label: 'Active Users', value: stats.totalUsers, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
@@ -477,6 +479,21 @@ export function Dashboard() {
             <div className="text-xl font-bold text-zinc-100 tracking-tight">{card.value}</div>
           </div>
         ))}
+        {/* Monatstraffic card */}
+        <Link to="/traffic" className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-emerald-500/50 transition-all flex flex-col justify-between cursor-pointer">
+          <div className="flex justify-between items-center mb-1.5">
+            <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Monatstraffic</span>
+            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 border border-current/10 shrink-0 group-hover:scale-110 transition-transform">
+              <BarChart3 size={15} />
+            </div>
+          </div>
+          <div>
+            <div className="text-xl font-bold text-zinc-100 tracking-tight">{formatBytes(stats.monthBytes || 0)}</div>
+            <div className="text-[10px] text-zinc-500">
+              {stats.monthlyQuotaBytes ? `${Math.round(((stats.monthBytes || 0) / stats.monthlyQuotaBytes) * 1000) / 10}% von ${formatBytes(stats.monthlyQuotaBytes)}` : 'Details ansehen'}
+            </div>
+          </div>
+        </Link>
         {/* Cache stat card */}
         {stats.cache && (
           <div className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-zinc-700 transition-all flex flex-col justify-between">
@@ -3334,6 +3351,78 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
   );
 }
 
+function TrafficSettingsCard() {
+  const [quotaGB, setQuotaGB] = useState<number>(10240);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.settings.get()
+      .then((s: any) => {
+        if (typeof s.monthlyTrafficQuotaGB === 'number') {
+          setQuotaGB(s.monthlyTrafficQuotaGB);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await api.settings.update({ monthlyTrafficQuotaGB: quotaGB });
+      setMessage('Traffic-Limit gespeichert!');
+      setTimeout(() => setMessage(null), 4000);
+    } catch (err: any) {
+      setMessage(`Fehler: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <HardDrive size={16} className="text-emerald-400" />
+            Monatliches Traffic-Limit
+          </h3>
+          <p className="text-[11px] text-zinc-500">
+            Egress-Kontingent für Fortschrittsbalken und Warnungen (Oracle Free Tier: 10240 GB = 10 TB)
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-[11px] font-semibold text-zinc-400">Limit in Gigabyte (GB)</label>
+        <div className="flex gap-2 items-center">
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={quotaGB}
+            onChange={e => setQuotaGB(parseInt(e.target.value, 10) || 0)}
+            className="flex-1 px-3 py-1.5 bg-zinc-950/80 border border-zinc-800 rounded-lg text-zinc-100 font-mono text-xs focus:outline-none focus:border-emerald-500"
+          />
+          <button
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 cursor-pointer shrink-0"
+          >
+            {saving ? 'Saving...' : 'Speichern'}
+          </button>
+        </div>
+        {message && (
+          <p className="text-[11px] text-emerald-400 font-medium">{message}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VpnSettingsCard() {
   const [vpnStatus, setVpnStatus] = useState<import('../types').VpnStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3918,6 +4007,8 @@ export function Settings({ user }: { user: User }) {
           </div>
 
           <VpnSettingsCard />
+
+          <TrafficSettingsCard />
 
           <TelegramSettingsCard />
 

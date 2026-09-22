@@ -394,6 +394,7 @@ export interface GlobalSettings {
   llmApiKey?: string;
   llmModel?: string;
   llmSystemPrompt?: string;
+  monthlyTrafficQuotaGB?: number;
 }
 
 export const settings = {
@@ -486,5 +487,22 @@ export const dvr = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr, llm };
+// Traffic
+export const traffic = {
+  async getStats(params?: { startDate?: string; endDate?: string }): Promise<import('./types').TrafficStatsResponse> {
+    const q = new URLSearchParams();
+    if (params?.startDate) q.set('startDate', params.startDate);
+    if (params?.endDate) q.set('endDate', params.endDate);
+    const query = q.toString() ? `?${q.toString()}` : '';
+    return request(`/api/traffic/stats${query}`);
+  },
+  async reset(playlistId?: string): Promise<{ success: boolean }> {
+    return request('/api/traffic/reset', {
+      method: 'POST',
+      body: JSON.stringify({ playlistId }),
+    });
+  },
+};
+
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr, llm, traffic };
 export default api;

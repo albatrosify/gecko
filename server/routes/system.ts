@@ -5,6 +5,7 @@ import { requireAuth } from "../auth.ts";
 import { getDb } from "../db.ts";
 import { LOG_PATH } from "../logger.ts";
 import { proxyStats } from "../proxy-stats.ts";
+import { getMonthTrafficBytes } from "../traffic.ts";
 import { invalidateQualityFormatCache } from "../quality-scan.ts";
 import { DEFAULT_LLM_SYSTEM_PROMPT } from "../llm.ts";
 
@@ -95,6 +96,7 @@ export function createSystemRouter() {
       const playlistsCount = db.select({ value: count() }).from(playlists).get()?.value || 0;
       const usersCount = db.select({ value: count() }).from(users).get()?.value || 0;
       const directStreamsCount = db.select({ value: count() }).from(playlists).where(eq(playlists.directStreams, true)).get()?.value || 0;
+      const { monthBytes, quotaBytes } = getMonthTrafficBytes();
 
       res.json({
         activeStreams: proxyStats.activeStreams,
@@ -106,6 +108,8 @@ export function createSystemRouter() {
         directStreamsCount,
         connections: Array.from(proxyStats.connections.values()),
         cache: getCacheStats(),
+        monthBytes,
+        monthlyQuotaBytes: quotaBytes,
       });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch stats' });
@@ -139,6 +143,7 @@ export function createSystemRouter() {
       llmApiKey: extra.llmApiKey ?? '',
       llmModel: extra.llmModel ?? '',
       llmSystemPrompt: extra.llmSystemPrompt ?? DEFAULT_LLM_SYSTEM_PROMPT,
+      monthlyTrafficQuotaGB: typeof extra.monthlyTrafficQuotaGB === 'number' ? extra.monthlyTrafficQuotaGB : 10240,
     });
   });
 
@@ -149,8 +154,11 @@ export function createSystemRouter() {
     const db = getDb();
     const { settings } = await import('../schema.ts');
     const { eq } = await import('drizzle-orm');
-    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords, llmEnabled, llmUrl, llmApiKey, llmModel, llmSystemPrompt } = req.body;
+    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords, llmEnabled, llmUrl, llmApiKey, llmModel, llmSystemPrompt, monthlyTrafficQuotaGB } = req.body;
 
+    if (monthlyTrafficQuotaGB !== undefined && (typeof monthlyTrafficQuotaGB !== 'number' || monthlyTrafficQuotaGB < 0 || !Number.isFinite(monthlyTrafficQuotaGB))) {
+      return res.status(400).json({ error: 'monthlyTrafficQuotaGB must be a positive number' });
+    }
     if (qualityLabelFormat !== undefined && (typeof qualityLabelFormat !== 'string' || qualityLabelFormat.length > 200)) {
       return res.status(400).json({ error: 'qualityLabelFormat must be a string ≤ 200 characters' });
     }
@@ -188,6 +196,7 @@ export function createSystemRouter() {
     const currentExtra = (currentSettings?.extra as any) || {};
     const mergedExtra = {
       ...currentExtra,
+      ...(monthlyTrafficQuotaGB !== undefined ? { monthlyTrafficQuotaGB: Math.round(monthlyTrafficQuotaGB) } : {}),
       ...(qualityLabelFormat !== undefined ? { qualityLabelFormat } : {}),
       ...(telegramBotToken !== undefined ? { telegramBotToken: telegramBotToken.trim() } : {}),
       ...(telegramChatId !== undefined ? { telegramChatId: telegramChatId.trim() } : {}),

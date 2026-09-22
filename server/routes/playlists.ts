@@ -8,6 +8,7 @@ import { duplicateCache, getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
 import { getBaseUrl, proxySeriesInfoImages } from "../utils.ts";
+import { recordTraffic } from "../traffic.ts";
 
 export function createPlaylistsRouter(epgsRouter?: Router) {
   const router = Router();
@@ -574,6 +575,9 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       }
 
       const stream = upstreamRes.data as NodeJS.ReadableStream;
+      stream.on('data', (chunk: Buffer) => {
+        recordTraffic(playlistDoc.id, playlistDoc.name, type === 'vod' ? 'movie' : 'series', chunk.length);
+      });
       let settled = false;
 
       const safeEnd = () => {

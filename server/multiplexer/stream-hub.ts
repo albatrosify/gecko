@@ -2,9 +2,11 @@ import express from 'express';
 import { log } from '../logger.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import { StreamChannelSummary } from './stream-guard.ts';
+import { recordTraffic } from '../traffic.ts';
 
 export interface DownstreamSubscriber {
   id: string;
+  playlistId?: string;
   req?: express.Request;
   res: express.Response;
   username: string;
@@ -172,6 +174,7 @@ class StreamHub {
             conn.bytesRead += chunk.length;
             conn.intervalBytes += chunk.length;
           }
+          recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', chunk.length);
 
           if (sub.res.destroyed || sub.res.writableEnded) {
             deadSubscribers.push(subId);
@@ -279,6 +282,7 @@ class StreamHub {
       id: sub.id,
       channelKey,
       sourceId: channel.sourceId,
+      playlistId: sub.playlistId,
       host: channel.hostUrl,
       username: sub.username,
       streamId: channel.streamId,

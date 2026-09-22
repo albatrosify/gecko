@@ -21,6 +21,7 @@ import { dvrRecorder, RECORDINGS_DIR } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
+import { recordTraffic } from "../traffic.ts";
 import fs from "fs";
 import path from "path";
 
@@ -104,6 +105,9 @@ export function createProxyRouter() {
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
         const chunksize = (end - start) + 1;
         const file = fs.createReadStream(recording.filePath, { start, end });
+        file.on('data', (chunk: Buffer) => {
+          recordTraffic(playlist.id, (playlist as any).name || username, 'movie', chunk.length);
+        });
 
         res.writeHead(206, {
           'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -118,7 +122,11 @@ export function createProxyRouter() {
           'Content-Type': 'video/mp2t',
           'Accept-Ranges': 'bytes',
         });
-        return fs.createReadStream(recording.filePath).pipe(res);
+        const file = fs.createReadStream(recording.filePath);
+        file.on('data', (chunk: Buffer) => {
+          recordTraffic(playlist.id, (playlist as any).name || username, 'movie', chunk.length);
+        });
+        return file.pipe(res);
       }
     }
 
@@ -213,7 +221,8 @@ export function createProxyRouter() {
             originalId,
             streamName,
             (playlist as any).name || username,
-            username
+            username,
+            playlist.id
           );
         }
 
@@ -221,6 +230,7 @@ export function createProxyRouter() {
           const subId = generateId();
           const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
             id: subId,
+            playlistId: playlist.id,
             req,
             res,
             username,
@@ -301,6 +311,7 @@ export function createProxyRouter() {
             const subId = generateId();
             streamHub.addSubscriber(channel.channelKey, {
               id: subId,
+              playlistId: playlist.id,
               req,
               res,
               username,
@@ -323,6 +334,7 @@ export function createProxyRouter() {
           const connectionInfo = {
             id: connId,
             sourceId,
+            playlistId: playlist.id,
             host: hostUrl,
             username,
             streamId,
@@ -345,6 +357,7 @@ export function createProxyRouter() {
             proxyStats.intervalBytes += chunk.length;
             connectionInfo.bytesRead += chunk.length;
             connectionInfo.intervalBytes += chunk.length;
+            recordTraffic(playlist.id, (playlist as any).name || username, type, chunk.length);
           });
 
           response.data.pipe(res);
@@ -434,6 +447,11 @@ export function createProxyRouter() {
 
       if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
       if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
+      response.data.on('data', (chunk: Buffer) => {
+        proxyStats.totalBytes += chunk.length;
+        proxyStats.intervalBytes += chunk.length;
+        recordTraffic(playlist.id, (playlist as any).name || username, 'live', chunk.length);
+      });
 
       response.data.pipe(res);
       res.on('close', () => { if (response.data?.destroy) response.data.destroy(); });

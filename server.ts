@@ -13,6 +13,7 @@ import { initCronManager } from "./server/sync.ts";
 import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { initHostStatsFlusher } from "./server/hosts.ts";
+import { initTrafficFlusher } from "./server/traffic.ts";
 import { DEFAULT_PORT } from "./server/config.ts";
 
 // Routers
@@ -27,6 +28,7 @@ import { createCustomCategoriesRouter } from "./server/routes/customCategories.t
 import { createQualityScanRouter } from "./server/routes/quality-scan.ts";
 import { createDvrRouter } from "./server/routes/dvr.ts";
 import { createLlmRouter } from "./server/routes/llm.ts";
+import { createTrafficRouter } from "./server/routes/traffic.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -65,6 +67,9 @@ async function startServer() {
 
     // Initialize host stats flusher (persists per-host usage counters)
     initHostStatsFlusher();
+
+    // Initialize traffic stats flusher (persists bandwidth and transfer statistics)
+    initTrafficFlusher();
 
     const app = express();
     app.set('trust proxy', 1);
@@ -123,6 +128,7 @@ async function startServer() {
     app.use('/api', createQualityScanRouter());
     app.use('/api', createLlmRouter());
     app.use('/api/dvr', createDvrRouter());
+    app.use('/api/traffic', createTrafficRouter());
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)
     app.use('/', createProxyRouter());

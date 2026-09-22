@@ -6,6 +6,7 @@ import { log } from '../logger.ts';
 import { DvrSourceLock } from './connection-arbiter.ts';
 import { generateId } from '../db.ts';
 import { proxyStats } from '../proxy-stats.ts';
+import { recordTraffic } from '../traffic.ts';
 
 export const PLACEHOLDER_PATHS = [
   path.join(process.cwd(), 'data', 'placeholder.mp4'),
@@ -26,7 +27,8 @@ export function servePlaceholderStream(
   requestedStreamId: string,
   streamName?: string,
   playlistName?: string,
-  username?: string
+  username?: string,
+  playlistId?: string
 ): void {
   const channelInfo = lock.streamName ? `"${lock.streamName}"` : `Stream ${lock.streamId}`;
   const displayName = streamName || `Stream ${requestedStreamId}`;
@@ -48,6 +50,7 @@ export function servePlaceholderStream(
     const connectionInfo = {
       id: connId,
       sourceId: lock.sourceId,
+      playlistId,
       username: username || 'client',
       streamId: requestedStreamId,
       streamName: `${displayName} (Gesperrt: ${channelInfo})`,
@@ -107,6 +110,7 @@ export function servePlaceholderStream(
         connectionInfo.intervalBytes += chunk.length;
         proxyStats.totalBytes += chunk.length;
         proxyStats.intervalBytes += chunk.length;
+        recordTraffic(playlistId, playlistName, 'live', chunk.length);
 
         if (!res.writableEnded && !res.destroyed) {
           try {

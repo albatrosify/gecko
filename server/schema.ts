@@ -138,3 +138,13 @@ export const recordings = sqliteTable('recordings', {
   extra: text('extra', { mode: 'json' }),
 });
 
+export const traffic_stats = sqliteTable('traffic_stats', {
+  id: text('id').primaryKey(),
+  date: text('date').notNull(),
+  playlistId: text('playlistId').notNull(),
+  playlistName: text('playlistName').notNull(),
+  streamType: text('streamType').notNull(),
+  bytes: integer('bytes').notNull().default(0),
+  updatedAt: integer('updatedAt').notNull(),
+});
+

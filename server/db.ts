@@ -40,6 +40,7 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
       CREATE TABLE IF NOT EXISTS source_connection_logs (id TEXT PRIMARY KEY, sourceId TEXT NOT NULL, timestamp TEXT NOT NULL, activeCons INTEGER NOT NULL DEFAULT 0, maxCons INTEGER NOT NULL DEFAULT 1, geckoStreams INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ok', isExternal INTEGER NOT NULL DEFAULT 0, details TEXT, extra TEXT);
       CREATE TABLE IF NOT EXISTS source_host_logs (id TEXT PRIMARY KEY, sourceId TEXT NOT NULL, timestamp TEXT NOT NULL, results TEXT);
       CREATE TABLE IF NOT EXISTS recordings (id TEXT PRIMARY KEY, userId TEXT NOT NULL, playlistId TEXT, sourceId TEXT NOT NULL, streamId TEXT NOT NULL, streamName TEXT NOT NULL, channelName TEXT, type TEXT NOT NULL DEFAULT 'live', status TEXT NOT NULL DEFAULT 'recording', startTime TEXT NOT NULL, endTime TEXT, durationSeconds INTEGER NOT NULL DEFAULT 0, fileSizeBytes INTEGER NOT NULL DEFAULT 0, filePath TEXT NOT NULL, extra TEXT);
+      CREATE TABLE IF NOT EXISTS traffic_stats (id TEXT PRIMARY KEY, date TEXT NOT NULL, playlistId TEXT NOT NULL, playlistName TEXT NOT NULL, streamType TEXT NOT NULL, bytes INTEGER NOT NULL DEFAULT 0, updatedAt INTEGER NOT NULL);
 
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
       CREATE INDEX IF NOT EXISTS idx_sources_userId ON sources(userId);
@@ -59,6 +60,9 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
       CREATE INDEX IF NOT EXISTS idx_source_host_logs ON source_host_logs(sourceId, timestamp);
       CREATE INDEX IF NOT EXISTS idx_recordings_userId ON recordings(userId);
       CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status);
+      CREATE INDEX IF NOT EXISTS idx_traffic_stats_date ON traffic_stats(date);
+      CREATE INDEX IF NOT EXISTS idx_traffic_stats_playlistId ON traffic_stats(playlistId);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_stats_date_playlist_type ON traffic_stats(date, playlistId, streamType);
     `);
   } catch (err) {
     console.error('Failed to initialize database schema:', err);

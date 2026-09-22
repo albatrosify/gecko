@@ -32,7 +32,7 @@ npm run test     # vitest run
 
 ## Architektur
 
-**Single-Process-Server** (`server.ts`): Express bedient REST-API **und** serviert das Vite-Frontend (dev: Vite-Middleware, prod: `dist/` + SPA-Fallback). Startup: `connectDb()` → `initCronManager()` → `initProxyStatsInterval()` → `initConnectionMonitor()` → `initHostStatsFlusher()`.
+**Single-Process-Server** (`server.ts`): Express bedient REST-API **und** serviert das Vite-Frontend (dev: Vite-Middleware, prod: `dist/` + SPA-Fallback). Startup: `connectDb()` → `initCronManager()` → `initProxyStatsInterval()` → `initConnectionMonitor()` → `initHostStatsFlusher()` → `initTrafficFlusher()`.
 
 **Backend** (`server/`) — Module mit Domänenlogik, `server/routes/` mit HTTP-Routern:
 - `db.ts` — SQLite (`better-sqlite3` + Drizzle), WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`). `generateId()` = `crypto.randomUUID()`, `docWithId()`/`docsWithId()` mergen die JSON-`extra`-Spalte.
@@ -50,16 +50,17 @@ npm run test     # vitest run
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
 - `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval).
+- `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 
 **Frontend** (`src/`):
 - `main.tsx` — Entry. `App.tsx` — Router + Auth-Gate, Routen unter Sidebar.
-- `api.ts` — Typed-Fetch-Wrapper (JWT in `localStorage`, 401 → Reload); Gruppen `auth`, `sources`, `epgs`, `playlists`, `mappings`, `categoryMappings`, `customCategories`, `customCategoryItems`, `upstream`, `proxy`, `admin`, `system`, `settings`, `llm`, `qualityScan`, `dvr`.
+- `api.ts` — Typed-Fetch-Wrapper (JWT in `localStorage`, 401 → Reload); Gruppen `auth`, `sources`, `epgs`, `playlists`, `mappings`, `categoryMappings`, `customCategories`, `customCategoryItems`, `upstream`, `proxy`, `admin`, `system`, `settings`, `llm`, `qualityScan`, `dvr`, `traffic`.
 - `types.ts` — Shared Types (Frontend + Backend).
 - `components/index.tsx` — monolithisch (~420 KB): `Dashboard`, `PlaylistManager`, `SourceManager`, `EPGManager`, `Settings`, `PlaylistEditor`, `UserManager`, `DvrManager`, `Layout`.
-- `components/SystemLogViewer.tsx`, `components/WebPlayer.tsx` — eigene Dateien.
+- `components/TrafficView.tsx`, `components/SystemLogViewer.tsx`, `components/WebPlayer.tsx` — eigene Dateien.
 - `playerUtils.ts`, `quality.ts` — Frontend-Helfer.
 
-**Routen** in `App.tsx`: `/` (Dashboard), `/dvr`, `/playlists`, `/sources`, `/epgs`, `/settings`, `/playlist/:id` (Editor), `/users` (nur admin).
+**Routen** in `App.tsx`: `/` (Dashboard), `/traffic` (Traffic & Daten), `/dvr`, `/playlists`, `/sources`, `/epgs`, `/settings`, `/playlist/:id` (Editor), `/users` (nur admin).
 
 **Nebenprojekte:**
 - `player/` — eigenständige Expo-/React-Native-App (IPTV-Player-Client; `player/src/screens/*`, `player/src/api/xtream.ts`, `AuthContext`).
@@ -87,6 +88,7 @@ npm run test     # vitest run
 | `source_changelogs` | Sync-Changelog |
 | `source_connection_logs` / `source_host_logs` | Verbindungs-/Host-Überwachung |
 | `recordings` | DVR-Aufnahmen |
+| `traffic_stats` | Übertragenes Datenvolumen pro Tag, Playlist und StreamType (TV, Movie, Series) |
 
 ## API-Endpoints
 
@@ -106,6 +108,7 @@ Alle unter `/api` (Auth via `requireAuth`), außer Proxy-Endpoints. Detaillierte
 | Quality Scan | `server/routes/quality-scan.ts` | `/quality-scan`, `/quality-scan/:jobId` |
 | LLM | `server/routes/llm.ts` | `/llm/cleanup`, `/llm/test` |
 | DVR | `server/routes/dvr.ts` (mount `/api/dvr`) | `/recordings`, `/record-now`, `/recordings/:id/stop`, `/recordings/:id`, `/recordings/:id/stream` |
+| Traffic | `server/routes/traffic.ts` (mount `/api/traffic`) | `/stats`, `/reset` |
 | Proxy (public) | `server/routes/proxy.ts` (mount `/`) | `/player_api.php`, `/get.php`, `/xmltv.php`, `/live\|movie\|series/:username/:password/:streamId`, `/timeshift/...`, `/img` |
 
 ## Wo baue ich X ein?

@@ -8,6 +8,7 @@ export const proxyStats = {
   connections: new Map<string, {
     id: string;
     sourceId?: string;
+    playlistId?: string;
     username: string;
     streamId: string;
     streamName: string;

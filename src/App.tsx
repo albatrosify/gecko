@@ -3,7 +3,8 @@ import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-ro
 import api, { isLoggedIn, clearToken } from './api';
 import { User as AppUser } from './types';
 import { Layout, Dashboard, DvrManager, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
-import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Radio } from 'lucide-react';
+import { TrafficView } from './components/TrafficView';
+import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Radio, BarChart3 } from 'lucide-react';
 import Logo from './assets/logo.png';
 
 import pkg from '../package.json';
@@ -71,6 +72,7 @@ export default function App() {
               
               <nav className="flex-1 p-3 space-y-2 mt-2">
                 <NavLink to="/" icon={<LayoutGrid size={20} />} label="Dashboard" />
+                <NavLink to="/traffic" icon={<BarChart3 size={20} />} label="Traffic & Daten" />
                 <NavLink to="/dvr" icon={<Radio size={20} />} label="DVR / Aufnahmen" />
                 <NavLink to="/playlists" icon={<Library size={20} />} label="Playlists" />
                 <NavLink to="/sources" icon={<Database size={20} />} label="Upstream Sources" />
@@ -108,6 +110,7 @@ export default function App() {
           <main className="flex-1 overflow-auto pl-16 custom-scrollbar">
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/traffic" element={<TrafficView user={user} />} />
               <Route path="/dvr" element={<DvrManager user={user} />} />
               <Route path="/playlists" element={<PlaylistManager user={user} />} />
               <Route path="/sources" element={<SourceManager user={user} />} />
@@ -149,14 +152,16 @@ function ProxyBandwidthSidebar() {
   );
 
   const mbps = (stats.currentBps / 1000000).toFixed(2);
-  const totalGB = (stats.totalBytes / (1024 * 1024 * 1024)).toFixed(2);
+  const monthBytes = typeof stats.monthBytes === 'number' ? stats.monthBytes : stats.totalBytes;
+  const monthGB = (monthBytes / (1024 * 1024 * 1024)).toFixed(1);
+  const quotaTB = stats.monthlyQuotaBytes ? (stats.monthlyQuotaBytes / (1024 * 1024 * 1024 * 1024)).toFixed(0) : '10';
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Activity size={14} className="text-emerald-500" />
-        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Network Info</span>
-      </div>
+      <Link to="/traffic" className="flex items-center gap-2 group cursor-pointer">
+        <Activity size={14} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest group-hover:text-zinc-300 transition-colors">Network & Traffic</span>
+      </Link>
       
       <div className="space-y-3">
         <div>
@@ -170,8 +175,10 @@ function ProxyBandwidthSidebar() {
             <div className="text-sm font-bold text-zinc-200">{stats.activeStreams}</div>
           </div>
           <div>
-            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">Usage</div>
-            <div className="text-sm font-bold text-zinc-200">{totalGB} <span className="text-[8px] text-zinc-500">GB</span></div>
+            <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-tight">Monat</div>
+            <div className="text-sm font-bold text-zinc-200" title={`${monthGB} GB verbraucht im aktuellen Monat von ${quotaTB} TB Kontingent`}>
+              {monthGB} <span className="text-[8px] text-zinc-500">/ {quotaTB}T</span>
+            </div>
           </div>
         </div>
       </div>

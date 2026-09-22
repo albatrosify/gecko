@@ -197,3 +197,43 @@ export interface Recording {
   };
 }
 
+export interface TrafficTypeBreakdown {
+  live: number;
+  movie: number;
+  series: number;
+  other: number;
+}
+
+export interface PlaylistTrafficSummary {
+  playlistId: string;
+  playlistName: string;
+  totalBytes: number;
+  byType: TrafficTypeBreakdown;
+}
+
+export interface DailyTrafficPoint {
+  date: string;
+  totalBytes: number;
+  byType: TrafficTypeBreakdown;
+}
+
+export interface TrafficSummary {
+  todayBytes: number;
+  monthBytes: number;
+  allTimeBytes: number;
+  monthlyQuotaBytes: number;
+  monthPercent: number;
+}
+
+export interface TrafficStatsResponse {
+  range: {
+    startDate: string;
+    endDate: string;
+  };
+  summary: TrafficSummary;
+  totalBytes: number;
+  byType: TrafficTypeBreakdown;
+  byPlaylist: PlaylistTrafficSummary[];
+  daily: DailyTrafficPoint[];
+}
+
