@@ -50,6 +50,7 @@ npm run test     # vitest run
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
 - `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval).
+- `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 
 **Frontend** (`src/`):

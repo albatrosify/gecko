@@ -43,6 +43,8 @@ services:
       - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
       - GLUETUN_CONTROL_URL=${GLUETUN_CONTROL_URL:-http://127.0.0.1:8000}
       - GLUETUN_API_KEY=${GLUETUN_API_KEY:-}
+      - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=2304}
+    mem_limit: 3072m
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 30s

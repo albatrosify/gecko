@@ -9,6 +9,7 @@ import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
 import { getBaseUrl, proxySeriesInfoImages } from "../utils.ts";
 import { recordTraffic } from "../traffic.ts";
+import { rememberSeriesInfo } from "../stream-title-cache.ts";
 
 export function createPlaylistsRouter(epgsRouter?: Router) {
   const router = Router();
@@ -406,6 +407,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           const client = new XtreamClient({ ...sDoc, ...(sDoc.extra as any || {}) } as any);
           const info = await client.getSeriesInfo(rawSeriesId);
           if (info && (info.seasons || info.episodes || info.info)) {
+            rememberSeriesInfo(sourceIds[sourceIdx], info);
             return res.json(proxySeriesInfoImages(info, imgBase));
           }
         } catch { continue; }

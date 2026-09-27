@@ -37,8 +37,8 @@ export function getCached(key: string): { data: any; lastUpdated: string } | nul
     return { data: mem.data, lastUpdated: mem.lastUpdated };
   }
 
-  const db = getDb();
   try {
+    const db = getDb();
     const dbRow = db.select().from(cache).where(eq(cache.key, key)).get();
 
     if (!dbRow) return null;

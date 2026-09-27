@@ -42,6 +42,7 @@ export function getChangelog(oldItems: any[], newItems: any[], idField: string, 
 import { eq, and, inArray } from 'drizzle-orm';
 import { sources, playlists, mappings, source_sync_meta, source_changelogs } from './schema.ts';
 import { generateId } from './db.ts';
+import { rememberStreamTitles } from './stream-title-cache.ts';
 
 /**
  * Baseline snapshot key. Persisted in `source_sync_meta` (SQLite) rather than
@@ -301,6 +302,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     }
 
     log(`[Sync] Fetched ${upstreamStreams.length} ${type} streams from upstream`);
+    rememberStreamTitles(sourceId, type === 'vod' ? 'movie' : type as any, upstreamStreams);
 
     const allPlaylists = db.select({ id: playlists.id, sourceIds: playlists.sourceIds }).from(playlists).all();
     const playlistIds = allPlaylists

@@ -22,6 +22,7 @@ import { servePlaceholderStream } from "../dvr/placeholder.ts";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
+import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
 import fs from "fs";
 import path from "path";
 
@@ -170,16 +171,6 @@ export function createProxyRouter() {
     const mappingTypeMap: Record<string, string> = { live: 'live', movie: 'vod', series: 'series' };
     const streamMappingDoc = db.select().from(schemaMappings).where(and(eq(schemaMappings.playlistId, String(playlist.id)), eq(schemaMappings.originalId, originalId), eq(schemaMappings.type, mappingTypeMap[type]))).get();
     const streamMapping = streamMappingDoc ? { ...streamMappingDoc, ...(streamMappingDoc.extra as any || {}) } : null;
-    const customItemName = (customItem?.extra as any)?.name;
-    const mappedName = customItemName || (streamMapping
-      ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
-      : null);
-    const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
-
-    const upstreamHeaders: Record<string, string> = {
-      'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
-    };
-    if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'] as string;
 
     // Use sourceIdx from the mapping to route to the correct upstream, or customItemSourceDoc
     const sourceIdx = streamMapping?.sourceIdx ?? -1;
@@ -188,6 +179,26 @@ export function createProxyRouter() {
       : ((sourceIdx >= 0 && sourceIdx < sourceIds.length)
         ? [sourceIds[sourceIdx]]
         : sourceIds);
+
+    const customItemName = (customItem?.extra as any)?.name;
+    let mappedName = customItemName || (streamMapping
+      ? computeDisplayName(streamMapping as any, playlist.qualityLabelFormat, globalFormat)
+      : null);
+
+    // If no custom or mapped name exists, resolve the original upstream title from fast title cache
+    if (!mappedName || !mappedName.trim()) {
+      const cachedTitle = getStreamTitle(targetSourceIds, type, originalId);
+      if (cachedTitle) {
+        mappedName = cachedTitle;
+      }
+    }
+
+    const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
+
+    const upstreamHeaders: Record<string, string> = {
+      'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
+    };
+    if (req.headers['range']) upstreamHeaders['Range'] = req.headers['range'] as string;
 
     // Bulk fetch target sources to avoid N+1 queries
     const targetSourceDocs = targetSourceIds.length > 0
@@ -570,26 +581,37 @@ export function createProxyRouter() {
     const client = new XtreamClient(source);
 
     if (!action) {
-      const auth = await client.authenticate();
+      try {
+        const auth = await client.authenticate();
 
-      // Replace upstream credentials with this playlist's own credentials
-      if (auth.user_info) {
-        auth.user_info.username = playlist.username;
-        auth.user_info.password = playlist.password;
-      }
+        // Replace upstream credentials with this playlist's own credentials
+        if (auth && auth.user_info) {
+          auth.user_info.username = playlist.username;
+          auth.user_info.password = playlist.password;
+        }
 
-      if (auth.server_info) {
-        const baseUrl = getBaseUrl(req);
-        const parsed = new URL(baseUrl);
-        auth.server_info.url = `${parsed.protocol}//${parsed.hostname}`;
-        auth.server_info.port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-        auth.server_info.https_port = parsed.protocol === 'https:' ? (parsed.port || '443') : '443';
-        auth.server_info.server_protocol = parsed.protocol.replace(':', '');
+        if (auth && auth.server_info) {
+          const baseUrl = getBaseUrl(req);
+          const parsed = new URL(baseUrl);
+          auth.server_info.url = `${parsed.protocol}//${parsed.hostname}`;
+          auth.server_info.port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+          auth.server_info.https_port = parsed.protocol === 'https:' ? (parsed.port || '443') : '443';
+          auth.server_info.server_protocol = parsed.protocol.replace(':', '');
+        }
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return res.json(auth);
+      } catch (err: any) {
+        log(`[Proxy] Upstream authenticate failed for source ${sourceId}: ${err.message} - ${getClientInfo(req)}`);
+        return res.status(502).json({
+          user_info: {
+            auth: 0,
+            status: "Disabled",
+            message: `Upstream error: ${err.message}`
+          }
+        });
       }
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      return res.json(auth);
     }
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -680,6 +702,13 @@ export function createProxyRouter() {
 
            mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
            data = allResults.flat();
+
+           playlist.sourceIds.forEach((sid: string, idx: number) => {
+             const streams = allResults[idx];
+             if (Array.isArray(streams) && streams.length > 0) {
+               rememberStreamTitles(sid, 'live', streams);
+             }
+           });
 
            const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'live'))).all();
            const customCatsSet = new Set(customCats.map(c => c.id));
@@ -904,6 +933,13 @@ export function createProxyRouter() {
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
 
+            playlist.sourceIds.forEach((sid: string, idx: number) => {
+              const streams = allResults[idx];
+              if (Array.isArray(streams) && streams.length > 0) {
+                rememberStreamTitles(sid, 'movie', streams);
+              }
+            });
+
             const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'vod'))).all();
             const customCatsSet = new Set(customCats.map(c => c.id));
             const customItems = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.type, 'vod'))).all();
@@ -1125,6 +1161,13 @@ export function createProxyRouter() {
 
             mappings = mappingDocs.map(d => ({ id: d.id, playlistId: d.playlistId, type: d.type, originalId: d.originalId, ...(d.extra as any || {}) })) as StreamMapping[];
             data = allResults.flat();
+
+            playlist.sourceIds.forEach((sid: string, idx: number) => {
+              const streams = allResults[idx];
+              if (Array.isArray(streams) && streams.length > 0) {
+                rememberStreamTitles(sid, 'series', streams);
+              }
+            });
 
             const customCats = db.select().from(schemaCustomCategories).where(and(eq(schemaCustomCategories.playlistId, playlist.id), eq(schemaCustomCategories.type, 'series'))).all();
             const customCatsSet = new Set(customCats.map(c => c.id));
@@ -1422,7 +1465,7 @@ export function createProxyRouter() {
               const info = await cl.getSeriesInfo(seriesId!);
               // Xtream API returns an object with "seasons" and "info" if found
               if (info && (info.seasons || info.episodes || info.info)) {
-                return info;
+                return { info, sid };
               }
             } catch (e) {
               return null;
@@ -1431,9 +1474,11 @@ export function createProxyRouter() {
           })));
 
           // Return first one that has actual data
-          data = allSourceResults.find(r => r !== null) || { error: "Series not found" };
+          const successful = allSourceResults.find(r => r !== null);
+          data = successful ? successful.info : { error: "Series not found" };
           // Proxy image URLs in series info
           if (data && !data.error) {
+            rememberSeriesInfo(successful!.sid, data);
             data = proxySeriesInfoImages(data, imgBase);
           }
           break;
