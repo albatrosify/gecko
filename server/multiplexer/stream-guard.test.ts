@@ -66,4 +66,38 @@ describe('StreamGuard', () => {
     const decision = evaluateStreamRequest({ id: 's1', maxConnections: 1, concurrencyGuard: false }, '200', active);
     expect(decision.action).toBe('allow_new');
   });
+
+  it('blocks Live stream when an active VOD stream is running on single-connection account', () => {
+    const decision = evaluateStreamRequest(
+      { id: 's1', maxConnections: 1 },
+      '100',
+      [],
+      1,
+      { streamId: 'vod-999', streamName: 'Inception (2010)' }
+    );
+    expect(decision.action).toBe('block_placeholder');
+    expect(decision.activeStreamName).toBe('Inception (2010)');
+    expect(decision.reason).toContain('1-Verbindungs-Schutz');
+  });
+
+  it('allows stream when totalActive is within multi-connection limit', () => {
+    const active = [
+      {
+        channelKey: 's1:100',
+        sourceId: 's1',
+        streamId: '100',
+        streamName: 'Das Erste HD',
+        subscriberCount: 1,
+      },
+    ];
+    // maxConnections = 3, 1 Live active, 1 VOD active -> 2 total -> allow 3rd
+    const decision = evaluateStreamRequest(
+      { id: 's1', maxConnections: 3, concurrencyGuard: true },
+      '200',
+      active,
+      1,
+      { streamId: 'vod-999', streamName: 'Inception (2010)' }
+    );
+    expect(decision.action).toBe('allow_new');
+  });
 });

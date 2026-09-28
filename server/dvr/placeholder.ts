@@ -89,10 +89,14 @@ export function servePlaceholderStream(
     };
 
     // Force-teardown for the Dashboard's "Trennen" button
-    registerStreamController(connId, () => {
-      log(`[DVR Placeholder] Force-quitting placeholder for ${requestedStreamId} (conn ${connId})`);
-      cleanup();
-    });
+    registerStreamController(
+      connId,
+      () => {
+        log(`[DVR Placeholder] Force-quitting placeholder for ${requestedStreamId} (conn ${connId})`);
+        cleanup();
+      },
+      () => !res.destroyed && !res.writableEnded && !(req && req.destroyed)
+    );
 
     req.on('close', cleanup);
     req.socket?.on('close', cleanup);

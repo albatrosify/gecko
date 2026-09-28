@@ -304,6 +304,68 @@ describe('StreamHub', () => {
     expect((fakeDataStream as any).destroy).toHaveBeenCalled();
     expect(killStream('sub-ghost')).toBe(false);
   });
+
+  it('performs seamless in-place reconnect on upstream silence or disconnect', async () => {
+    const fakeDataStream1 = new EventEmitter();
+    (fakeDataStream1 as any).destroy = vi.fn();
+
+    const fakeDataStream2 = new EventEmitter();
+    (fakeDataStream2 as any).destroy = vi.fn();
+
+    const mockAxios = vi.fn().mockResolvedValue({
+      status: 200,
+      data: fakeDataStream2,
+      request: { setTimeout: vi.fn() },
+    });
+
+    vi.doMock('axios', () => ({
+      default: mockAxios,
+    }));
+
+    const channel = streamHub.registerChannel(
+      'source-1',
+      '100',
+      'Das Erste HD',
+      'live',
+      'http://upstream.tv',
+      { data: fakeDataStream1 },
+      undefined,
+      { url: 'http://upstream.tv/live/user/pass/100.ts' }
+    );
+
+    const subRes: any = new EventEmitter();
+    subRes.write = vi.fn();
+    subRes.setHeader = vi.fn();
+    subRes.destroy = vi.fn();
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-seamless',
+      res: subRes,
+      username: 'moritz',
+      playlistName: 'Living Room',
+      ip: '192.168.1.10',
+      startTime: Date.now(),
+    });
+
+    // Chunk from stream 1
+    fakeDataStream1.emit('data', Buffer.from('chunk1'));
+    expect(subRes.write).toHaveBeenCalledWith(Buffer.from('chunk1'));
+
+    // Trigger reconnect
+    const reconnected = await streamHub.reconnectChannel(channel.channelKey, 'test reconnect');
+    expect(reconnected).toBe(true);
+
+    // Old stream was destroyed
+    expect((fakeDataStream1 as any).destroy).toHaveBeenCalled();
+
+    // Subscriber was NOT destroyed
+    expect(subRes.destroy).not.toHaveBeenCalled();
+    expect(channel.subscribers.size).toBe(1);
+
+    // New chunk from stream 2 reaches the same subscriber!
+    fakeDataStream2.emit('data', Buffer.from('chunk2'));
+    expect(subRes.write).toHaveBeenCalledWith(Buffer.from('chunk2'));
+  });
 });
 
 

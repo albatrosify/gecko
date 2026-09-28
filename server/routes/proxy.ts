@@ -7,7 +7,7 @@ import dns from "dns";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
-import { proxyStats, registerStreamController, unregisterStreamController } from "../proxy-stats.ts";
+import { proxyStats, registerStreamController, unregisterStreamController, killStream, getActiveVodConnectionsForSource } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
@@ -213,48 +213,78 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
 
-      // Concurrency Guard & Multiplexing Check
-      if (type === 'live') {
-        const activeOnSource = streamHub.getActiveChannelsForSource(sourceId);
-        const guardDecision = evaluateStreamRequest(sourceDoc, originalId, activeOnSource);
+      // ── Step 2: VOD stream de-duplication & auto-replacement ──────────────────
+      // When a user seeks or switches episodes, ExoPlayer / TiviMate sends a new HTTP request
+      // while the previous socket may still be lingering or closing in TCP close-wait.
+      // For single-connection sources (or same client IP/stream), immediately kill the previous
+      // connection so the upstream slot is freed BEFORE attempting upstream connect.
+      if (type !== 'live') {
+        const clientIp = req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown';
+        const maxCons = parseInt(String(sourceDoc?.maxConnections ?? '1'), 10) || 1;
 
-        if (guardDecision.action === 'block_placeholder') {
-          return servePlaceholderStream(
-            req,
-            res,
-            {
-              sourceId,
-              streamId: guardDecision.activeStreamId || '',
-              streamName: guardDecision.activeStreamName,
-              recordingId: '',
-              lockedAt: Date.now(),
-            },
-            originalId,
-            streamName,
-            (playlist as any).name || username,
-            username,
-            playlist.id
-          );
-        }
+        for (const [existingId, conn] of Array.from(proxyStats.connections.entries())) {
+          if (conn.playlistId === playlist.id && conn.username === username) {
+            const isVod = conn.type !== 'live';
+            const isSameStream = String(conn.streamId) === String(streamId) || String(conn.streamId) === String(originalId);
+            const isSameIp = conn.ip === clientIp;
+            const singleSlotLimit = maxCons <= 1;
 
-        if (guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
-          const subId = generateId();
-          const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
-            id: subId,
-            playlistId: playlist.id,
-            req,
-            res,
-            username,
-            playlistName: (playlist as any).name || username,
-            ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
-            startTime: Date.now(),
-          });
-          if (joined) {
-            log(`[Proxy] Client ${username} joined existing shared stream for ${type}/${streamId} (0 extra upstream connections) - ${getClientInfo(req)}`);
-            return;
+            if (isVod && (isSameStream || (isSameIp && singleSlotLimit) || singleSlotLimit)) {
+              log(`[Proxy] Auto-replacing previous VOD connection ${existingId} (${conn.type}/${conn.streamId}) for ${username} with new stream ${type}/${streamId} (sameStream=${isSameStream}, singleSlot=${singleSlotLimit})`);
+              killStream(existingId);
+            }
           }
-          log(`[Proxy] Shared stream ${guardDecision.existingChannelKey} closed before join; falling back to upstream - ${getClientInfo(req)}`);
         }
+      }
+
+      // ── Step 3: Unified Concurrency Guard across Live & VOD ──────────────────
+      const activeLiveOnSource = streamHub.getActiveChannelsForSource(sourceId);
+      const activeVodOnSource = getActiveVodConnectionsForSource(sourceId);
+      const guardDecision = evaluateStreamRequest(
+        sourceDoc,
+        originalId,
+        activeLiveOnSource,
+        activeVodOnSource.length,
+        activeVodOnSource[0]
+      );
+
+      if (guardDecision.action === 'block_placeholder') {
+        log(`[Proxy] Concurrency Guard blocked request for ${type}/${streamId} on source ${sourceId}: ${guardDecision.reason} - ${getClientInfo(req)}`);
+        return servePlaceholderStream(
+          req,
+          res,
+          {
+            sourceId,
+            streamId: guardDecision.activeStreamId || '',
+            streamName: guardDecision.activeStreamName,
+            recordingId: '',
+            lockedAt: Date.now(),
+          },
+          originalId,
+          streamName,
+          (playlist as any).name || username,
+          username,
+          playlist.id
+        );
+      }
+
+      if (type === 'live' && guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
+        const subId = generateId();
+        const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
+          id: subId,
+          playlistId: playlist.id,
+          req,
+          res,
+          username,
+          playlistName: (playlist as any).name || username,
+          ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+          startTime: Date.now(),
+        });
+        if (joined) {
+          log(`[Proxy] Client ${username} joined existing shared stream for ${type}/${streamId} (0 extra upstream connections) - ${getClientInfo(req)}`);
+          return;
+        }
+        log(`[Proxy] Shared stream ${guardDecision.existingChannelKey} closed before join; falling back to upstream - ${getClientInfo(req)}`);
       }
 
       const overrideUsername = (playlist as any).sourceOverrides?.[sourceId]?.username || sourceDoc.username;
@@ -321,7 +351,8 @@ export function createProxyRouter() {
               type,
               hostUrl,
               response,
-              forwardHeaders
+              forwardHeaders,
+              { url: upstreamUrl, headers: upstreamHeaders }
             );
 
             const subId = generateId();
@@ -397,7 +428,10 @@ export function createProxyRouter() {
 
           response.data.pipe(res);
 
+          let cleanedUp = false;
           const cleanup = () => {
+            if (cleanedUp) return;
+            cleanedUp = true;
             if (idleTimer) {
               clearTimeout(idleTimer);
               idleTimer = null;
@@ -407,19 +441,38 @@ export function createProxyRouter() {
               proxyStats.connections.delete(connId);
               proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
             }
-            if (response.data?.destroy) response.data.destroy();
-            if (!res.writableEnded && !res.destroyed) res.destroy();
+            if (response.data?.destroy) {
+              try { response.data.destroy(); } catch {}
+            }
+            if (!res.writableEnded && !res.destroyed) {
+              try { res.destroy(); } catch {}
+            }
           };
 
           // Force-teardown for the Dashboard's "Trennen" button
-          registerStreamController(connId, () => {
-            log(`[Proxy] Force-quitting VOD stream ${type}/${streamId} for ${username} (conn ${connId})`);
-            cleanup();
-          });
+          registerStreamController(
+            connId,
+            () => {
+              log(`[Proxy] Force-quitting VOD stream ${type}/${streamId} for ${username} (conn ${connId})`);
+              cleanup();
+            },
+            () => !res.destroyed && !res.writableEnded && !(req && req.destroyed)
+          );
 
+          // Downstream client events
+          req.on('close', cleanup);
+          req.socket?.on('close', cleanup);
+          req.socket?.on('error', cleanup);
           res.on('finish', cleanup);
           res.on('close', cleanup);
+          res.on('error', cleanup);
+
+          // Upstream provider events
+          response.data.on('close', cleanup);
+          response.data.on('end', cleanup);
           response.data.on('error', cleanup);
+          (response.data as any)?.socket?.on('close', cleanup);
+          (response.data as any)?.socket?.on('error', cleanup);
           return; // success — stop trying sources
         } catch (err: any) {
           lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
@@ -499,14 +552,78 @@ export function createProxyRouter() {
 
       if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
       if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
+      const connId = generateId();
+      const connectionInfo = {
+        id: connId,
+        sourceId,
+        playlistId: playlist.id,
+        host: baseUrl,
+        username,
+        streamId,
+        streamName: `Timeshift ${streamId} (${duration}m)`,
+        playlistName: (playlist as any).name || username,
+        type: 'live',
+        ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+        startTime: Date.now(),
+        bytesRead: 0,
+        intervalBytes: 0,
+        currentBps: 0,
+        proxied: true,
+      };
+
+      proxyStats.connections.set(connId, connectionInfo);
+      proxyStats.activeStreams++;
+
+      let cleanedUp = false;
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        unregisterStreamController(connId);
+        if (proxyStats.connections.has(connId)) {
+          proxyStats.connections.delete(connId);
+          proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+        }
+        if (response.data?.destroy) {
+          try { response.data.destroy(); } catch {}
+        }
+        if (!res.writableEnded && !res.destroyed) {
+          try { res.destroy(); } catch {}
+        }
+      };
+
+      registerStreamController(
+        connId,
+        () => {
+          log(`[Timeshift] Force-quitting timeshift stream ${streamId} for ${username} (conn ${connId})`);
+          cleanup();
+        },
+        () => !res.destroyed && !res.writableEnded && !(req && req.destroyed)
+      );
+
       response.data.on('data', (chunk: Buffer) => {
         proxyStats.totalBytes += chunk.length;
         proxyStats.intervalBytes += chunk.length;
+        connectionInfo.bytesRead += chunk.length;
+        connectionInfo.intervalBytes += chunk.length;
         recordTraffic(playlist.id, (playlist as any).name || username, 'live', chunk.length);
       });
 
       response.data.pipe(res);
-      res.on('close', () => { if (response.data?.destroy) response.data.destroy(); });
+
+      // Downstream client events
+      req.on('close', cleanup);
+      req.socket?.on('close', cleanup);
+      req.socket?.on('error', cleanup);
+      res.on('finish', cleanup);
+      res.on('close', cleanup);
+      res.on('error', cleanup);
+
+      // Upstream provider events
+      response.data.on('close', cleanup);
+      response.data.on('end', cleanup);
+      response.data.on('error', cleanup);
+      (response.data as any)?.socket?.on('close', cleanup);
+      (response.data as any)?.socket?.on('error', cleanup);
     } catch (err: any) {
       log(`[Timeshift] Error: ${err.message} - ${getClientInfo(req)}`);
       const status = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);

@@ -16,6 +16,11 @@ export interface DownstreamSubscriber {
   stalledSince?: number;
 }
 
+export interface UpstreamConfig {
+  url: string;
+  headers?: Record<string, string>;
+}
+
 export interface ActiveStreamChannel {
   channelKey: string;
   sourceId: string;
@@ -27,6 +32,8 @@ export interface ActiveStreamChannel {
   subscribers: Map<string, DownstreamSubscriber>;
   bytesRead: number;
   startTime: number;
+  lastChunkAt?: number;
+  upstreamConfig?: UpstreamConfig;
   dvrRecordingId?: string;
   headersSent?: Record<string, any>;
 }
@@ -74,6 +81,8 @@ class StreamHub {
     return list;
   }
 
+  private isReconnecting = new Set<string>();
+
   /**
    * Registers a new active upstream channel ingestion pipeline.
    */
@@ -84,7 +93,8 @@ class StreamHub {
     type: 'live' | 'movie' | 'series',
     hostUrl: string,
     upstreamResponse: any,
-    headersSent?: Record<string, any>
+    headersSent?: Record<string, any>,
+    upstreamConfig?: UpstreamConfig
   ): ActiveStreamChannel {
     const channelKey = StreamHub.makeKey(sourceId, streamId);
 
@@ -104,35 +114,31 @@ class StreamHub {
       subscribers: new Map(),
       bytesRead: 0,
       startTime: Date.now(),
+      lastChunkAt: Date.now(),
+      upstreamConfig,
       headersSent,
     };
 
     this.channels.set(channelKey, channel);
 
-    // ── Backpressure & Stalled Subscriber Management ─────────────────────────
-    // 1. Startup grace: When a client connects, initial burst from upstream + TCP slow-start
-    //    can easily buffer a few MBs in the first seconds. Don't evict during startup grace.
-    const STARTUP_GRACE_MS = 15_000;
-
-    // 2. Soft buffer threshold: ~16 MB (~15-20s of FHD stream). Normal transient Wi-Fi jitter
-    //    can buffer several MBs without being dead. Configurable via STREAM_BUFFER_MB env.
-    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
-
-    // 3. Max stall duration: Client's buffer must stay continuously above the threshold for 15s
-    //    before being declared dead/stalled.
-    const MAX_STALL_MS = 15_000;
-
-    // 4. Hard safety cap: Emergency limit to prevent memory exhaustion if a client completely freezes.
-    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2; // e.g. 32 MB
-
-    // ── Diagnostic: upstream gap detection ───────────────────────────────────
-    // Reset every time a chunk arrives. If the upstream goes silent for >3 s we
-    // log a warning — this is the #1 cause of client-side buffering/reconnects.
+    // ── Diagnostic & Self-healing gap detection ──────────────────────────────
+    // Reset every time a chunk arrives. If upstream goes silent for >3s, log warning.
+    // If upstream goes silent for >=6s and subscribers are waiting, trigger in-place reconnect!
     const UPSTREAM_GAP_WARN_MS = 3_000;
-    let lastChunkAt = Date.now();
+    const UPSTREAM_GAP_RECONNECT_MS = 6_000;
     let upstreamGapTimer = setInterval(() => {
-      const silentMs = Date.now() - lastChunkAt;
-      if (silentMs >= UPSTREAM_GAP_WARN_MS) {
+      const silentMs = Date.now() - (channel.lastChunkAt || channel.startTime);
+      if (
+        silentMs >= UPSTREAM_GAP_RECONNECT_MS &&
+        (channel.subscribers.size > 0 || channel.dvrRecordingId) &&
+        channel.upstreamConfig
+      ) {
+        log(`[StreamHub] Upstream silent for ${silentMs} ms on ${channelKey} — triggering self-healing reconnect!`);
+        channel.lastChunkAt = Date.now(); // bump to avoid re-triggering while in-flight
+        this.reconnectChannel(channelKey, `silence gap (${silentMs} ms)`).catch(err => {
+          log(`[StreamHub] Reconnect error for ${channelKey}: ${err.message}`);
+        });
+      } else if (silentMs >= UPSTREAM_GAP_WARN_MS) {
         log(`[StreamHub][DIAG] ${channelKey} — upstream silent for ${silentMs} ms (${channel.subscribers.size} subscribers waiting)`);
       }
     }, 1_000);
@@ -147,112 +153,191 @@ class StreamHub {
       log(`[StreamHub][DIAG] ${channelKey} — ${kbps} kbps upstream | ${channel.subscribers.size} subscriber(s) | total ${Math.round(channel.bytesRead / 1024)} KB`);
     }, REPORT_INTERVAL_MS);
 
-    // Store timers on channel so closeChannel() can clear them
     (channel as any)._diagTimers = [upstreamGapTimer, throughputTimer];
 
-    // Broadcast incoming upstream chunks.
-    // NOTE: intentionally NOT async — async data listeners bypass Node's
-    // stream backpressure signal and can swallow unhandled rejections silently.
-    upstreamResponse.data.on('data', (chunk: Buffer) => {
-      lastChunkAt = Date.now(); // reset gap-detection watchdog
-      channel.bytesRead += chunk.length;
-      proxyStats.totalBytes += chunk.length;
-      proxyStats.intervalBytes += chunk.length;
+    this.bindUpstreamResponse(channel);
 
-      // Broadcast to all active downstream subscribers
-      const deadSubscribers: string[] = [];
-      for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
-        if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
+    log(`[StreamHub] Registered new active channel: ${channelKey} (${streamName})`);
+    return channel;
+  }
+
+  private bindUpstreamResponse(channel: ActiveStreamChannel): void {
+    const upstreamResponse = channel.upstreamResponse;
+    if (!upstreamResponse?.data) return;
+
+    upstreamResponse.data.on('data', (chunk: Buffer) => {
+      this.handleUpstreamChunk(channel, chunk);
+    });
+
+    const handleUpstreamEnd = (err?: any) => {
+      const errMsg = err ? `: ${err.message}` : '';
+      log(`[StreamHub] Upstream ended for ${channel.channelKey}${errMsg}`);
+      if ((channel.subscribers.size > 0 || channel.dvrRecordingId) && channel.upstreamConfig) {
+        this.reconnectChannel(channel.channelKey, `upstream closed${errMsg}`).then(ok => {
+          if (!ok && channel.subscribers.size === 0) {
+            this.closeChannel(channel.channelKey);
+          }
+        }).catch(() => {
+          if (channel.subscribers.size === 0) this.closeChannel(channel.channelKey);
+        });
+      } else {
+        this.closeChannel(channel.channelKey);
+      }
+    };
+
+    upstreamResponse.data.on('end', handleUpstreamEnd);
+    upstreamResponse.data.on('error', handleUpstreamEnd);
+  }
+
+  private handleUpstreamChunk(channel: ActiveStreamChannel, chunk: Buffer): void {
+    const STARTUP_GRACE_MS = 15_000;
+    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
+    const MAX_STALL_MS = 15_000;
+    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
+
+    channel.lastChunkAt = Date.now();
+    channel.bytesRead += chunk.length;
+    proxyStats.totalBytes += chunk.length;
+    proxyStats.intervalBytes += chunk.length;
+
+    // Broadcast to all active downstream subscribers
+    const deadSubscribers: string[] = [];
+    for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
+      if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
+        deadSubscribers.push(subId);
+        continue;
+      }
+
+      try {
+        const ok = sub.res.write(chunk);
+        const conn = proxyStats.connections.get(subId);
+        if (conn) {
+          conn.bytesRead += chunk.length;
+          conn.intervalBytes += chunk.length;
+        }
+        recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', chunk.length);
+
+        if (sub.res.destroyed || sub.res.writableEnded) {
           deadSubscribers.push(subId);
           continue;
         }
 
-        try {
-          const ok = sub.res.write(chunk);
-          const conn = proxyStats.connections.get(subId);
-          if (conn) {
-            conn.bytesRead += chunk.length;
-            conn.intervalBytes += chunk.length;
-          }
-          recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', chunk.length);
+        if (!ok) {
+          const bufLen = sub.res.writableLength || 0;
+          const now = Date.now();
+          const inStartupGrace = (now - sub.startTime) < STARTUP_GRACE_MS;
 
-          if (sub.res.destroyed || sub.res.writableEnded) {
+          if (bufLen > HARD_BUFFER_CAP_BYTES) {
+            log(`[StreamHub] Evicting runaway subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB > ${HARD_BUFFER_CAP_BYTES / 1024} KB hard limit.`);
+            try { sub.res.destroy(); } catch {}
             deadSubscribers.push(subId);
             continue;
           }
 
-          if (!ok) {
-            const bufLen = sub.res.writableLength || 0;
-            const now = Date.now();
-            const inStartupGrace = (now - sub.startTime) < STARTUP_GRACE_MS;
-
-            if (bufLen > HARD_BUFFER_CAP_BYTES) {
-              // Hard emergency limit exceeded
-              log(`[StreamHub] Evicting runaway subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB > ${HARD_BUFFER_CAP_BYTES / 1024} KB hard limit.`);
+          if (bufLen > BUFFER_WARN_BYTES && !inStartupGrace) {
+            if (!sub.stalledSince) {
+              sub.stalledSince = now;
+            } else if (now - sub.stalledSince > MAX_STALL_MS) {
+              log(`[StreamHub] Evicting stalled subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB sustained for >${MAX_STALL_MS / 1000}s.`);
               try { sub.res.destroy(); } catch {}
               deadSubscribers.push(subId);
               continue;
             }
-
-            if (bufLen > BUFFER_WARN_BYTES && !inStartupGrace) {
-              if (!sub.stalledSince) {
-                sub.stalledSince = now;
-              } else if (now - sub.stalledSince > MAX_STALL_MS) {
-                log(`[StreamHub] Evicting stalled subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB sustained for >${MAX_STALL_MS / 1000}s.`);
-                try { sub.res.destroy(); } catch {}
-                deadSubscribers.push(subId);
-                continue;
-              }
-            } else if (bufLen <= BUFFER_WARN_BYTES) {
-              sub.stalledSince = undefined;
-            }
-          } else {
-            // write() returned true — buffer is completely clear
+          } else if (bufLen <= BUFFER_WARN_BYTES) {
             sub.stalledSince = undefined;
           }
-        } catch (err: any) {
-          log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
-          try { sub.res.destroy(); } catch {}
-          deadSubscribers.push(subId);
+        } else {
+          sub.stalledSince = undefined;
         }
+      } catch (err: any) {
+        log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
+        try { sub.res.destroy(); } catch {}
+        deadSubscribers.push(subId);
       }
+    }
 
-      // If DVR handover is streaming in background, advance its bandwidth stats
-      if (channel.dvrRecordingId) {
-        const hoConn = proxyStats.connections.get(`dvr-${channel.dvrRecordingId}`);
-        if (hoConn) {
-          hoConn.bytesRead += chunk.length;
-          hoConn.intervalBytes += chunk.length;
-        }
+    // If DVR handover is streaming in background, advance its bandwidth stats
+    if (channel.dvrRecordingId) {
+      const hoConn = proxyStats.connections.get(`dvr-${channel.dvrRecordingId}`);
+      if (hoConn) {
+        hoConn.bytesRead += chunk.length;
+        hoConn.intervalBytes += chunk.length;
       }
+    }
 
-      // Safely evict dead subscribers outside the broadcast loop
-      for (const deadId of deadSubscribers) {
-        this.removeSubscriber(channelKey, deadId).catch(err => {
-          log(`[StreamHub] Error removing dead subscriber ${deadId}: ${err.message}`);
-        });
+    // Safely evict dead subscribers outside the broadcast loop
+    for (const deadId of deadSubscribers) {
+      this.removeSubscriber(channel.channelKey, deadId).catch(err => {
+        log(`[StreamHub] Error removing dead subscriber ${deadId}: ${err.message}`);
+      });
+    }
+
+    // If DVR recording attached, write chunk to recording file
+    if (channel.dvrRecordingId && this.onChunkCallback) {
+      try {
+        this.onChunkCallback(channel.channelKey, chunk);
+      } catch (err: any) {
+        log(`[StreamHub] DVR chunk error: ${err.message}`);
       }
+    }
+  }
 
-      // If DVR recording attached, write chunk to recording file
-      if (channel.dvrRecordingId && this.onChunkCallback) {
-        try {
-          this.onChunkCallback(channelKey, chunk);
-        } catch (err: any) {
-          log(`[StreamHub] DVR chunk error: ${err.message}`);
-        }
-      }
-    });
-
-    // Handle upstream stream completion or error
-    const handleUpstreamEnd = () => {
-      log(`[StreamHub] Upstream closed for ${channelKey}`);
+  /**
+   * Attempts an in-place upstream reconnect without dropping downstream clients.
+   * Subscribers keep their sockets open and their players draw from their local buffer
+   * until fresh chunks start flowing from the newly established upstream socket.
+   */
+  async reconnectChannel(channelKey: string, reason: string): Promise<boolean> {
+    const channel = this.channels.get(channelKey);
+    if (!channel || !channel.upstreamConfig) return false;
+    if (channel.subscribers.size === 0 && !channel.dvrRecordingId) {
       this.closeChannel(channelKey);
-    };
-    upstreamResponse.data.on('end', handleUpstreamEnd);
-    upstreamResponse.data.on('error', handleUpstreamEnd);
+      return false;
+    }
+    if (this.isReconnecting.has(channelKey)) {
+      return false;
+    }
 
-    log(`[StreamHub] Registered new active channel: ${channelKey} (${streamName})`);
-    return channel;
+    this.isReconnecting.add(channelKey);
+    log(`[StreamHub] 🔄 Reconnecting upstream for ${channelKey} (${reason}) | ${channel.subscribers.size} subscriber(s) waiting...`);
+
+    try {
+      if (channel.upstreamResponse?.data?.destroy) {
+        try { channel.upstreamResponse.data.destroy(); } catch {}
+      }
+
+      const axios = (await import('axios')).default;
+      const response = await axios({
+        method: 'get',
+        url: channel.upstreamConfig.url,
+        responseType: 'stream',
+        timeout: 8000,
+        headers: channel.upstreamConfig.headers || { 'User-Agent': 'Mozilla/5.0 IPTV-Proxy/1.0' },
+        validateStatus: () => true,
+      });
+
+      if (response.status >= 400) {
+        log(`[StreamHub] ⚠️ Reconnect failed for ${channelKey}: Upstream returned HTTP ${response.status}`);
+        if (response.data?.destroy) try { response.data.destroy(); } catch {}
+        return false;
+      }
+
+      if ((response.request as any)?.setTimeout) (response.request as any).setTimeout(0);
+      if ((response.data as any)?.socket?.setTimeout) (response.data as any).socket.setTimeout(0);
+      (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
+
+      channel.upstreamResponse = response;
+      channel.lastChunkAt = Date.now();
+      this.bindUpstreamResponse(channel);
+
+      log(`[StreamHub] ✅ In-place reconnect SUCCEEDED for ${channelKey}! Seamlessly resumed stream for ${channel.subscribers.size} subscriber(s).`);
+      return true;
+    } catch (err: any) {
+      log(`[StreamHub] ⚠️ Reconnect error for ${channelKey}: ${err.message}`);
+      return false;
+    } finally {
+      this.isReconnecting.delete(channelKey);
+    }
   }
 
   /**
@@ -327,7 +412,11 @@ class StreamHub {
         log(`[StreamHub] Error removing subscriber on disconnect ${sub.id}: ${err.message}`);
       });
     };
-    registerStreamController(sub.id, () => cleanup());
+    registerStreamController(
+      sub.id,
+      () => cleanup(),
+      () => !sub.res.destroyed && !sub.res.writableEnded && !(sub.req && sub.req.destroyed)
+    );
     if (sub.req) {
       sub.req.on('close', cleanup);
       sub.req.socket?.on('close', cleanup);
@@ -465,6 +554,7 @@ class StreamHub {
   closeChannel(channelKey: string): void {
     const channel = this.channels.get(channelKey);
     if (!channel) return;
+    this.isReconnecting.delete(channelKey);
 
     // If a DVR recording was attached when channel closes, stop and finalize recording session
     if (channel.dvrRecordingId) {

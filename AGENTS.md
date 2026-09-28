@@ -44,12 +44,13 @@ npm run test     # vitest run
 - `hosts.ts` — Host-Erkennung, Failover, Benchmarking, Per-Host-Nutzungs-Statistiken.
 - `sync.ts` — `refreshSource()`, Changelogs, Cron-Manager (`activeCrons`, `initCronManager`).
 - `connection-monitor.ts` — Überwacht Upstream-Verbindungen, protokolliert in `source_connection_logs`.
-- `multiplexer/stream-hub.ts` — bündelt Streams; `stream-guard.ts` — Concurrency-Limit pro Source.
+- `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz.
+- `multiplexer/stream-guard.ts` — Einheitlicher Concurrency Guard über Live- und VOD-Streams hinweg (`evaluateStreamRequest`, Platzhalter bei Überlastung).
 - `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen); `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams.
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
-- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval) + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
+- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
 - `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 

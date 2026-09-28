@@ -36,7 +36,9 @@ export function isConcurrencyGuardEnabled(sourceDoc: any): boolean {
 export function evaluateStreamRequest(
   sourceDoc: any,
   requestedStreamId: string,
-  activeChannelsOnSource: StreamChannelSummary[]
+  activeChannelsOnSource: StreamChannelSummary[],
+  extraActiveCount: number = 0,
+  extraActiveStream?: { streamId: string; streamName: string }
 ): GuardDecision {
   const reqId = String(requestedStreamId);
 
@@ -54,8 +56,10 @@ export function evaluateStreamRequest(
     };
   }
 
+  const totalActive = activeChannelsOnSource.length + extraActiveCount;
+
   // If no other streams are active on this source, always allow opening
-  if (activeChannelsOnSource.length === 0) {
+  if (totalActive === 0) {
     return { action: 'allow_new' };
   }
 
@@ -63,8 +67,11 @@ export function evaluateStreamRequest(
   const guardEnabled = isConcurrencyGuardEnabled(sourceDoc);
   const maxConnections = parseInt(String(sourceDoc?.maxConnections ?? '1'), 10) || 1;
 
-  if (guardEnabled && activeChannelsOnSource.length >= maxConnections) {
-    const primaryActive = activeChannelsOnSource[0];
+  if (guardEnabled && totalActive >= maxConnections) {
+    const primaryActive = activeChannelsOnSource[0] || extraActiveStream || {
+      streamName: 'Anderer Stream',
+      streamId: 'unknown',
+    };
     return {
       action: 'block_placeholder',
       activeStreamName: primaryActive.streamName,
