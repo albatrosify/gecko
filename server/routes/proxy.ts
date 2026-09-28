@@ -301,6 +301,11 @@ export function createProxyRouter() {
           log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} - ${getClientInfo(req)}`);
           recordHostUse(sourceId, hostUrl, true);
 
+          // Once upstream headers are received, detach the initial handshake socket timeout
+          // so streaming responses are not aborted when downstream clients buffer ahead or pause.
+          if ((response.request as any)?.setTimeout) (response.request as any).setTimeout(0);
+          if ((response.data as any)?.socket?.setTimeout) (response.data as any).socket.setTimeout(0);
+
           // Handle live stream multiplexing
           if (type === 'live') {
             const forwardHeaders: Record<string, string> = {};
@@ -341,6 +346,10 @@ export function createProxyRouter() {
             if (response.headers[h]) res.setHeader(h, response.headers[h]);
           }
 
+          // Enable TCP keepalives to prevent NAT/VPN middleboxes from dropping paused sockets
+          req.socket?.setKeepAlive?.(true, 10000);
+          (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
+
           const connId = generateId();
           const connectionInfo = {
             id: connId,
@@ -363,7 +372,22 @@ export function createProxyRouter() {
           proxyStats.connections.set(connId, connectionInfo);
           proxyStats.activeStreams++;
 
+          // 10-minute inactivity watchdog: If a client pauses playback (or device goes to sleep without closing)
+          // and consumes zero data for 10 consecutive minutes, release the upstream connection to prevent slot hoarding.
+          const VOD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+          let idleTimer: NodeJS.Timeout | null = null;
+          const resetIdleTimer = () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              log(`[Proxy] VOD stream ${type}/${streamId} for ${username} idle for 10 minutes (paused/abandoned). Releasing upstream connection.`);
+              cleanup();
+            }, VOD_IDLE_TIMEOUT_MS);
+            idleTimer.unref?.();
+          };
+          resetIdleTimer();
+
           response.data.on('data', (chunk: Buffer) => {
+            resetIdleTimer();
             proxyStats.totalBytes += chunk.length;
             proxyStats.intervalBytes += chunk.length;
             connectionInfo.bytesRead += chunk.length;
@@ -374,6 +398,10 @@ export function createProxyRouter() {
           response.data.pipe(res);
 
           const cleanup = () => {
+            if (idleTimer) {
+              clearTimeout(idleTimer);
+              idleTimer = null;
+            }
             unregisterStreamController(connId);
             if (proxyStats.connections.has(connId)) {
               proxyStats.connections.delete(connId);
@@ -463,6 +491,11 @@ export function createProxyRouter() {
         log(`[Timeshift] Upstream failed (${response.status}) for ${username} -> ${streamId} - ${getClientInfo(req)}`);
         return res.status(response.status).send(`Upstream timeshift error: upstream returned ${response.status}`);
       }
+
+      if ((response.request as any)?.setTimeout) (response.request as any).setTimeout(0);
+      if ((response.data as any)?.socket?.setTimeout) (response.data as any).socket.setTimeout(0);
+      req.socket?.setKeepAlive?.(true, 10000);
+      (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
 
       if (response.headers['content-type']) res.setHeader('Content-Type', response.headers['content-type']);
       if (response.headers['content-length']) res.setHeader('Content-Length', response.headers['content-length']);
