@@ -3,8 +3,8 @@ import fs from "fs";
 import axios from "axios";
 import { requireAuth } from "../auth.ts";
 import { getDb } from "../db.ts";
-import { LOG_PATH } from "../logger.ts";
-import { proxyStats } from "../proxy-stats.ts";
+import { LOG_PATH, log } from "../logger.ts";
+import { proxyStats, killStream, killAllStreams } from "../proxy-stats.ts";
 import { getMonthTrafficBytes } from "../traffic.ts";
 import { invalidateQualityFormatCache } from "../quality-scan.ts";
 import { DEFAULT_LLM_SYSTEM_PROMPT } from "../llm.ts";
@@ -114,6 +114,30 @@ export function createSystemRouter() {
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to fetch stats' });
     }
+  });
+
+  // Force-quit a single active stream
+  router.post("/proxy/streams/:id/kill", requireAuth, async (req, res) => {
+    const id = req.params.id;
+    const conn = proxyStats.connections.get(id);
+    if (!conn) {
+      return res.status(404).json({ error: 'Stream nicht mehr aktiv' });
+    }
+    const killed = killStream(id);
+    if (!killed) {
+      // No kill switch registered (e.g. DVR handover) — drop the entry at least.
+      proxyStats.connections.delete(id);
+      proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+    }
+    log(`[Proxy] Operator killed stream ${id} (${conn.streamName || conn.streamId}, ${conn.username})`);
+    res.json({ ok: true, id });
+  });
+
+  // Force-quit every active stream
+  router.post("/proxy/streams/kill-all", requireAuth, async (_req, res) => {
+    const count = killAllStreams();
+    log(`[Proxy] Operator killed all active streams (${count})`);
+    res.json({ ok: true, killed: count });
   });
 
   router.get("/health", (req, res) => {

@@ -49,7 +49,7 @@ npm run test     # vitest run
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
-- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval).
+- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval) + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
 - `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 
@@ -98,7 +98,7 @@ Alle unter `/api` (Auth via `requireAuth`), außer Proxy-Endpoints. Detaillierte
 | Router | Datei | Endpoints (Auszug) |
 |---|---|---|
 | Auth | `server/auth.ts` | `/auth/register`, `/auth/login`, `/auth/me` |
-| System | `server/routes/system.ts` | `/system/ip`, `/system/vpn`, `/system/logs`, `/proxy/stats`, `/health`, `/version`, `/settings`, `/settings/telegram/test` |
+| System | `server/routes/system.ts` | `/system/ip`, `/system/vpn`, `/system/logs`, `/proxy/stats`, `/proxy/streams/:id/kill`, `/proxy/streams/kill-all`, `/health`, `/version`, `/settings`, `/settings/telegram/test` |
 | Admin | `server/routes/admin.ts` | `/admin/users`, `/admin/users/:id` |
 | Sources | `server/routes/sources.ts` | `/sources` CRUD, `/sources/:id/refresh`, `/changelog`, `/connections`, `/benchmark`, `/host-benchmarks`, `/fetch-upstream`, `/fetch-streams` |
 | EPG | `server/routes/epgs.ts` | `/epgs`, `/epg-channels` |

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { streamHub } from './stream-hub.ts';
-import { proxyStats } from '../proxy-stats.ts';
+import { proxyStats, streamControllers, killStream } from '../proxy-stats.ts';
 import { EventEmitter } from 'events';
 
 vi.mock('../logger.ts', () => ({
@@ -11,6 +11,7 @@ describe('StreamHub', () => {
   beforeEach(() => {
     streamHub.reset();
     proxyStats.connections.clear();
+    streamControllers.clear();
     proxyStats.activeStreams = 0;
   });
 
@@ -260,6 +261,48 @@ describe('StreamHub', () => {
     fakeDataStream.emit('data', Buffer.from('chunk-2'));
     expect(channel.subscribers.has('sub-stalled')).toBe(false);
     expect(subRes.destroy).toHaveBeenCalled();
+  });
+
+  it('killStream force-quits a ghost subscriber and tears down the lone upstream', async () => {
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+
+    const channel = streamHub.registerChannel(
+      'source-1',
+      '100',
+      'Ghost Stream',
+      'live',
+      'http://upstream.tv',
+      { data: fakeDataStream }
+    );
+
+    const res: any = new EventEmitter();
+    res.setHeader = vi.fn();
+    res.destroy = vi.fn();
+    res.writableEnded = false;
+    res.destroyed = false;
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-ghost',
+      res,
+      username: 'user1',
+      playlistName: 'Living Room',
+      ip: '192.168.1.10',
+      startTime: Date.now(),
+    });
+
+    expect(proxyStats.connections.has('sub-ghost')).toBe(true);
+
+    // The dashboard "Trennen" button path. removeSubscriber() performs its
+    // non-DVR teardown synchronously (its only await lives in the DVR branch),
+    // so no timer is needed here.
+    expect(killStream('sub-ghost')).toBe(true);
+    await vi.waitFor(() => expect(streamHub.hasChannel('source-1', '100')).toBe(false));
+
+    expect(proxyStats.connections.has('sub-ghost')).toBe(false);
+    expect(streamHub.hasChannel('source-1', '100')).toBe(false);
+    expect((fakeDataStream as any).destroy).toHaveBeenCalled();
+    expect(killStream('sub-ghost')).toBe(false);
   });
 });
 

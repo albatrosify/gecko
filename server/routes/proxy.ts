@@ -7,7 +7,7 @@ import dns from "dns";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
-import { proxyStats } from "../proxy-stats.ts";
+import { proxyStats, registerStreamController, unregisterStreamController } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
@@ -374,12 +374,20 @@ export function createProxyRouter() {
           response.data.pipe(res);
 
           const cleanup = () => {
+            unregisterStreamController(connId);
             if (proxyStats.connections.has(connId)) {
               proxyStats.connections.delete(connId);
               proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
             }
             if (response.data?.destroy) response.data.destroy();
+            if (!res.writableEnded && !res.destroyed) res.destroy();
           };
+
+          // Force-teardown for the Dashboard's "Trennen" button
+          registerStreamController(connId, () => {
+            log(`[Proxy] Force-quitting VOD stream ${type}/${streamId} for ${username} (conn ${connId})`);
+            cleanup();
+          });
 
           res.on('finish', cleanup);
           res.on('close', cleanup);

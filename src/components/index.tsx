@@ -94,7 +94,8 @@ import {
   Bell,
   Sparkles,
   BarChart3,
-  HardDrive
+  HardDrive,
+  Power
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -410,6 +411,37 @@ export function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [dvrBusy, setDvrBusy] = useState<Record<string, boolean>>({});
 
+  const [killBusy, setKillBusy] = useState<Record<string, boolean>>({});
+  const [killAllBusy, setKillAllBusy] = useState(false);
+
+  const handleKillStream = async (connId: string) => {
+    setKillBusy(prev => ({ ...prev, [connId]: true }));
+    try {
+      await api.proxy.killStream(connId);
+      const data = await api.proxy.stats();
+      setStats(data);
+    } catch (err: any) {
+      alert(`Fehler beim Beenden des Streams: ${err.message}`);
+    } finally {
+      setKillBusy(prev => ({ ...prev, [connId]: false }));
+    }
+  };
+
+  const handleKillAllStreams = async () => {
+    if (stats.connections?.length > 0 && !confirm(`Alle ${stats.connections.length} aktiven Streams beenden? Alle Clients verlieren die Wiedergabe.`)) {
+      return;
+    }
+    setKillAllBusy(true);
+    try {
+      await api.proxy.killAllStreams();
+      const data = await api.proxy.stats();
+      setStats(data);
+    } catch (err: any) {
+      alert(`Fehler beim Beenden aller Streams: ${err.message}`);
+    } finally {
+      setKillAllBusy(false);
+    }
+  };
   const handleStartRecording = async (connId: string) => {
     setDvrBusy(prev => ({ ...prev, [connId]: true }));
     try {
@@ -533,11 +565,24 @@ export function Dashboard() {
         <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-bold text-zinc-100">Now Playing</h3>
-            {stats.directStreamsCount > 0 && (
-              <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
-                {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'}
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {stats.directStreamsCount > 0 && (
+                <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
+                  {stats.directStreamsCount} direct stream {stats.directStreamsCount === 1 ? 'playlist' : 'playlists'}
+                </span>
+              )}
+              {stats.connections?.length > 0 && (
+                <button
+                  onClick={handleKillAllStreams}
+                  disabled={killAllBusy}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 transition-all disabled:opacity-50"
+                  title="Alle aktiven Streams/Proxy-Verbindungen beenden"
+                >
+                  <Power size={10} />
+                  {killAllBusy ? '...' : 'Alle beenden'}
+                </button>
+              )}
+            </div>
           </div>
           <div className="space-y-2.5 flex-1">
             {stats.connections?.length > 0 ? (
@@ -615,6 +660,15 @@ export function Dashboard() {
                         <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0 ${typeColor}`}>
                           {conn.type === 'movie' ? 'VOD' : conn.type}
                         </span>
+                        <button
+                          onClick={() => handleKillStream(conn.id)}
+                          disabled={killBusy[conn.id]}
+                          className="flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800/80 hover:bg-red-500 text-zinc-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-zinc-700 hover:border-red-500/30 disabled:opacity-50 shrink-0"
+                          title="Diesen Stream/Proxy-Verbindung sofort beenden (Client bricht ab)"
+                        >
+                          <Power size={9} />
+                          {killBusy[conn.id] ? '...' : 'Trennen'}
+                        </button>
                       </div>
                     </div>
                     {/* Bottom row: stats */}

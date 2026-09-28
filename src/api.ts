@@ -354,6 +354,20 @@ export const proxy = {
       };
     }>('/api/proxy/stats');
   },
+
+  /** Force-quit a single active stream. */
+  async killStream(id: string) {
+    return request<{ ok: boolean; id: string }>(`/api/proxy/streams/${encodeURIComponent(id)}/kill`, {
+      method: 'POST',
+    });
+  },
+
+  /** Force-quit every active stream. */
+  async killAllStreams() {
+    return request<{ ok: boolean; killed: number }>('/api/proxy/streams/kill-all', {
+      method: 'POST',
+    });
+  },
 };
 
 export const admin = {

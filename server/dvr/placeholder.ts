@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { log } from '../logger.ts';
 import { DvrSourceLock } from './connection-arbiter.ts';
 import { generateId } from '../db.ts';
-import { proxyStats } from '../proxy-stats.ts';
+import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { recordTraffic } from '../traffic.ts';
 
 export const PLACEHOLDER_PATHS = [
@@ -73,12 +73,13 @@ export function servePlaceholderStream(
     const cleanup = () => {
       if (cleanedUp) return;
       cleanedUp = true;
+      unregisterStreamController(connId);
       if (ffmpegProc) {
         try { ffmpegProc.kill('SIGKILL'); } catch {}
         ffmpegProc = null;
       }
       try {
-        if (!res.writableEnded && !res.destroyed) res.end();
+        if (!res.writableEnded && !res.destroyed) res.destroy();
       } catch {}
       if (proxyStats.connections.has(connId)) {
         proxyStats.connections.delete(connId);
@@ -86,6 +87,12 @@ export function servePlaceholderStream(
       }
       log(`[DVR Placeholder] Client disconnected from placeholder for ${requestedStreamId}`);
     };
+
+    // Force-teardown for the Dashboard's "Trennen" button
+    registerStreamController(connId, () => {
+      log(`[DVR Placeholder] Force-quitting placeholder for ${requestedStreamId} (conn ${connId})`);
+      cleanup();
+    });
 
     req.on('close', cleanup);
     req.socket?.on('close', cleanup);

@@ -28,6 +28,44 @@ export const proxyStats = {
   }>()
 };
 
+/**
+ * Kill switches for active proxied streams, keyed by the same id used in
+ * `proxyStats.connections`. Every teardown path (subscriber, 1:1 pipe,
+ * placeholder) registers a closure that fully tears the stream down; the
+ * Dashboard's "Trennen" buttons call `killStream()` on it.
+ */
+export const streamControllers = new Map<string, () => void>();
+
+export function registerStreamController(id: string, kill: () => void): void {
+  streamControllers.set(id, kill);
+}
+
+export function unregisterStreamController(id: string): void {
+  streamControllers.delete(id);
+}
+
+/** Force-tears down a single active stream. Returns false if it was already gone. */
+export function killStream(id: string): boolean {
+  const kill = streamControllers.get(id);
+  if (!kill) return false;
+  streamControllers.delete(id);
+ try {
+    kill();
+  } catch {
+    // Teardown is best-effort; the connection entry is dropped regardless.
+  }
+  return true;
+}
+
+/** Force-tears down every active stream. Returns the number of streams killed. */
+export function killAllStreams(): number {
+  let count = 0;
+  for (const id of Array.from(streamControllers.keys())) {
+    if (killStream(id)) count++;
+  }
+  return count;
+}
+
 let statsInterval: NodeJS.Timeout | null = null;
 
 // Update bits per second regularly and keep a history

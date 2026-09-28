@@ -1,6 +1,6 @@
 import express from 'express';
 import { log } from '../logger.ts';
-import { proxyStats } from '../proxy-stats.ts';
+import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
 
@@ -327,6 +327,7 @@ class StreamHub {
         log(`[StreamHub] Error removing subscriber on disconnect ${sub.id}: ${err.message}`);
       });
     };
+    registerStreamController(sub.id, () => cleanup());
     if (sub.req) {
       sub.req.on('close', cleanup);
       sub.req.socket?.on('close', cleanup);
@@ -365,6 +366,7 @@ class StreamHub {
         proxyStats.connections.delete(subId);
         proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
       }
+      unregisterStreamController(subId);
 
       this.syncSubscriberCount(channel);
       log(`[StreamHub] Subscriber ${subId} left ${channelKey} (${channel.subscribers.size} remaining viewers)`);
@@ -401,6 +403,11 @@ class StreamHub {
             isHandover: true,
           });
           proxyStats.activeStreams++;
+          // Killing the handover card stops the recording and tears the channel down.
+          registerStreamController(handoverConnId, () => {
+            void import('../dvr/recorder.ts').then(({ dvrRecorder }) => dvrRecorder.stopRecording(channel.dvrRecordingId!));
+            this.closeChannel(channelKey);
+          });
         }
       } else {
         // No viewers and no DVR -> Tear down upstream connection
@@ -439,6 +446,7 @@ class StreamHub {
         proxyStats.connections.delete(handoverConnId);
         proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
       }
+      unregisterStreamController(handoverConnId);
     }
     channel.dvrRecordingId = undefined;
     this.syncRecordingId(channel, undefined);
@@ -467,6 +475,7 @@ class StreamHub {
         proxyStats.connections.delete(handoverConnId);
         proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
       }
+      unregisterStreamController(handoverConnId);
       import('../dvr/recorder.ts').then(({ dvrRecorder }) => {
         dvrRecorder.stopRecording(recId).catch(err => {
           log(`[StreamHub] Failed to finalize DVR recording ${recId} on channel close: ${err.message}`);
@@ -487,6 +496,7 @@ class StreamHub {
         proxyStats.connections.delete(sub.id);
         proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
       }
+      unregisterStreamController(sub.id);
     }
     channel.subscribers.clear();
 
