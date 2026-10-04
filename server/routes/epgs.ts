@@ -1,8 +1,7 @@
 import { Router } from "express";
 import axios from "axios";
 import { requireAuth, AuthRequest } from "../auth.ts";
-import { getDb } from "../db.ts";
-import { generateId } from "../db.ts";
+import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { isValidHttpUrl } from "../utils.ts";
 

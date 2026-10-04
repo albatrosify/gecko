@@ -1,6 +1,5 @@
 import express from "express";
 import { log } from "./logger.ts";
-import { DEFAULT_PORT } from "./config.ts";
 
 export const getClientInfo = (req: express.Request) => {
   const ip = req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress || 'unknown';
@@ -15,7 +14,7 @@ export function getBaseUrl(req: express.Request): string {
   }
 
   const protocol = (req.headers['x-forwarded-proto'] || req.protocol || 'http').toString();
-  const hostHeader = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:${DEFAULT_PORT}`).toString();
+  const hostHeader = (req.headers['x-forwarded-host'] || req.get('host') || `localhost:3000`).toString();
 
   return `${protocol}://${hostHeader}`;
 }
@@ -121,4 +120,11 @@ export function isValidHttpUrl(urlString: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

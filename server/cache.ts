@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from './db.ts';
 import { cache } from './schema.ts';
+import { formatBytes } from './utils.ts';
 import { eq, count } from 'drizzle-orm';
 
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -86,29 +87,6 @@ export function setCache(key: string, data: any): void {
 }
 
 /**
- * Removes a specific `key` from the cache, or clears the entire cache when
- * called without arguments.
- */
-export function clearCache(key?: string): void {
-  if (key) {
-    memoryCache.delete(key);
-  } else {
-    memoryCache.clear();
-  }
-
-  const db = getDb();
-  try {
-    if (key) {
-      db.delete(cache).where(eq(cache.key, key)).run();
-    } else {
-      db.delete(cache).run();
-    }
-  } catch (error) {
-    console.error('Cache clear error:', error);
-  }
-}
-
-/**
  * Copies the cached entry at `oldKey` to `newKey`, preserving the original
  * TTL.
  */
@@ -169,13 +147,6 @@ export interface CacheStats {
   size: string;
   /** Cache TTL in milliseconds. */
   ttlMs: number;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 /**

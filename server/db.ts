@@ -77,27 +77,6 @@ export function getDb(): BetterSQLite3Database<typeof schema> {
   return db;
 }
 
-export function toId(id: string): string {
-  // Return the string directly for SQLite compatibility, or generate a new one if not provided
-  return id;
-}
-
 export function generateId(): string {
   return crypto.randomUUID();
-}
-
-export function docWithId(doc: any): any {
-  if (!doc) return null;
-  // If we already have id and no _id, we still just return it normalized
-  const { _id, extra, ...rest } = doc;
-  const idStr = _id ? _id.toString() : doc.id;
-
-  if (extra) {
-     return { ...rest, ...extra, id: idStr };
-  }
-  return { id: idStr, ...rest };
-}
-
-export function docsWithId(docs: any[]): any[] {
-  return docs.map(docWithId);
 }

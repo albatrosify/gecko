@@ -13,7 +13,7 @@ export function createLlmRouter() {
 
   router.post("/llm/cleanup", requireAuth, async (req: any, res) => {
     try {
-      const { items, systemPrompt } = req.body || {};
+      const { items } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "items array required" });
       }
@@ -34,11 +34,7 @@ export function createLlmRouter() {
         return res.status(400).json({ error: "LLM cleanup is not configured. Add an endpoint in Settings." });
       }
 
-      const effective: LlmSettings = systemPrompt
-        ? { ...cfg, systemPrompt: String(systemPrompt) }
-        : cfg;
-
-      const results = await cleanNamesWithLlm(normalized, effective);
+      const results = await cleanNamesWithLlm(normalized, cfg);
       res.json({ results });
     } catch (err: any) {
       log(`[llm cleanup] error: ${err?.message || err}`);

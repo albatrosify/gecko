@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { getDb, docWithId } from './db.ts';
+import { getDb } from './db.ts';
 import { createRateLimiter } from './rate-limit.ts';
 
 const JWT_SECRET = () => {

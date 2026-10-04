@@ -4,7 +4,83 @@ import { proxyStats, registerStreamController, unregisterStreamController } from
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
 
-export interface DownstreamSubscriber {
+/** How many consecutive reconnect failures to tolerate before waiting for the client. */
+const RECONNECT_MAX_ATTEMPTS = 4;
+/** Backoff between those attempts. */
+const RECONNECT_RETRY_BACKOFF_MS = [2_000, 4_000, 8_000, 15_000];
+
+// ── Live jitter buffer ────────────────────────────────────────────────────────
+// Measured against real upstreams: several providers deliver a few MB in a ~200 ms
+// burst and then nothing for ~5 s, so forwarding every chunk the instant it arrives
+// turns each of those gaps into a stall on the client — the video freezes while the
+// player burns through its own buffer, then playback jumps when data resumes.
+// Holding a few seconds of content back and releasing it as the buffer refills
+// covers those gaps from memory instead of from the player.
+const LIVE_BUFFER_PUMP_MS = 50;
+/** Largest slice the pacer releases at once; bounds how bursty output can look. */
+const LIVE_SLICE_BYTES = 64_000;
+/**
+ * Sliding window of data time used to estimate the stream bitrate. Long enough to
+ * smooth one provider burst cycle, short enough to track genuine rate changes.
+ */
+const LIVE_BUFFER_RATE_WINDOW_S = 60;
+/** Minimum observed data span before the estimate is trusted. */
+const LIVE_BUFFER_RATE_WARMUP_S = 3;
+/**
+ * Largest inter-data gap still counted as content time. Above this the provider was
+ * not delivering content, and counting it would depress the pace below real time.
+ */
+const LIVE_BUFFER_RATE_MAX_GAP_S = 8;
+/**
+ * Release rate used while the reserve is still filling. Slightly below the stream
+ * rate, so the reserve builds instead of being immediately spent — but a token
+ * bucket still paces it, so output stays smooth rather than gulp-synced.
+ */
+const LIVE_BUFFER_FILL_FACTOR = 0.8;
+/**
+ * Content kept queued at all times — the only latency the jitter buffer adds, and
+ * what covers a provider outage. Output runs at the stream's own rate, so the reserve
+ * stays constant instead of growing.
+ *
+ * `GECKO_LIVE_BUFFER_SECONDS` sets it; 0 disables pacing (plain pass-through). Providers
+ * that go silent for longer than this will still interrupt playback, because a buffer
+ * cannot cover content that was never delivered.
+ */
+const LIVE_BUFFER_DEFAULT_RESERVE_S = 3;
+/**
+ * Cap on accumulated allowance. Only meant to stop a long stall being repaid as one
+ * huge burst — keep it far below the provider's gap length, or tokens bank through
+ * every ordinary gap and get dumped as a sawtooth when the next gulp lands.
+ */
+const LIVE_BUFFER_BURST_SECONDS = 0.3;
+/**
+ * Shortest dry-buffer spell worth logging. The reserve drains to empty at the end of
+ * every normal provider cycle by design, so only genuine interruptions are reported.
+ */
+const LIVE_BUFFER_STARVE_LOG_MS = 1_500;
+/** Hard ceiling on jitter-buffer memory per channel. */
+const LIVE_BUFFER_MAX_BYTES = 64_000_000;
+/** If the upstream goes quiet for longer than this, release the buffer anyway. */
+const LIVE_BUFFER_DRAIN_AFTER_MS = (LIVE_BUFFER_DEFAULT_RESERVE_S * 2 + 5) * 1000;
+
+/** Configured reserve depth in seconds; 0 means pacing is off. */
+function liveBufferReserveSeconds(): number {
+  const configured = Number(process.env.GECKO_LIVE_BUFFER_SECONDS ?? LIVE_BUFFER_DEFAULT_RESERVE_S);
+  if (!Number.isFinite(configured) || configured < 0) return LIVE_BUFFER_DEFAULT_RESERVE_S;
+  return configured;
+}
+
+function isLivePacingEnabled(): boolean {
+  return liveBufferReserveSeconds() > 0;
+}
+
+/** An upstream chunk plus the moment it arrived, which is what paces delivery. */
+interface BufferedChunk {
+  at: number;
+  data: Buffer;
+}
+
+interface DownstreamSubscriber {
   id: string;
   playlistId?: string;
   req?: express.Request;
@@ -16,12 +92,12 @@ export interface DownstreamSubscriber {
   stalledSince?: number;
 }
 
-export interface UpstreamConfig {
+interface UpstreamConfig {
   url: string;
   headers?: Record<string, string>;
 }
 
-export interface ActiveStreamChannel {
+interface ActiveStreamChannel {
   channelKey: string;
   sourceId: string;
   streamId: string;
@@ -36,9 +112,28 @@ export interface ActiveStreamChannel {
   upstreamConfig?: UpstreamConfig;
   dvrRecordingId?: string;
   headersSent?: Record<string, any>;
+  /** Upstream chunks held back so bursty providers do not starve the client. */
+  buffer: BufferedChunk[];
+  bufferedBytes: number;
+  /**
+   * Bytes received per second of *data time*, used to estimate the stream's rate.
+   * Anchored on the last chunk rather than the wall clock so a provider stall cannot
+   * depress the estimate — a depressed rate would starve the player even while the
+   * buffer still holds playable content.
+   */
+  rateBuckets: Map<number, number>;
+  /** Leaky-bucket allowance that paces downstream delivery. */
+  pacingTokens: number;
+  lastPumpAt: number;
+  /** Interval that releases buffered chunks to subscribers. */
+  pumpTimer?: NodeJS.Timeout;
+  /** Set while the buffer is empty with subscribers attached — i.e. a real stall. */
+  starvedSince?: number;
+  /** True once the current upstream silence has been reported, so it logs once. */
+  gapWarned?: boolean;
 }
 
-export type ChunkCallback = (channelKey: string, chunk: Buffer) => void;
+type ChunkCallback = (channelKey: string, chunk: Buffer) => void;
 
 class StreamHub {
   private channels = new Map<string, ActiveStreamChannel>(); // channelKey -> ActiveStreamChannel
@@ -83,6 +178,9 @@ class StreamHub {
 
   private isReconnecting = new Set<string>();
 
+  /** Consecutive failed reconnect attempts per channel, used for backoff. */
+  private reconnectRetries = new Map<string, number>();
+
   /**
    * Registers a new active upstream channel ingestion pipeline.
    */
@@ -117,15 +215,35 @@ class StreamHub {
       lastChunkAt: Date.now(),
       upstreamConfig,
       headersSent,
+      buffer: [],
+      bufferedBytes: 0,
+      rateBuckets: new Map(),
+      pacingTokens: 0,
+      lastPumpAt: Date.now(),
     };
 
     this.channels.set(channelKey, channel);
 
     // ── Diagnostic & Self-healing gap detection ──────────────────────────────
-    // Reset every time a chunk arrives. If upstream goes silent for >3s, log warning.
-    // If upstream goes silent for >=6s and subscribers are waiting, trigger in-place reconnect!
-    const UPSTREAM_GAP_WARN_MS = 3_000;
-    const UPSTREAM_GAP_RECONNECT_MS = 6_000;
+    // Reset every time a chunk arrives.
+    //
+    // Thresholds are deliberately generous. Some providers deliver IPTV in
+    // bursts — a few MB in ~200 ms, then ~5 s of dead air — and gecko sits
+    // behind a VPN where the path itself is smooth (verified: 580 Mbps
+    // sustained bulk download, 9-12 ms latency, no socket backlog). Reconnecting
+    // inside such a burst window discards data the client could have played out
+    // of its own buffer, which reads as a freeze, and the fresh connection
+    // resumes from a different point in the origin's buffer, which reads as a
+    // time jump. Real clients hold one connection and ride out short gaps, so
+    // do the same: only reconnect once the gap is long enough that a player
+    // buffer cannot cover it.
+    const UPSTREAM_GAP_WARN_MS = 8_000;
+    const UPSTREAM_GAP_RECONNECT_MS = 15_000;
+
+    // Release buffered chunks on a fixed cadence so a bursty upstream is smoothed
+    // into a continuous downstream stream.
+    channel.pumpTimer = setInterval(() => this.pumpChannelBuffer(channel), LIVE_BUFFER_PUMP_MS);
+    channel.pumpTimer.unref?.();
     let upstreamGapTimer = setInterval(() => {
       const silentMs = Date.now() - (channel.lastChunkAt || channel.startTime);
       if (
@@ -139,7 +257,14 @@ class StreamHub {
           log(`[StreamHub] Reconnect error for ${channelKey}: ${err.message}`);
         });
       } else if (silentMs >= UPSTREAM_GAP_WARN_MS) {
-        log(`[StreamHub][DIAG] ${channelKey} — upstream silent for ${silentMs} ms (${channel.subscribers.size} subscribers waiting)`);
+        // Report each silence once, on entry. Logging every second makes a single
+        // 15 s outage look like eight separate incidents when the logs are counted.
+        if (!channel.gapWarned) {
+          log(`[StreamHub] ⚠️ Upstream silent for ${silentMs} ms on ${channelKey} (${channel.subscribers.size} subscribers waiting)`);
+          channel.gapWarned = true;
+        }
+      } else {
+        channel.gapWarned = false;
       }
     }, 1_000);
 
@@ -200,61 +325,10 @@ class StreamHub {
     proxyStats.totalBytes += chunk.length;
     proxyStats.intervalBytes += chunk.length;
 
-    // Broadcast to all active downstream subscribers
-    const deadSubscribers: string[] = [];
-    for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
-      if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
-        deadSubscribers.push(subId);
-        continue;
-      }
-
-      try {
-        const ok = sub.res.write(chunk);
-        const conn = proxyStats.connections.get(subId);
-        if (conn) {
-          conn.bytesRead += chunk.length;
-          conn.intervalBytes += chunk.length;
-        }
-        recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', chunk.length);
-
-        if (sub.res.destroyed || sub.res.writableEnded) {
-          deadSubscribers.push(subId);
-          continue;
-        }
-
-        if (!ok) {
-          const bufLen = sub.res.writableLength || 0;
-          const now = Date.now();
-          const inStartupGrace = (now - sub.startTime) < STARTUP_GRACE_MS;
-
-          if (bufLen > HARD_BUFFER_CAP_BYTES) {
-            log(`[StreamHub] Evicting runaway subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB > ${HARD_BUFFER_CAP_BYTES / 1024} KB hard limit.`);
-            try { sub.res.destroy(); } catch {}
-            deadSubscribers.push(subId);
-            continue;
-          }
-
-          if (bufLen > BUFFER_WARN_BYTES && !inStartupGrace) {
-            if (!sub.stalledSince) {
-              sub.stalledSince = now;
-            } else if (now - sub.stalledSince > MAX_STALL_MS) {
-              log(`[StreamHub] Evicting stalled subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB sustained for >${MAX_STALL_MS / 1000}s.`);
-              try { sub.res.destroy(); } catch {}
-              deadSubscribers.push(subId);
-              continue;
-            }
-          } else if (bufLen <= BUFFER_WARN_BYTES) {
-            sub.stalledSince = undefined;
-          }
-        } else {
-          sub.stalledSince = undefined;
-        }
-      } catch (err: any) {
-        log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
-        try { sub.res.destroy(); } catch {}
-        deadSubscribers.push(subId);
-      }
-    }
+    // Hold the chunk back in the jitter buffer instead of pushing it to subscribers
+    // immediately; pumpChannelBuffer releases it once enough content is queued to
+    // ride out the provider's next dead-air gap.
+    this.enqueueChunk(channel, chunk);
 
     // If DVR handover is streaming in background, advance its bandwidth stats
     if (channel.dvrRecordingId) {
@@ -265,13 +339,6 @@ class StreamHub {
       }
     }
 
-    // Safely evict dead subscribers outside the broadcast loop
-    for (const deadId of deadSubscribers) {
-      this.removeSubscriber(channel.channelKey, deadId).catch(err => {
-        log(`[StreamHub] Error removing dead subscriber ${deadId}: ${err.message}`);
-      });
-    }
-
     // If DVR recording attached, write chunk to recording file
     if (channel.dvrRecordingId && this.onChunkCallback) {
       try {
@@ -280,6 +347,221 @@ class StreamHub {
         log(`[StreamHub] DVR chunk error: ${err.message}`);
       }
     }
+  }
+
+  /**
+   * Queue an upstream chunk for paced delivery and track the stream's average rate.
+   *
+   * The average rate is what makes smoothing possible: it is measured over the whole
+   * session, so it stays steady across the provider's dead-air gaps and gives the
+   * pump a real-time target to release against.
+   */
+  private enqueueChunk(channel: ActiveStreamChannel, chunk: Buffer): void {
+    const now = Date.now();
+    const second = Math.floor(now / 1000);
+    channel.rateBuckets.set(second, (channel.rateBuckets.get(second) ?? 0) + chunk.length);
+    for (const key of channel.rateBuckets.keys()) {
+      if (second - key > LIVE_BUFFER_RATE_WINDOW_S) channel.rateBuckets.delete(key);
+    }
+
+    // Slice large reads: providers deliver multi-megabyte gulps straight from the
+    // socket, and a token bucket cannot release what it can never single-handedly
+    // afford. Small slices let the pump meter output smoothly.
+    if (chunk.length > LIVE_SLICE_BYTES) {
+      for (let offset = 0; offset < chunk.length; offset += LIVE_SLICE_BYTES) {
+        const slice = chunk.subarray(offset, Math.min(offset + LIVE_SLICE_BYTES, chunk.length));
+        channel.buffer.push({ at: now, data: slice });
+        channel.bufferedBytes += slice.length;
+      }
+    } else {
+      channel.buffer.push({ at: now, data: chunk });
+      channel.bufferedBytes += chunk.length;
+    }
+
+    // Bound memory: drop the oldest content if the buffer runs away.
+    while (channel.bufferedBytes > LIVE_BUFFER_MAX_BYTES && channel.buffer.length > 1) {
+      const dropped = channel.buffer.shift();
+      channel.bufferedBytes -= dropped ? dropped.data.length : 0;
+    }
+  }
+
+  /**
+   * Estimate the stream's bitrate from bytes received per second of data time.
+   *
+   * Deliberately *not* `totalBytes / wallClockElapsed`: a provider stall would grow
+   * the denominator while bytes stand still, dropping the pace below real time and
+   * starving the player even though playable content is still buffered. Anchoring the
+   * window on the last chunk we actually received freezes the estimate across a stall
+   * and lets it recover as soon as data flows again.
+   */
+  private measureUpstreamRate(channel: ActiveStreamChannel): number {
+    if (channel.rateBuckets.size === 0) return 0;
+    const seconds = [...channel.rateBuckets.keys()].sort((a, b) => a - b);
+    let total = 0;
+    for (const bytes of channel.rateBuckets.values()) total += bytes;
+
+    // Sum the span between consecutive data seconds, capping each gap. A short gap is
+    // the provider's normal burst cycle and must count as content time, otherwise the
+    // estimate inflates several-fold. A long gap is an outage that delivered no
+    // content — counting it would depress the pace below real time and starve the
+    // player for a minute afterwards even though data is flowing again.
+    let spanSeconds = 0;
+    for (let i = 1; i < seconds.length; i++) {
+      spanSeconds += Math.min(seconds[i] - seconds[i - 1], LIVE_BUFFER_RATE_MAX_GAP_S);
+    }
+    if (spanSeconds < LIVE_BUFFER_RATE_WARMUP_S) return 0;
+
+    // Bytes from the oldest second were delivered *before* the measured span begins,
+    // so counting them inflates the rate — with two provider bursts that reads double
+    // the truth, and pacing above real time drains the reserve instead of filling it.
+    const oldestBytes = channel.rateBuckets.get(seconds[0]) ?? 0;
+    return (total - oldestBytes) / spanSeconds;
+  }
+
+  /**
+   * Release buffered content to every subscriber at the upstream's average rate
+   * using a leaky bucket.
+   *
+   * Pacing by *arrival time* does not help: chunks inside one of the provider's
+   * multi-megabyte gulps arrive microseconds apart, so releasing them by age
+   * replays the gulp shape and the client still starves during the dead air that
+   * follows. Allowing bytes out at a measured rate instead converts any input shape
+   * into a continuous downstream stream, and the queued content covers the gaps.
+   *
+   * Until a rate can be measured (need a few seconds of data) content passes
+   * straight through, so playback starts immediately.
+   */
+  private pumpChannelBuffer(channel: ActiveStreamChannel): void {
+    if (channel.subscribers.size === 0) {
+      // Nobody to feed: drop stale content instead of holding it in memory.
+      channel.buffer.length = 0;
+      channel.bufferedBytes = 0;
+      return;
+    }
+
+    const now = Date.now();
+    const elapsedMs = Math.max(0, now - channel.lastPumpAt);
+    channel.lastPumpAt = now;
+
+    const measuredRate = isLivePacingEnabled() ? this.measureUpstreamRate(channel) : 0;
+
+    // A dry buffer with subscribers attached is the condition that actually reaches
+    // the player as an interruption. Checked before the empty-buffer return below —
+    // putting it after would make it unreachable, since that is exactly the state it
+    // needs to observe. Reported on recovery so a report of "it buffered" can be
+    // matched against something concrete in the logs.
+    if (channel.buffer.length === 0) {
+      channel.starvedSince ??= now;
+      return;
+    }
+    if (channel.starvedSince !== undefined) {
+      const starvedMs = now - channel.starvedSince;
+      if (starvedMs >= LIVE_BUFFER_STARVE_LOG_MS) {
+        log(`[StreamHub] ⚠️ Downstream starved for ${starvedMs} ms on ${channel.channelKey} — ${channel.subscribers.size} subscriber(s) had no data to play (client re-buffers)`);
+      }
+      channel.starvedSince = undefined;
+    }
+
+    const upstreamQuietMs = now - (channel.lastChunkAt || now);
+    const drainFully = upstreamQuietMs > LIVE_BUFFER_DRAIN_AFTER_MS;
+
+    // Pacing is the only thing that gates release; the reserve is maintained by
+    // releasing a little slower until it is filled. Gating release on the reserve
+    // itself would make output gulp-synced, because the buffer only grows when a
+    // gulp arrives.
+
+    const pacing = measuredRate > 0 && !drainFully;
+    const reserveBytes = measuredRate * liveBufferReserveSeconds();
+    const releaseRate = pacing && channel.bufferedBytes < reserveBytes
+      ? measuredRate * LIVE_BUFFER_FILL_FACTOR
+      : measuredRate;
+
+    // Allowance accumulates at the release rate and is capped so a long stall cannot
+    // be repaid as one huge burst.
+    if (releaseRate > 0) {
+      const cap = Math.max(LIVE_SLICE_BYTES, releaseRate * LIVE_BUFFER_BURST_SECONDS);
+      channel.pacingTokens = Math.min(cap, channel.pacingTokens + (releaseRate * elapsedMs) / 1000);
+    }
+
+
+    const STARTUP_GRACE_MS = 15_000;
+    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
+    const MAX_STALL_MS = 15_000;
+    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
+
+    const deadSubscribers: string[] = [];
+    while (channel.buffer.length > 0) {
+      const head = channel.buffer[0];
+      // Before a rate exists, or when the upstream is gone rather than merely
+      // quiet, release without pacing so the client keeps getting data.
+      if (pacing && channel.pacingTokens < head.data.length) break;
+      if (pacing) channel.pacingTokens -= head.data.length;
+
+      channel.buffer.shift();
+      channel.bufferedBytes -= head.data.length;
+      const data = head.data;
+
+      for (const [subId, sub] of Array.from(channel.subscribers.entries())) {
+        if (sub.res.writableEnded || sub.res.destroyed || (sub.req && sub.req.destroyed) || sub.res.writable === false) {
+          deadSubscribers.push(subId);
+          continue;
+        }
+
+        try {
+          const ok = sub.res.write(data);
+          const conn = proxyStats.connections.get(subId);
+          if (conn) {
+            conn.bytesRead += data.length;
+            conn.intervalBytes += data.length;
+          }
+          recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', data.length);
+
+          if (sub.res.destroyed || sub.res.writableEnded) {
+            deadSubscribers.push(subId);
+            continue;
+          }
+
+          if (!ok) {
+            const bufLen = sub.res.writableLength || 0;
+            const now = Date.now();
+            const inStartupGrace = (now - sub.startTime) < STARTUP_GRACE_MS;
+
+            if (bufLen > HARD_BUFFER_CAP_BYTES) {
+              log(`[StreamHub] Evicting runaway subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB > ${HARD_BUFFER_CAP_BYTES / 1024} KB hard limit.`);
+              try { sub.res.destroy(); } catch {}
+              deadSubscribers.push(subId);
+              continue;
+            }
+
+            if (bufLen > BUFFER_WARN_BYTES && !inStartupGrace) {
+              if (!sub.stalledSince) {
+                sub.stalledSince = now;
+              } else if (now - sub.stalledSince > MAX_STALL_MS) {
+                log(`[StreamHub] Evicting stalled subscriber ${subId} — buffer ${Math.round(bufLen / 1024)} KB sustained for >${MAX_STALL_MS / 1000}s.`);
+                try { sub.res.destroy(); } catch {}
+                deadSubscribers.push(subId);
+                continue;
+              }
+            } else if (bufLen <= BUFFER_WARN_BYTES) {
+              sub.stalledSince = undefined;
+            }
+          } else {
+            sub.stalledSince = undefined;
+          }
+        } catch (err: any) {
+          log(`[StreamHub] Error writing to subscriber ${subId}: ${err.message}`);
+          try { sub.res.destroy(); } catch {}
+          deadSubscribers.push(subId);
+        }
+      }
+    }
+
+    for (const deadId of deadSubscribers) {
+      this.removeSubscriber(channel.channelKey, deadId).catch(err => {
+        log(`[StreamHub] Error removing dead subscriber ${deadId}: ${err.message}`);
+      });
+    }
+
   }
 
   /**
@@ -319,6 +601,7 @@ class StreamHub {
       if (response.status >= 400) {
         log(`[StreamHub] ⚠️ Reconnect failed for ${channelKey}: Upstream returned HTTP ${response.status}`);
         if (response.data?.destroy) try { response.data.destroy(); } catch {}
+        this.scheduleReconnectRetry(channelKey, `HTTP ${response.status}`);
         return false;
       }
 
@@ -329,15 +612,52 @@ class StreamHub {
       channel.upstreamResponse = response;
       channel.lastChunkAt = Date.now();
       this.bindUpstreamResponse(channel);
+      this.reconnectRetries.delete(channelKey);
 
       log(`[StreamHub] ✅ In-place reconnect SUCCEEDED for ${channelKey}! Seamlessly resumed stream for ${channel.subscribers.size} subscriber(s).`);
       return true;
     } catch (err: any) {
       log(`[StreamHub] ⚠️ Reconnect error for ${channelKey}: ${err.message}`);
+      this.scheduleReconnectRetry(channelKey, err.message);
       return false;
     } finally {
       this.isReconnecting.delete(channelKey);
     }
+  }
+
+  /**
+   * A reconnect attempt destroys the old upstream before opening the new one, so a
+   * refused attempt (providers answer 407/500/503 while they are struggling) would
+   * otherwise leave the channel with no upstream and no way back: the existing
+   * subscriber sockets stay open but nothing is ever forwarded again, and the
+   * client only recovers by giving up and reconnecting on its own.
+   *
+   * Retry while somebody is still watching, backing off between attempts, and give
+   * up only when nobody is left.
+   */
+  private scheduleReconnectRetry(channelKey: string, reason: string): void {
+    const channel = this.channels.get(channelKey);
+    if (!channel || this.reconnectRetries.has(channelKey)) return;
+    if (channel.subscribers.size === 0 && !channel.dvrRecordingId) {
+      this.closeChannel(channelKey);
+      return;
+    }
+    const attempt = (this.reconnectRetries.get(channelKey) ?? 0) + 1;
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      log(`[StreamHub] ❌ Giving up on ${channelKey} after ${RECONNECT_MAX_ATTEMPTS} failed reconnect attempts (${reason}). Waiting for a client to reconnect.`);
+      this.reconnectRetries.delete(channelKey);
+      return;
+    }
+    this.reconnectRetries.set(channelKey, attempt);
+    const delayMs = RECONNECT_RETRY_BACKOFF_MS[attempt - 1];
+    log(`[StreamHub] ⏳ Retry ${attempt}/${RECONNECT_MAX_ATTEMPTS} for ${channelKey} in ${delayMs} ms (${reason}) | ${channel.subscribers.size} subscriber(s) waiting`);
+    const timer = setTimeout(() => {
+      this.reconnectRetries.delete(channelKey);
+      this.reconnectChannel(channelKey, `retry ${attempt} after ${reason}`).catch(err => {
+        log(`[StreamHub] Reconnect error for ${channelKey}: ${err.message}`);
+      });
+    }, delayMs);
+    timer.unref?.();
   }
 
   /**
@@ -589,6 +909,10 @@ class StreamHub {
       unregisterStreamController(sub.id);
     }
     channel.subscribers.clear();
+    this.reconnectRetries.delete(channelKey);
+    clearInterval(channel.pumpTimer);
+    channel.buffer.length = 0;
+    channel.bufferedBytes = 0;
 
     // Clear diagnostic timers
     if ((channel as any)._diagTimers) {

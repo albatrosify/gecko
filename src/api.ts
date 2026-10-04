@@ -139,10 +139,6 @@ export const sources = {
       method: 'POST',
     });
   },
-  async hostBenchmarks(id: string, limit?: number) {
-    const query = limit ? `?limit=${limit}` : '';
-    return request<any[]>(`/api/sources/${id}/host-benchmarks${query}`);
-  },
 };
 
 // EPGs

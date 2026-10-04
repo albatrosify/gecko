@@ -14,7 +14,6 @@ import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { initHostStatsFlusher } from "./server/hosts.ts";
 import { initTrafficFlusher } from "./server/traffic.ts";
-import { DEFAULT_PORT } from "./server/config.ts";
 
 // Routers
 import { createSystemRouter } from "./server/routes/system.ts";
@@ -23,10 +22,10 @@ import { createSourcesRouter } from "./server/routes/sources.ts";
 import { createEpgsRouter } from "./server/routes/epgs.ts";
 import { createPlaylistsRouter } from "./server/routes/playlists.ts";
 import { createMappingsRouter } from "./server/routes/mappings.ts";
-import { createMigrationsRouter } from "./server/routes/migrations.ts";
 import { createCustomCategoriesRouter } from "./server/routes/customCategories.ts";
 import { createQualityScanRouter } from "./server/routes/quality-scan.ts";
 import { createDvrRouter } from "./server/routes/dvr.ts";
+import { dvrRecorder } from "./server/dvr/recorder.ts";
 import { createLlmRouter } from "./server/routes/llm.ts";
 import { createTrafficRouter } from "./server/routes/traffic.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
@@ -62,6 +61,10 @@ async function startServer() {
     // Initialize proxy stats interval
     initProxyStatsInterval();
 
+    // Finalise recordings left behind by a previous process
+    const reconciled = dvrRecorder.reconcileOrphanedRecordings();
+    if (reconciled > 0) log(`[DVR] Reconciled ${reconciled} orphaned recording(s) from a previous run`);
+
     // Initialize upstream connection monitor
     initConnectionMonitor();
 
@@ -73,7 +76,7 @@ async function startServer() {
 
     const app = express();
     app.set('trust proxy', 1);
-    const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT));
+    const PORT = parseInt(process.env.PORT || String(3000));
 
     // Security middleware
     app.use(helmet({
@@ -123,7 +126,6 @@ async function startServer() {
     app.use('/api', epgsRouter);
     app.use('/api', createPlaylistsRouter(epgsRouter));
     app.use('/api', createMappingsRouter());
-    app.use('/api', createMigrationsRouter());
     app.use('/api', createCustomCategoriesRouter());
     app.use('/api', createQualityScanRouter());
     app.use('/api', createLlmRouter());

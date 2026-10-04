@@ -7,7 +7,7 @@ import { getCached, setCache } from "./cache.ts";
 import { parseXtreamExpDate } from "./utils.ts";
 
 // Helper to compare data and generate a changelog
-export function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
+function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
   const added: any[] = [];
   const removed: any[] = [];
   const renamed: any[] = [];
@@ -265,7 +265,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     // 2. Fetch streams from upstream
     let upstreamStreams: any = [];
     if (type === 'live') upstreamStreams = await client.getLiveStreams();
-    else if (type === 'vod') upstreamStreams = await client.getMovies();
+    else if (type === 'vod') upstreamStreams = await client.getVodStreams();
     else if (type === 'series') upstreamStreams = await client.getSeries();
 
     // 3. Validate upstreamStreams payload structure

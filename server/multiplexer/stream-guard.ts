@@ -1,6 +1,6 @@
-export type GuardAction = 'join_existing' | 'allow_new' | 'block_placeholder';
+type GuardAction = 'join_existing' | 'allow_new' | 'block_placeholder';
 
-export interface GuardDecision {
+interface GuardDecision {
   action: GuardAction;
   existingChannelKey?: string;
   reason?: string;

@@ -555,9 +555,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
         : (streamData?.container_extension || 'mp4');
       const safeExt = /^[a-zA-Z0-9]{1,8}$/.test(rawExt) ? rawExt.toLowerCase() : 'mp4';
 
-      const title = (typeof req.query.title === 'string' && req.query.title)
-        ? req.query.title
-        : (streamData?.name || streamData?.title || `Stream_${streamId}`);
+      const title = streamData?.name || streamData?.title || `Stream_${streamId}`;
 
       const url = buildStreamUrl({ ...sourceDoc, ...(sourceDoc.extra as any || {}) }, streamId, type as 'vod' | 'series', safeExt);
 

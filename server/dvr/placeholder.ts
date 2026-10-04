@@ -8,11 +8,7 @@ import { generateId } from '../db.ts';
 import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { recordTraffic } from '../traffic.ts';
 
-export const PLACEHOLDER_PATHS = [
-  path.join(process.cwd(), 'data', 'placeholder.mp4'),
-  path.join(process.cwd(), 'data', 'placeholder.ts'),
-  path.join(process.cwd(), 'assets', 'placeholder.mp4'),
-];
+const PLACEHOLDER_PATH = path.join(process.cwd(), 'assets', 'placeholder.mp4');
 
 /**
  * Serves the placeholder stream when a source is locked by DVR or another stream.
@@ -34,7 +30,7 @@ export function servePlaceholderStream(
   const displayName = streamName || `Stream ${requestedStreamId}`;
   log(`[DVR Placeholder] Routing request for stream ${requestedStreamId} (${displayName}) to placeholder because source ${lock.sourceId} is active with ${channelInfo}`);
 
-  const videoPath = PLACEHOLDER_PATHS.find(p => fs.existsSync(p)) || null;
+  const videoPath = fs.existsSync(PLACEHOLDER_PATH) ? PLACEHOLDER_PATH : null;
 
   if (videoPath) {
     const connId = generateId();

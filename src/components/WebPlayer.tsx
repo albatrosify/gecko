@@ -3,7 +3,7 @@ import { motion, useDragControls } from 'motion/react';
 import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, AlertCircle, WifiOff, RotateCcw, Loader2, Copy, Check, Download, ChevronDown, Tv } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
-import { downloadStreamM3u, launchExternalPlayer, ExternalPlayerType } from '../playerUtils';
+import { downloadStreamM3u, launchExternalPlayer, toAbsoluteUrl, ExternalPlayerType } from '../playerUtils';
 
 export function VlcIcon({ size = 16, className }: { size?: number; className?: string }) {
   return (
@@ -13,7 +13,7 @@ export function VlcIcon({ size = 16, className }: { size?: number; className?: s
   );
 }
 
-export interface WebPlayerProps {
+interface WebPlayerProps {
   url: string | null;
   title: string;
   onClose: () => void;
@@ -126,16 +126,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   // not on brief mid-stream network hiccups that resolve in <800 ms.
   const waitingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const getAbsoluteUrl = () => {
-    if (!url) return '';
-    return url.startsWith('http://') || url.startsWith('https://')
-      ? url
-      : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
-  };
-
   const handleOpenExternal = (e?: React.MouseEvent, player: ExternalPlayerType = 'm3u') => {
     if (e) e.stopPropagation();
-    const absUrl = getAbsoluteUrl();
+    const absUrl = toAbsoluteUrl(url);
     if (!absUrl) return;
     setShowPlayerMenu(false);
 
@@ -150,7 +143,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
   const handleCopyUrl = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const absUrl = getAbsoluteUrl();
+    const absUrl = toAbsoluteUrl(url);
     if (!absUrl) return;
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(absUrl);

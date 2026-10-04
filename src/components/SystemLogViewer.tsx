@@ -16,8 +16,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import api from '../api';
+import { copyToClipboard } from './index';
 
-export interface ParsedLogLine {
+interface ParsedLogLine {
   id: number;
   raw: string;
   time: string | null;
@@ -163,33 +164,6 @@ function getStatusStyle(code: number): string {
   if (code >= 300 && code < 400) return 'text-sky-400 font-semibold';
   if (code >= 400 && code < 500) return 'text-amber-400 font-bold';
   return 'text-rose-400 font-bold bg-rose-500/20 px-1 rounded';
-}
-
-/**
- * Safely copies text to clipboard with fallback.
- */
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {}
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.left = '-999999px';
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  try {
-    document.execCommand('copy');
-    ta.remove();
-    return true;
-  } catch {
-    ta.remove();
-    return false;
-  }
 }
 
 /**

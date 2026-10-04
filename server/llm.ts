@@ -50,7 +50,7 @@ export async function getLlmSettings(): Promise<LlmSettings> {
   };
 }
 
-export function resolveChatEndpoint(baseUrl: string): string {
+function resolveChatEndpoint(baseUrl: string): string {
   let url = (baseUrl || '').trim().replace(/\/+$/, '');
   if (!url) return url;
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;

@@ -17,13 +17,21 @@ export function sanitizeFilename(title: string = 'stream'): string {
 }
 
 /**
+ * Resolve a possibly-relative URL to an absolute URL using the current origin.
+ */
+export function toAbsoluteUrl(url: string): string {
+  if (!url) return '';
+  return url.startsWith('http://') || url.startsWith('https://')
+    ? url
+    : (typeof window !== 'undefined' ? `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}` : url);
+}
+
+/**
  * Format an external player URL scheme or return null if using file download.
  */
 export function getPlayerSchemeUrl(url: string, player: ExternalPlayerType): string | null {
-  if (!url) return null;
-  const absUrl = url.startsWith('http://') || url.startsWith('https://')
-    ? url
-    : (typeof window !== 'undefined' ? `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}` : url);
+  const absUrl = toAbsoluteUrl(url);
+  if (!absUrl) return null;
 
   switch (player) {
     case 'iina':
@@ -44,9 +52,7 @@ export function getPlayerSchemeUrl(url: string, player: ExternalPlayerType): str
  */
 export function downloadStreamM3u(url: string, title: string = 'stream') {
   if (!url || typeof document === 'undefined' || typeof window === 'undefined') return;
-  const absUrl = url.startsWith('http://') || url.startsWith('https://')
-    ? url
-    : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  const absUrl = toAbsoluteUrl(url);
 
   const safeFilename = sanitizeFilename(title);
   const m3uContent = generateM3uContent(absUrl, title);

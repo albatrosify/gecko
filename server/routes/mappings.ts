@@ -20,7 +20,7 @@ function verifyPlaylistOwnership(db: any, playlistId: string, userId: string, ro
 }
 
 function isValidMappingId(id: unknown): id is string {
-  return typeof id === 'string' && (/^[a-f\d]{24}$/i.test(id) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+  return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
 export function createMappingsRouter() {

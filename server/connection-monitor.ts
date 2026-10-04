@@ -300,10 +300,3 @@ export function initConnectionMonitor(): void {
   monitorIntervalTimer = setInterval(runMonitorCycle, 15000);
   monitorIntervalTimer.unref?.();
 }
-
-export function stopConnectionMonitor(): void {
-  if (monitorIntervalTimer) {
-    clearInterval(monitorIntervalTimer);
-    monitorIntervalTimer = null;
-  }
-}

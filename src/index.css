@@ -24,11 +24,3 @@ input, textarea {
   scrollbar-width: thin;
   scrollbar-color: #27272a #09090b;
 }
-
-@utility scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}

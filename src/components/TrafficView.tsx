@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
+import { formatBytes } from '../format.ts';
 import { User, TrafficStatsResponse, PlaylistTrafficSummary } from '../types';
 import {
   Activity,
@@ -22,16 +23,6 @@ interface TrafficViewProps {
 
 type RangePreset = 'this_month' | 'last_month' | 'today' | 'yesterday' | 'last_7_days' | 'last_30_days' | 'all_time' | 'custom';
 type SortField = 'total' | 'live' | 'series' | 'movie' | 'name';
-
-export function formatBytes(bytes: number, decimals: number = 2): string {
-  if (!bytes || bytes <= 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const safeI = Math.min(i, sizes.length - 1);
-  return `${parseFloat((bytes / Math.pow(k, safeI)).toFixed(dm))} ${sizes[safeI]}`;
-}
 
 function getPresetDates(preset: RangePreset): { start?: string; end?: string } {
   const now = new Date();

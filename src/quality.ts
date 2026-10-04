@@ -31,7 +31,7 @@ const PREMIUM_AUDIO = new Set(['eac3', 'e-ac-3', 'truehd', 'dts', 'dts-hd']);
 
 // ── Build template variable context from metadata ─────────────────────────────
 
-export function buildTemplateContext(meta: DetectedStreamMeta): Record<string, string | number | null> {
+function buildTemplateContext(meta: DetectedStreamMeta): Record<string, string | number | null> {
   const h = meta.resolution ? parseInt(meta.resolution.split('x')[1] ?? '0', 10) : 0;
   const w = meta.resolution ? parseInt(meta.resolution.split('x')[0] ?? '0', 10) : 0;
 
@@ -82,43 +82,14 @@ export function buildTemplateContext(meta: DetectedStreamMeta): Record<string, s
 // Syntax:
 //   {varName}                          → value or empty string
 //   {varName::exists["a"||"b"]}        → "a" if value is truthy, else "b"
-//   {varName::=X["a"||"b"]}            → "a" if value == X (string or number)
-//   {varName::!=X["a"||"b"]}           → "a" if value != X
-//   {varName::>=N["a"||"b"]}           → "a" if numeric value >= N
-//   {varName::<=N["a"||"b"]}           → "a" if numeric value <= N
-//   {varName::>N["a"||"b"]}            → "a" if numeric value > N
-//   {varName::<N["a"||"b"]}            → "a" if numeric value < N
-//   {varName::~X["a"||"b"]}            → "a" if value contains X (case-insensitive)
 //
 // "b" (false branch) is optional — defaults to ""
-// Branches can themselves contain nested {var} or {var::cond[...]} expressions
+// Branches can themselves contain {var} substitutions
 // Empty [] and () after resolution are removed automatically
 
 function resolveValue(raw: string | number | null | undefined): string {
   if (raw == null) return '';
   return String(raw);
-}
-
-function evalCondition(
-  value: string | number | null | undefined,
-  op: string,
-  operand: string
-): boolean {
-  const strVal = value == null ? '' : String(value);
-  const numVal = Number(value);
-  const numOp = Number(operand);
-
-  switch (op) {
-    case 'exists': return value != null && strVal !== '';
-    case '=':      return strVal === operand || (!isNaN(numVal) && !isNaN(numOp) && numVal === numOp);
-    case '!=':     return strVal !== operand;
-    case '>=':     return !isNaN(numVal) && !isNaN(numOp) && numVal >= numOp;
-    case '<=':     return !isNaN(numVal) && !isNaN(numOp) && numVal <= numOp;
-    case '>':      return !isNaN(numVal) && !isNaN(numOp) && numVal > numOp;
-    case '<':      return !isNaN(numVal) && !isNaN(numOp) && numVal < numOp;
-    case '~':      return strVal.toLowerCase().includes(operand.toLowerCase());
-    default:       return false;
-  }
 }
 
 // Parse the outermost {…} expression at position `start`, return [result, endIndex]
@@ -139,16 +110,15 @@ function parseExpr(
   }
   const inner = template.slice(start + 1, end);
 
-  // Try to parse as conditional: varName::op["true"||"false"] or varName::op["true"]
+  // Try to parse as conditional: varName::exists["true"||"false"] or varName::exists["true"]
   const colonIdx = inner.indexOf('::');
   if (colonIdx !== -1) {
     const varName = inner.slice(0, colonIdx);
     const rest = inner.slice(colonIdx + 2);
 
-    // rest = op["trueBranch"||"falseBranch"] or op["trueBranch"]
+    // rest = exists["trueBranch"||"falseBranch"] or exists["trueBranch"]
     const bracketIdx = rest.indexOf('["');
-    if (bracketIdx !== -1) {
-      const opStr = rest.slice(0, bracketIdx).trim();
+    if (bracketIdx !== -1 && rest.slice(0, bracketIdx).trim() === 'exists') {
       const branchesStr = rest.slice(bracketIdx + 2, -2); // strip [" and "]
 
       // split on "||"
@@ -156,14 +126,9 @@ function parseExpr(
       const trueBranch = sepIdx !== -1 ? branchesStr.slice(0, sepIdx) : branchesStr;
       const falseBranch = sepIdx !== -1 ? branchesStr.slice(sepIdx + 4) : '';
 
-      // parse op into operator + operand
-      const opMatch = opStr.match(/^(exists|[~]|[!=<>]{1,2})(.*)$/);
-      const op = opMatch?.[1] ?? opStr;
-      const operand = opMatch?.[2]?.trim() ?? '';
-
       const value = ctx[varName] ?? null;
-      const condResult = evalCondition(value, op, operand);
-      const branch = condResult ? trueBranch : falseBranch;
+      const exists = value != null && String(value) !== '';
+      const branch = exists ? trueBranch : falseBranch;
       // Use internal renderer (no trim) so intentional trailing spaces are preserved
       return [_renderRaw(branch, ctx), end];
     }
@@ -199,10 +164,10 @@ function _renderRaw(
  * detected stream metadata. Supports simple variable substitution and
  * conditional expressions.
  *
- * @param template - Template string with {varName} and {varName::op["a"||"b"]} tokens
+ * @param template - Template string with {varName} and {varName::exists["a"||"b"]} tokens
  * @param ctx - Context object mapping variable names to values
  */
-export function renderTemplate(
+function renderTemplate(
   template: string,
   ctx: Record<string, string | number | null>
 ): string {
@@ -216,7 +181,7 @@ export function renderTemplate(
 const QUALITY_STRIP_RE =
   /[\s\-_(]*(8K|UHD|4K|2160p|QHD|1440p|FHD|1080p|HD|720p|SD|480p|RAW)[\s\-_).)]*/gi;
 
-export function stripQualityLabel(name: string): string {
+function stripQualityLabel(name: string): string {
   return name.replace(QUALITY_STRIP_RE, ' ').replace(/\s{2,}/g, ' ').trim();
 }
 

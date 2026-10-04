@@ -16,15 +16,14 @@ import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
 import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
 import { computeDisplayName } from "../../src/quality.ts";
-import { connectionArbiter } from "../dvr/connection-arbiter.ts";
-import { dvrRecorder, RECORDINGS_DIR } from "../dvr/recorder.ts";
+import { dvrRecorder } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
+import { serveRecordingFile } from "../dvr/playback.ts";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
 import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
 import fs from "fs";
-import path from "path";
 
 const limit = pLimit(5);
 
@@ -96,39 +95,13 @@ export function createProxyRouter() {
         return res.status(404).send("Recording file not found");
       }
 
-      const stat = fs.statSync(recording.filePath);
-      const fileSize = stat.size;
-      const range = req.headers.range;
-
-      if (range) {
-        const parts = range.replace(/bytes=/, "").split("-");
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunksize = (end - start) + 1;
-        const file = fs.createReadStream(recording.filePath, { start, end });
-        file.on('data', (chunk: Buffer) => {
-          recordTraffic(playlist.id, (playlist as any).name || username, 'movie', chunk.length);
-        });
-
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunksize,
-          'Content-Type': 'video/mp2t',
-        });
-        return file.pipe(res);
-      } else {
-        res.writeHead(200, {
-          'Content-Length': fileSize,
-          'Content-Type': 'video/mp2t',
-          'Accept-Ranges': 'bytes',
-        });
-        const file = fs.createReadStream(recording.filePath);
-        file.on('data', (chunk: Buffer) => {
-          recordTraffic(playlist.id, (playlist as any).name || username, 'movie', chunk.length);
-        });
-        return file.pipe(res);
-      }
+      serveRecordingFile(req, res, {
+        filePath: recording.filePath,
+        isGrowing: recording.status === 'recording',
+        isStillGrowing: () => dvrRecorder.getRecordingById(recId)?.status === 'recording',
+        onBytes: (bytes) => recordTraffic(playlist.id, playlist.name || username, 'movie', bytes),
+      });
+      return;
     }
 
     const db = getDb();
@@ -1705,7 +1678,7 @@ export function createProxyRouter() {
         if (streamsCached?.data) {
           streams = streamsCached.data;
         } else if (m3uType === 'vod') {
-          streams = await cl.getMovies().catch(() => []);
+          streams = await cl.getVodStreams().catch(() => []);
         } else if (m3uType === 'series') {
           streams = await cl.getSeries().catch(() => []);
         } else {

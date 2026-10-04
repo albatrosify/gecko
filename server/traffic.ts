@@ -3,7 +3,7 @@ import { traffic_stats, settings } from './schema.ts';
 import { eq, sql } from 'drizzle-orm';
 import { log } from './logger.ts';
 
-export interface BufferedTraffic {
+interface BufferedTraffic {
   date: string;
   playlistId: string;
   playlistName: string;
@@ -11,27 +11,27 @@ export interface BufferedTraffic {
   bytes: number;
 }
 
-export interface TrafficTypeBreakdown {
+interface TrafficTypeBreakdown {
   live: number;
   movie: number;
   series: number;
   other: number;
 }
 
-export interface PlaylistTrafficSummary {
+interface PlaylistTrafficSummary {
   playlistId: string;
   playlistName: string;
   totalBytes: number;
   byType: TrafficTypeBreakdown;
 }
 
-export interface DailyTrafficPoint {
+interface DailyTrafficPoint {
   date: string;
   totalBytes: number;
   byType: TrafficTypeBreakdown;
 }
 
-export interface TrafficStatsResult {
+interface TrafficStatsResult {
   range: {
     startDate: string;
     endDate: string;
@@ -191,7 +191,7 @@ export function stopTrafficFlusher(): void {
 /**
  * Retrieve configured monthly traffic quota in bytes from settings.
  */
-export function getMonthlyTrafficQuotaBytes(): number {
+function getMonthlyTrafficQuotaBytes(): number {
   try {
     const db = getDb();
     const doc = db.select().from(settings).where(eq(settings.id, 'global')).get();

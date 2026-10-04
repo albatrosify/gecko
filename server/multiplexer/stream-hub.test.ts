@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { streamHub } from './stream-hub.ts';
 import { proxyStats, streamControllers, killStream } from '../proxy-stats.ts';
 import { EventEmitter } from 'events';
@@ -9,13 +9,28 @@ vi.mock('../logger.ts', () => ({
 
 describe('StreamHub', () => {
   beforeEach(() => {
+    // Chunks are no longer forwarded the instant they arrive: the jitter buffer
+    // holds content back and releases it on its pump interval. Fake timers let
+    // tests drive that interval deterministically.
+    vi.useFakeTimers();
+    // The jitter buffer's pacing turns unit tests into timing puzzles; disable it so
+    // chunk delivery stays deterministic and the pump is driven explicitly.
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '0';
     streamHub.reset();
     proxyStats.connections.clear();
     streamControllers.clear();
     proxyStats.activeStreams = 0;
   });
 
-  it('registers a channel and broadcasts chunks to multiple subscribers', () => {
+  afterEach(() => {
+    delete process.env.GECKO_LIVE_BUFFER_SECONDS;
+    vi.useRealTimers();
+  });
+
+  /** Advance past the jitter buffer's lead time so queued chunks become due. */
+  const pumpOnce = () => vi.advanceTimersByTime(9_000);
+
+  it('registers a channel and broadcasts chunks to multiple subscribers', async () => {
     const fakeDataStream = new EventEmitter();
     (fakeDataStream as any).destroy = vi.fn();
     const fakeUpstreamResponse = { data: fakeDataStream };
@@ -63,6 +78,7 @@ describe('StreamHub', () => {
     // Emit chunk from upstream
     const testChunk = Buffer.from('hello-mpegts-chunk');
     fakeDataStream.emit('data', testChunk);
+    pumpOnce();
 
     expect(sub1Res.write).toHaveBeenCalledWith(testChunk);
     expect(sub2Res.write).toHaveBeenCalledWith(testChunk);
@@ -158,6 +174,7 @@ describe('StreamHub', () => {
     // Emit chunk -> both subscriber and DVR chunk callback should receive it
     const testChunk = Buffer.from('chunk-for-both');
     fakeDataStream.emit('data', testChunk);
+    pumpOnce();
     expect(sub1Res.write).toHaveBeenCalledWith(testChunk);
     expect(chunkCb).toHaveBeenCalledWith(channel.channelKey, testChunk);
 
@@ -248,6 +265,7 @@ describe('StreamHub', () => {
 
     // First chunk marks subscriber as stalled
     fakeDataStream.emit('data', Buffer.from('chunk-1'));
+    pumpOnce();
     const sub = channel.subscribers.get('sub-stalled');
     expect(sub?.stalledSince).toBeDefined();
     expect(channel.subscribers.has('sub-stalled')).toBe(true);
@@ -259,6 +277,7 @@ describe('StreamHub', () => {
 
     // Next chunk triggers eviction
     fakeDataStream.emit('data', Buffer.from('chunk-2'));
+    pumpOnce();
     expect(channel.subscribers.has('sub-stalled')).toBe(false);
     expect(subRes.destroy).toHaveBeenCalled();
   });
@@ -349,6 +368,7 @@ describe('StreamHub', () => {
 
     // Chunk from stream 1
     fakeDataStream1.emit('data', Buffer.from('chunk1'));
+    pumpOnce();
     expect(subRes.write).toHaveBeenCalledWith(Buffer.from('chunk1'));
 
     // Trigger reconnect
@@ -364,6 +384,7 @@ describe('StreamHub', () => {
 
     // New chunk from stream 2 reaches the same subscriber!
     fakeDataStream2.emit('data', Buffer.from('chunk2'));
+    pumpOnce();
     expect(subRes.write).toHaveBeenCalledWith(Buffer.from('chunk2'));
   });
 });

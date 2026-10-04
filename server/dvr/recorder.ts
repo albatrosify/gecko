@@ -6,6 +6,7 @@ import { log } from '../logger.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import { connectionArbiter } from './connection-arbiter.ts';
 import { sendTelegramNotification } from '../telegram.ts';
+import { formatBytes } from '../utils.ts';
 import { eq, desc } from 'drizzle-orm';
 import { Recording } from '../../src/types.ts';
 
@@ -14,13 +15,6 @@ export const RECORDINGS_DIR = process.env.DVR_STORAGE_PATH || path.join(process.
 // Ensure recordings storage directory exists
 if (!fs.existsSync(RECORDINGS_DIR)) {
   fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 export function formatDuration(seconds: number): string {
@@ -203,30 +197,10 @@ class DvrRecorder {
   }
 
   /**
-   * Stores the upstream response object so it can be kept alive during handover or closed on stop.
-   */
-  setUpstreamResponse(connId: string, response: any): void {
-    const recordingId = this.connToRecording.get(connId);
-    if (!recordingId) return;
-
-    const session = this.sessions.get(recordingId);
-    if (session) {
-      session.upstreamResponse = response;
-    }
-  }
-
-  /**
    * Checks if a proxy connection is currently being recorded.
    */
   isRecordingConnection(connId: string): boolean {
     return this.connToRecording.has(connId);
-  }
-
-  /**
-   * Gets recording ID for a connection.
-   */
-  getRecordingIdForConnection(connId: string): string | undefined {
-    return this.connToRecording.get(connId);
   }
 
   /**
@@ -500,6 +474,41 @@ class DvrRecorder {
         extra: row.extra as any,
       };
     });
+  }
+
+  /**
+   * Recording sessions only exist in memory, so a restart leaves rows marked
+   * `recording` whose recorder is gone. Left alone they show as "recording" in the
+   * UI forever, keep the upstream connection alive with zero viewers, and keep a
+   * client playback request open indefinitely. Finalise them once at startup.
+   */
+  reconcileOrphanedRecordings(): number {
+    const db = getDb();
+    const orphans = db.select().from(recordings).where(eq(recordings.status, 'recording')).all();
+
+    for (const row of orphans) {
+      let fileSizeBytes = row.fileSizeBytes ?? 0;
+      if (row.filePath && fs.existsSync(row.filePath)) {
+        fileSizeBytes = fs.statSync(row.filePath).size;
+      }
+      const endTimeIso = new Date().toISOString();
+      const durationSeconds = Math.max(1, Math.round((Date.now() - new Date(row.startTime).getTime()) / 1000));
+
+      db.update(recordings)
+        .set({
+          status: 'completed',
+          endTime: endTimeIso,
+          durationSeconds,
+          fileSizeBytes,
+          extra: { ...(row.extra as Record<string, unknown> | null), completedAt: endTimeIso, reconciledAtStartup: true },
+        })
+        .where(eq(recordings.id, row.id))
+        .run();
+
+      log(`[DVR] Reconciled orphaned recording ${row.id} (${row.streamName}) — marked completed at ${formatBytes(fileSizeBytes)}`);
+    }
+
+    return orphans.length;
   }
 
   /**

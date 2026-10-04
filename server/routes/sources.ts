@@ -7,7 +7,7 @@ import { getCached, setCache } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { parseXtreamExpDate, isValidHttpUrl } from "../utils.ts";
 import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
-import { normalizeHosts, benchmarkSourceHosts, getHostBenchmarkHistory } from "../hosts.ts";
+import { normalizeHosts, benchmarkSourceHosts } from "../hosts.ts";
 import { isConcurrencyGuardEnabled } from "../multiplexer/stream-guard.ts";
 
 export function createSourcesRouter() {
@@ -344,22 +344,6 @@ export function createSourcesRouter() {
     }
   });
 
-  router.get("/sources/:id/host-benchmarks", requireAuth, async (req: AuthRequest, res) => {
-    const db = getDb();
-    const { sources: schemaSources } = await import('../schema.ts');
-    const { eq, and } = await import('drizzle-orm');
-
-    const source = db.select().from(schemaSources)
-      .where(and(eq(schemaSources.id, req.params.id), eq(schemaSources.userId, req.user!.id)))
-      .get();
-    if (!source) {
-      return res.status(404).json({ error: "Source not found" });
-    }
-
-    const limit = parseInt(req.query.limit as string || '50', 10);
-    res.json(getHostBenchmarkHistory(req.params.id, isNaN(limit) ? 50 : limit));
-  });
-
   router.delete("/sources/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
     const { sources: schemaSources } = await import('../schema.ts');
@@ -496,7 +480,7 @@ export function createSourcesRouter() {
         let streams;
         log(`  Requesting streams [${type}] from Xtream API...`);
         if (type === 'live') streams = await client.getLiveStreams();
-        else if (type === 'vod') streams = await client.getMovies();
+        else if (type === 'vod') streams = await client.getVodStreams();
         else if (type === 'series') streams = await client.getSeries();
 
         log(`  Successfully fetched ${streams?.length || 0} streams`);

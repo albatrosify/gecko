@@ -110,7 +110,7 @@ function detectCdnFromHeaders(headers: Record<string, any> | undefined | null): 
   return null;
 }
 
-export function guessNetworkType(rawUrl: string): { networkType: 'cdn' | 'direct'; cdnProvider: string | null } {
+function guessNetworkType(rawUrl: string): { networkType: 'cdn' | 'direct'; cdnProvider: string | null } {
   let hostname = "";
   try {
     const u = new URL(rawUrl.startsWith("http") ? rawUrl : `http://${rawUrl}`);
@@ -136,7 +136,7 @@ export function guessNetworkType(rawUrl: string): { networkType: 'cdn' | 'direct
   return { networkType: 'direct', cdnProvider: null };
 }
 
-export async function detectHostNetwork(
+async function detectHostNetwork(
   rawUrl: string,
   headers?: Record<string, any> | null
 ): Promise<{ networkType: 'cdn' | 'direct'; cdnProvider: string | null; resolvedIp: string | null }> {
@@ -392,7 +392,7 @@ export function recordHostUse(sourceId: string, hostUrl: string, ok: boolean, er
 /**
  * Persist buffered host usage counters back into each source's extra.hosts.
  */
-export function flushHostStats(): void {
+function flushHostStats(): void {
   if (hostStatsBuffer.size === 0) return;
   const entries = Array.from(hostStatsBuffer.values());
   hostStatsBuffer.clear();
@@ -437,13 +437,6 @@ export function initHostStatsFlusher(): void {
   if (hostStatsTimer) clearInterval(hostStatsTimer);
   hostStatsTimer = setInterval(flushHostStats, 60_000);
   hostStatsTimer.unref?.();
-}
-
-export function stopHostStatsFlusher(): void {
-  if (hostStatsTimer) {
-    clearInterval(hostStatsTimer);
-    hostStatsTimer = null;
-  }
 }
 
 /**
@@ -705,22 +698,4 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
   };
 }
 
-/**
- * Retrieve benchmark history for a source.
- */
-export function getHostBenchmarkHistory(sourceId: string, limit: number = 50): any[] {
-  const db = getDb();
-  const rows = db.select()
-    .from(source_host_logs)
-    .where(eq(source_host_logs.sourceId, sourceId))
-    .all();
 
-  rows.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  return rows.slice(0, limit).map(r => ({
-    id: r.id,
-    sourceId: r.sourceId,
-    timestamp: r.timestamp,
-    results: r.results || [],
-  }));
-}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import api, { isLoggedIn, clearToken } from './api';
 import { User as AppUser } from './types';
-import { Layout, Dashboard, DvrManager, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
+import { Dashboard, DvrManager, PlaylistManager, UserManager, Settings, PlaylistEditor, SourceManager, EPGManager, ErrorBoundary } from './components';
 import { TrafficView } from './components/TrafficView';
 import { LogIn, LogOut, LayoutGrid, Library, Users, Settings as SettingsIcon, Database, Tv, UserPlus, Activity, Radio, BarChart3 } from 'lucide-react';
 import Logo from './assets/logo.png';

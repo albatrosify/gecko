@@ -51,10 +51,5 @@ export function createRateLimiter(options: {
     next();
   };
 
-  (middleware as any).destroy = () => {
-    clearInterval(cleanupTimer);
-    store.clear();
-  };
-
   return middleware;
 }

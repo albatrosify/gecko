@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
+import { formatBytes } from '../format.ts';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost, Recording } from '../types';
 import { SystemLogViewer } from './SystemLogViewer';
 import mpegts from 'mpegts.js';
@@ -11,18 +12,18 @@ import mpegts from 'mpegts.js';
  * This avoids mixed-content errors when the UI is served over HTTPS while the
  * upstream icon is plain `http://`.
  */
-export const proxyImg = (url?: string | null): string => {
+const proxyImg = (url?: string | null): string => {
   if (!url) return '';
   if (url.startsWith('/img') || url.startsWith('data:') || url.startsWith('blob:')) return url;
   if (/^https?:\/\//i.test(url)) return `/img?url=${encodeURIComponent(url)}`;
   return url;
 };
 
-export const copyToClipboard = async (text: string) => {
+export const copyToClipboard = async (text: string): Promise<boolean> => {
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
-      return;
+      return true;
     } catch (err) {
       console.warn('Clipboard API failed, falling back to execCommand', err);
     }
@@ -38,10 +39,13 @@ export const copyToClipboard = async (text: string) => {
   textArea.select();
   try {
     document.execCommand('copy');
+    return true;
   } catch (err) {
     console.error('Fallback execCommand failed', err);
+    return false;
+  } finally {
+    textArea.remove();
   }
-  textArea.remove();
 };
 
 import { 
@@ -56,7 +60,6 @@ import {
   X, 
   Database, 
   ArrowLeft,
-  Save,
   ExternalLink,
   RefreshCw,
   Search,
@@ -81,17 +84,11 @@ import {
   Calendar,
   AlertTriangle,
   Radio,
-  ShieldAlert,
-  ShieldCheck,
   Gauge,
   Server,
-  ArrowUp,
-  ArrowDown,
   Cloud,
-  Globe,
   Network,
   Send,
-  Bell,
   Sparkles,
   BarChart3,
   HardDrive,
@@ -99,7 +96,7 @@ import {
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
@@ -140,76 +137,11 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-function ProxyBandwidthCard() {
-  const [stats, setStats] = useState<any>(null);
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const data = await api.proxy.stats();
-        setStats(data);
-      } catch (err) {
-        // Silently ignore or handle auth error
-      }
-    };
-    fetchStats();
-    const interval = setInterval(fetchStats, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (!stats) return (
-    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-4 flex items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-950">
-      <div className="text-zinc-500 animate-pulse font-bold tracking-widest text-[10px] uppercase italic">Init Bandwidth Monitor...</div>
-    </div>
-  );
-
-  const mbps = (stats.currentBps / 1000000).toFixed(2);
-  const totalGB = (stats.totalBytes / (1024 * 1024 * 1024)).toFixed(2);
-
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-wrap gap-6 items-center bg-gradient-to-br from-zinc-900 to-zinc-950">
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_-5px] shadow-emerald-500/30">
-          <Activity size={18} />
-        </div>
-        <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Proxy Speed</div>
-          <div className="text-lg font-bold text-zinc-100 tabular-nums">{mbps} <span className="text-[9px] font-medium text-emerald-500 uppercase tracking-widest">Mbps</span></div>
-        </div>
-      </div>
-
-      <div className="h-8 w-px bg-zinc-800 hidden sm:block"></div>
-
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-blue-500/10 rounded-xl text-blue-500 border border-blue-500/20 shadow-[0_0_15px_-5px] shadow-blue-500/30">
-          <Wifi size={18} />
-        </div>
-        <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Active Streams</div>
-          <div className="text-lg font-bold text-zinc-100 tabular-nums">{stats.activeStreams}</div>
-        </div>
-      </div>
-
-      <div className="h-8 w-px bg-zinc-800 hidden lg:block"></div>
-
-      <div className="flex items-center gap-3">
-        <div className="p-2 bg-purple-500/10 rounded-xl text-purple-500 border border-purple-500/20 shadow-[0_0_15px_-5px] shadow-purple-500/30">
-          <Database size={18} />
-        </div>
-        <div>
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Data Proxied</div>
-          <div className="text-lg font-bold text-zinc-100 tabular-nums">{totalGB} <span className="text-[9px] font-medium text-purple-500 uppercase tracking-widest">GB</span></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SimpleSparkline({ data, width = 600, height = 140 }: { data: number[], width?: number, height?: number }) {
+function SimpleSparkline({ data }: { data: number[] }) {
   if (data.length < 2) return null;
   const max = Math.max(...data, 1);
-  const w = width || 600;
-  const h = height || 140;
+  const w = 600;
+  const h = 140;
   const points = data.map((d, i) => {
     const x = (i / (data.length - 1)) * w;
     const y = h - (d / max) * (h - 12) - 6;
@@ -233,14 +165,7 @@ function SimpleSparkline({ data, width = 600, height = 140 }: { data: number[], 
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function formatDuration(startTime: number): string {
+function formatElapsedSince(startTime: number): string {
   const s = Math.floor((Date.now() - startTime) / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -675,7 +600,7 @@ export function Dashboard() {
                     <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-500">
                       <div className="flex items-center gap-1">
                         <span className="text-zinc-600">⏱</span>
-                        <span className="font-mono text-zinc-400">{formatDuration(conn.startTime)}</span>
+                        <span className="font-mono text-zinc-400">{formatElapsedSince(conn.startTime)}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <span className="text-zinc-600">↓</span>
@@ -824,8 +749,6 @@ export function PlaylistManager({ user }: { user: User }) {
           New Playlist
         </button>
       </header>
-
-      {/* Stats removed as requested, now on Dashboard */}
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -1327,7 +1250,7 @@ export function PlaylistManager({ user }: { user: User }) {
   );
 }
 
-export function formatExpiryDate(expiryDate: string | null | undefined): {
+function formatExpiryDate(expiryDate: string | null | undefined): {
   text: string;
   status: 'unlimited' | 'expired' | 'expiring_soon' | 'active' | 'unknown';
   relativeText?: string;
@@ -7823,7 +7746,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
     return () => { mounted = false; };
   }, [playlistId, seriesId]);
 
-  const formatDuration = (secs?: number) => {
+  const formatDurationSecs = (secs?: number) => {
     if (!secs) return null;
     const h = Math.floor(secs / 3600);
     const m = Math.floor((secs % 3600) / 60);
@@ -7908,7 +7831,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                   <div className="space-y-2">
                     <h3 className="text-lg font-bold text-zinc-300 mb-4">Season {selectedSeason} Episodes</h3>
                     {episodes[selectedSeason].map(ep => {
-                      const dur = formatDuration(ep.info?.duration_secs);
+                      const dur = formatDurationSecs(ep.info?.duration_secs);
                       return (
                         <div key={ep.id} className="flex items-center gap-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors group">
 
@@ -9204,7 +9127,7 @@ export function DvrManager({ user }: { user: User }) {
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800 text-xs text-zinc-400">
                   <div>
                     <span className="block text-[9px] text-zinc-500 uppercase font-bold">Laufzeit</span>
-                    <span className="font-mono text-xs text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
+                    <span className="font-mono text-xs text-zinc-200">{formatElapsedSince(rec.durationSeconds)}</span>
                   </div>
                   <div>
                     <span className="block text-[9px] text-zinc-500 uppercase font-bold">Größe</span>
@@ -9266,7 +9189,7 @@ export function DvrManager({ user }: { user: User }) {
                       {new Date(rec.startTime).toLocaleDateString()} {new Date(rec.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
-                      {formatDuration(rec.durationSeconds)}
+                      {formatElapsedSince(rec.durationSeconds)}
                     </td>
                     <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
                       {formatBytes(rec.fileSizeBytes)}
@@ -9460,5 +9383,5 @@ function DvrPlaybackModal({
   );
 }
 
-export function Layout({ children }: { children: React.ReactNode }) { return <>{children}</>; }
+
 

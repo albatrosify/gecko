@@ -30,7 +30,7 @@ Self-hosted IPTV-Playlist-Aggregator. User verbinden Xtream-Codes-/M3U-Upstream-
 ## Konventionen
 
 - **IDs**: `crypto.randomUUID()` über `server/db.ts` `generateId()`. Text-Primärschlüssel, keine Auto-Increment-Ints.
-- **`extra`-Spalte**: Viele Tabellen nutzen eine JSON-`extra`-Spalte für optionale Felder. `docWithId()`/`docsWithId()` in `db.ts` mergen `extra` flach in das Objekt.
+- **`extra`-Spalte**: Viele Tabellen nutzen eine JSON-`extra`-Spalte für optionale Felder.
 - **Backend-Module** liegen in `server/`; HTTP-Routen in `server/routes/*.ts`, jede als `createXxxRouter()`.
 - **Frontend-Komponenten**: primär in `src/components/index.tsx` (monolithisch, ~420 KB). Neue große Komponenten eher in eigene Dateien unter `src/components/` auslagern.
 - **Naming**: Funktionen/Handler camelCase, Router-Fabriken `createXxxRouter()`, Singletons `xxx` (z.B. `dvrRecorder`, `streamHub`, `connectionArbiter`).
@@ -49,4 +49,4 @@ Voraussetzung: `.env` (Kopie von `.env.example`) mit `SQLITE_PATH`, `JWT_SECRET`
 
 ## Datenbank-Migration
 
-Kein Migrations-Framework im Betrieb. `server/db.ts` führt bei `connectDb()` ein `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` aus. Neue Tabellen/Spalten: Schema in `server/schema.ts` (Drizzle) UND das SQL in `db.ts` ergänzen. Drizzle-Konfig: `drizzle.config.ts`.
+Kein Migrations-Framework im Betrieb. `server/db.ts` führt bei `connectDb()` ein `CREATE TABLE IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` aus. Neue Tabellen/Spalten: Schema in `server/schema.ts` (Drizzle) UND das SQL in `db.ts` ergänzen.

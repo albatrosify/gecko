@@ -88,10 +88,6 @@ export class XtreamClient {
     return this.request('get_vod_streams', {}, 90000);
   }
 
-  async getMovies() {
-    return this.getVodStreams();
-  }
-
   async getSeriesCategories() {
     return this.request('get_series_categories', {}, 30000);
   }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { dvrRecorder, formatBytes, formatDuration } from './recorder.ts';
+import { dvrRecorder, formatDuration } from './recorder.ts';
+import { formatBytes } from '../utils.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import { connectionArbiter } from './connection-arbiter.ts';
 

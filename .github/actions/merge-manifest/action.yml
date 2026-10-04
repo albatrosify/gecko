@@ -1,0 +1,61 @@
+name: Merge digest artifacts into a manifest
+description: >
+  Download the per-platform digests, log in to GHCR, publish the multi-arch
+  manifest list with the supplied tags and inspect the result. Shared by the dev
+  and release pipelines.
+
+inputs:
+  registry_image:
+    description: Fully qualified image name without tag
+    required: true
+  tags:
+    description: Multiline tag list passed to docker/metadata-action
+    required: true
+  inspect_tag:
+    description: Tag to inspect; when empty, docker/metadata-action's computed version is used
+    required: false
+    default: ""
+  github_token:
+    description: Token used to log in to GHCR
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download digests
+      uses: actions/download-artifact@v4
+      with:
+        path: /tmp/digests
+        pattern: digests-*
+        merge-multiple: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github_token }}
+
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v6
+      with:
+        images: ${{ inputs.registry_image }}
+        tags: ${{ inputs.tags }}
+
+    - name: Create manifest list and push
+      shell: bash
+      run: |
+        cd /tmp/digests
+        docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          $(printf '${{ inputs.registry_image }}@sha256:%s ' *)
+
+    - name: Inspect image
+      shell: bash
+      run: |
+        TAG="${{ inputs.inspect_tag }}"
+        if [[ -z "$TAG" ]]; then TAG="${{ steps.meta.outputs.version }}"; fi
+        docker buildx imagetools inspect ${{ inputs.registry_image }}:$TAG
