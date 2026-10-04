@@ -274,7 +274,7 @@ export function BandwidthChart({
                   stroke="rgb(39 39 42)"
                   strokeWidth="1"
                 />
-                <text x={geometry.plotLeft - 8} y={tick.y + 3} textAnchor="end" fontSize="10" fill="currentColor">
+                <text x={geometry.plotLeft - 8} y={tick.y + 3} textAnchor="end" fontSize="9" fill="currentColor" className="font-mono">
                   {formatMbps(tick.value)}
                 </text>
               </g>
@@ -286,8 +286,9 @@ export function BandwidthChart({
                 x={tick.x}
                 y={CHART_HEIGHT - 6}
                 textAnchor={index === 0 ? 'start' : index === geometry.xTicks.length - 1 ? 'end' : 'middle'}
-                fontSize="10"
+                fontSize="9"
                 fill="currentColor"
+                className="font-mono"
               >
                 {tick.label}
               </text>
@@ -310,17 +311,17 @@ export function BandwidthChart({
                   x2={geometry.plotLeft + geometry.plotWidth}
                   y1={geometry.averageY}
                   y2={geometry.averageY}
-                  stroke="rgb(161 161 170)"
+                  stroke="#3f3f46"
                   strokeWidth="1"
                   strokeDasharray="4 4"
-                  opacity="0.7"
                 />
                 <text
                   x={geometry.plotLeft + geometry.plotWidth - 2}
                   y={geometry.averageY - 4}
                   textAnchor="end"
-                  fontSize="10"
-                  fill="rgb(161 161 170)"
+                  fontSize="9"
+                  fill="#71717a"
+                  className="font-mono font-bold"
                 >
                   avg {formatMbps(geometry.averageMbps)}
                 </text>
