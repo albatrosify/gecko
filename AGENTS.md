@@ -43,9 +43,9 @@ npm run test     # vitest run
 - `hosts.ts` — Host-Erkennung, Failover, Benchmarking, Per-Host-Nutzungs-Statistiken.
 - `sync.ts` — `refreshSource()`, Changelogs, Cron-Manager (`activeCrons`, `initCronManager`).
 - `connection-monitor.ts` — Überwacht Upstream-Verbindungen, protokolliert in `source_connection_logs`.
-- `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz.
+- `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz; **Live-Jitter-Buffer** (ratebasiertes Leaky-Bucket-Pacing, Reserve, Starvation-Logging). Tiefe über `GECKO_LIVE_BUFFER_SECONDS` (Sekunden, `0` = aus/passthrough, Default 3) — Reserve == zusätzliche Latenz.
 - `multiplexer/stream-guard.ts` — Einheitlicher Concurrency Guard über Live- und VOD-Streams hinweg (`evaluateStreamRequest`, Platzhalter bei Überlastung).
-- `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen); `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams.
+- `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen); `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams; `playback.ts` — `serveRecordingFile()`: fertige Aufnahmen wie statische Dateien (seekbar), laufende im Follow-Mode ohne `Content-Length` mit 30 s Stall-Cutoff.
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
