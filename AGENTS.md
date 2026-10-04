@@ -49,7 +49,7 @@ npm run test     # vitest run
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
-- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (60 Datenpunkte, 2 s-Interval), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
+- `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (300 Datenpunkte, 2 s-Interval = 10 min für die Dashboard-Fenster 1m/5m/10m), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
 - `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 
@@ -58,7 +58,7 @@ npm run test     # vitest run
 - `api.ts` — Typed-Fetch-Wrapper (JWT in `localStorage`, 401 → Reload); Gruppen `auth`, `sources`, `epgs`, `playlists`, `mappings`, `categoryMappings`, `customCategories`, `customCategoryItems`, `upstream`, `proxy`, `admin`, `system`, `settings`, `llm`, `qualityScan`, `dvr`, `traffic`.
 - `types.ts` — Shared Types (Frontend + Backend).
 - `components/index.tsx` — monolithisch (~420 KB): `Dashboard`, `PlaylistManager`, `SourceManager`, `EPGManager`, `Settings`, `PlaylistEditor`, `UserManager`, `DvrManager`.
-- `components/TrafficView.tsx`, `components/SystemLogViewer.tsx`, `components/WebPlayer.tsx` — eigene Dateien.
+- `components/TrafficView.tsx`, `components/SystemLogViewer.tsx`, `components/WebPlayer.tsx`, `components/BandwidthChart.tsx` — eigene Dateien. `BandwidthChart` zeichnet das Dashboard-Diagramm (SVG, kein Chart-Paket): Flächen-Gradient, Gitterlinien, `Avg`/`Peak`, Hover-Tooltip, Fenster 1m/5m/10m; Geometrie als reine Funktionen (`buildBandwidthGeometry`, `selectWindow`, `indexFromPointerX`) mit Tests.
 - `playerUtils.ts`, `quality.ts`, `format.ts` — Frontend-Helfer.
 
 **Routen** in `App.tsx`: `/` (Dashboard), `/traffic` (Traffic & Daten), `/dvr`, `/playlists`, `/sources`, `/epgs`, `/settings`, `/playlist/:id` (Editor), `/users` (nur admin).

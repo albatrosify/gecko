@@ -4,6 +4,7 @@ import api from '../api';
 import { formatBytes } from '../format.ts';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost, Recording } from '../types';
 import { SystemLogViewer } from './SystemLogViewer';
+import { BandwidthChart } from './BandwidthChart';
 import mpegts from 'mpegts.js';
 
 /**
@@ -135,34 +136,6 @@ Respond with ONLY a JSON object in this exact format and nothing else:
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-function SimpleSparkline({ data }: { data: number[] }) {
-  if (data.length < 2) return null;
-  const max = Math.max(...data, 1);
-  const w = 600;
-  const h = 140;
-  const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - (d / max) * (h - 12) - 6;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-
-  return (
-    <div className="w-full h-full min-h-[120px] max-h-[170px] overflow-hidden">
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full overflow-hidden">
-        <polyline
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          vectorEffect="non-scaling-stroke"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={points}
-        />
-      </svg>
-    </div>
-  );
 }
 
 function formatElapsedSince(startTime: number): string {
@@ -410,7 +383,6 @@ export function Dashboard() {
   if (!stats) return <div className="p-8"><div className="animate-pulse text-zinc-500">Loading Dashboard...</div></div>;
 
   const mbps = (stats.currentBps / 1000000).toFixed(2);
-  const historyMbps = (stats.history || []).map((h: any) => h.bps / 1000000);
 
   return (
     <div className="p-6 space-y-5 max-w-7xl mx-auto">
@@ -475,16 +447,14 @@ export function Dashboard() {
           <div className="flex justify-between items-center mb-4">
             <div>
               <h3 className="text-base font-bold text-zinc-100">Bandwidth Usage</h3>
-              <p className="text-xs text-zinc-500">Real-time throughput (last 2 minutes)</p>
+              <p className="text-xs text-zinc-500">Real-time throughput · 2s samples</p>
             </div>
             <div className="text-right">
               <div className="text-xl font-bold text-emerald-500 tabular-nums">{mbps} Mbps</div>
               <div className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Current</div>
             </div>
           </div>
-          <div className="flex-1 min-h-[140px] w-full flex items-end text-emerald-500/50 overflow-hidden">
-            <SimpleSparkline data={historyMbps} />
-          </div>
+          <BandwidthChart history={stats.history || []} currentBps={stats.currentBps || 0} />
         </div>
 
         <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">

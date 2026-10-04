@@ -119,6 +119,9 @@ export function getActiveVodConnectionsForSource(sourceId: string): Array<{
 let statsInterval: NodeJS.Timeout | null = null;
 let sweepTick = 0;
 
+/** Dashboard history depth: 300 samples at the 2s interval = 10 minutes. */
+const HISTORY_POINTS = 300;
+
 // Update bits per second regularly and keep a history
 export function initProxyStatsInterval() {
   if (statsInterval) clearInterval(statsInterval);
@@ -137,9 +140,10 @@ export function initProxyStatsInterval() {
         conn.intervalBytes = 0;
       }
 
-      // Keep 60 points of history (2 minutes at 2s intervals)
+      // Keep 10 minutes of history (300 points at 2s intervals) so the dashboard can
+      // offer 1m/5m/10m windows instead of a single 2-minute slice.
       proxyStats.history.push({ time: now, bps: proxyStats.currentBps });
-      if (proxyStats.history.length > 60) proxyStats.history.shift();
+      if (proxyStats.history.length > HISTORY_POINTS) proxyStats.history.shift();
 
       // Periodic zombie socket sweeper (runs every 10s / 5 ticks)
       sweepTick = (sweepTick + 1) % 5;
