@@ -368,7 +368,10 @@ export function SystemLogViewer() {
       className={`flex flex-col bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl transition-all duration-200 ${
         isMaximized
           ? 'fixed inset-4 z-50 p-5'
-          : 'relative p-4 sm:p-5 h-[calc(100vh-140px)] min-h-[580px] lg:h-full'
+          // A viewport-based height, not `lg:h-full`: the grid row uses `items-start`
+          // and the wrapper has no definite height, so a percentage height resolves to
+          // auto and the panel grows to fit every log line instead of scrolling.
+          : 'relative p-4 sm:p-5 h-[calc(100vh-140px)] min-h-[580px]'
       }`}
     >
       {/* Top Header Controls */}
