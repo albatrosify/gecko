@@ -29,14 +29,15 @@ const LIVE_BUFFER_RATE_WARMUP_S = 3;
 /**
  * Largest inter-data gap still counted as content time. Above this the provider was
  * not delivering content, and counting it would depress the pace below real time.
+ * Real upstreams (like Tivione) regularly pause for 9.8-10.5 s between bursts.
  */
-const LIVE_BUFFER_RATE_MAX_GAP_S = 8;
+const LIVE_BUFFER_RATE_MAX_GAP_S = 12;
 /**
- * Release rate used while the reserve is still filling. Slightly below the stream
- * rate, so the reserve builds instead of being immediately spent — but a token
- * bucket still paces it, so output stays smooth rather than gulp-synced.
+ * Release rate factor used when the reserve drops dangerously low.
+ * Kept close to 1.0 so the downstream player's internal buffer (ExoPlayer/TiviMate)
+ * is not drained. The provider's natural 20-50 Mbps bursts naturally build the reserve.
  */
-const LIVE_BUFFER_FILL_FACTOR = 0.8;
+const LIVE_BUFFER_FILL_FACTOR = 0.96;
 /**
  * Content kept queued at all times — the only latency the jitter buffer adds, and
  * what covers a provider outage. Output runs at the stream's own rate, so the reserve
@@ -52,7 +53,13 @@ const LIVE_BUFFER_DEFAULT_RESERVE_S = 3;
  * huge burst — keep it far below the provider's gap length, or tokens bank through
  * every ordinary gap and get dumped as a sawtooth when the next gulp lands.
  */
-const LIVE_BUFFER_BURST_SECONDS = 0.3;
+const LIVE_BUFFER_BURST_SECONDS = 0.6;
+/** Initial token burst granted on startup so playback starts instantly (<300ms) without draining the buffer. */
+const LIVE_BUFFER_INITIAL_BURST_BYTES = 1_200_000;
+/** Nominal bitrate estimate (800 KB/s = 6.4 Mbps HD) used during the first 3s warmup before measuredRate is ready. */
+const LIVE_BUFFER_FALLBACK_RATE_BPS = 800_000;
+/** Hard upper bound on nominal stream bitrate (2.5 MB/s = 20 Mbps). Accommodates FHD 50fps sports spikes and 4K streams. */
+const LIVE_BUFFER_MAX_STREAM_RATE_BPS = 2_500_000;
 /**
  * Shortest dry-buffer spell worth logging. The reserve drains to empty at the end of
  * every normal provider cycle by design, so only genuine interruptions are reported.
@@ -60,8 +67,10 @@ const LIVE_BUFFER_BURST_SECONDS = 0.3;
 const LIVE_BUFFER_STARVE_LOG_MS = 1_500;
 /** Hard ceiling on jitter-buffer memory per channel. */
 const LIVE_BUFFER_MAX_BYTES = 64_000_000;
-/** If the upstream goes quiet for longer than this, release the buffer anyway. */
-const LIVE_BUFFER_DRAIN_AFTER_MS = (LIVE_BUFFER_DEFAULT_RESERVE_S * 2 + 5) * 1000;
+/** If the upstream goes quiet for longer than this, release the buffer anyway. Scales with reserve. */
+function liveBufferDrainAfterMs(): number {
+  return (liveBufferReserveSeconds() * 2 + 15) * 1000;
+}
 
 /** Configured reserve depth in seconds; 0 means pacing is off. */
 function liveBufferReserveSeconds(): number {
@@ -125,6 +134,12 @@ interface ActiveStreamChannel {
   /** Leaky-bucket allowance that paces downstream delivery. */
   pacingTokens: number;
   lastPumpAt: number;
+  /** Timestamp when the current upstream connection was established (or reconnected). */
+  lastConnectAt?: number;
+  /** True while the initial TCP connect-burst is still active; chunks build the buffer but don't inflate rateBuckets. */
+  inInitialBurst?: boolean;
+  /** Cumulative bytes received during the initial connect-burst window. */
+  burstBytes?: number;
   /** Interval that releases buffered chunks to subscribers. */
   pumpTimer?: NodeJS.Timeout;
   /** Set while the buffer is empty with subscribers attached — i.e. a real stall. */
@@ -213,12 +228,15 @@ class StreamHub {
       bytesRead: 0,
       startTime: Date.now(),
       lastChunkAt: Date.now(),
+      lastConnectAt: Date.now(),
+      inInitialBurst: true,
+      burstBytes: 0,
       upstreamConfig,
       headersSent,
       buffer: [],
       bufferedBytes: 0,
       rateBuckets: new Map(),
-      pacingTokens: 0,
+      pacingTokens: isLivePacingEnabled() ? LIVE_BUFFER_INITIAL_BURST_BYTES : 0,
       lastPumpAt: Date.now(),
     };
 
@@ -237,8 +255,8 @@ class StreamHub {
     // time jump. Real clients hold one connection and ride out short gaps, so
     // do the same: only reconnect once the gap is long enough that a player
     // buffer cannot cover it.
-    const UPSTREAM_GAP_WARN_MS = 8_000;
-    const UPSTREAM_GAP_RECONNECT_MS = 15_000;
+    const UPSTREAM_GAP_WARN_MS = 13_000;
+    const UPSTREAM_GAP_RECONNECT_MS = 16_000;
 
     // Release buffered chunks on a fixed cadence so a bursty upstream is smoothed
     // into a continuous downstream stream.
@@ -275,7 +293,8 @@ class StreamHub {
       const delta = channel.bytesRead - lastReportBytes;
       lastReportBytes = channel.bytesRead;
       const kbps = Math.round((delta * 8) / (REPORT_INTERVAL_MS / 1000) / 1000);
-      log(`[StreamHub][DIAG] ${channelKey} — ${kbps} kbps upstream | ${channel.subscribers.size} subscriber(s) | total ${Math.round(channel.bytesRead / 1024)} KB`);
+      const bufKb = Math.round(channel.bufferedBytes / 1024);
+      log(`[StreamHub][DIAG] ${channelKey} — ${kbps} kbps upstream | buf ${bufKb} KB | ${channel.subscribers.size} subscriber(s) | total ${Math.round(channel.bytesRead / 1024)} KB`);
     }, REPORT_INTERVAL_MS);
 
     (channel as any)._diagTimers = [upstreamGapTimer, throughputTimer];
@@ -320,7 +339,9 @@ class StreamHub {
     const MAX_STALL_MS = 15_000;
     const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
 
-    channel.lastChunkAt = Date.now();
+    const now = Date.now();
+    const gapSinceLastChunk = channel.lastChunkAt ? now - channel.lastChunkAt : 0;
+    channel.lastChunkAt = now;
     channel.bytesRead += chunk.length;
     proxyStats.totalBytes += chunk.length;
     proxyStats.intervalBytes += chunk.length;
@@ -328,7 +349,7 @@ class StreamHub {
     // Hold the chunk back in the jitter buffer instead of pushing it to subscribers
     // immediately; pumpChannelBuffer releases it once enough content is queued to
     // ride out the provider's next dead-air gap.
-    this.enqueueChunk(channel, chunk);
+    this.enqueueChunk(channel, chunk, gapSinceLastChunk);
 
     // If DVR handover is streaming in background, advance its bandwidth stats
     if (channel.dvrRecordingId) {
@@ -356,9 +377,29 @@ class StreamHub {
    * session, so it stays steady across the provider's dead-air gaps and gives the
    * pump a real-time target to release against.
    */
-  private enqueueChunk(channel: ActiveStreamChannel, chunk: Buffer): void {
+  private enqueueChunk(channel: ActiveStreamChannel, chunk: Buffer, gapSinceLastChunk = 0): void {
     const now = Date.now();
     const second = Math.floor(now / 1000);
+
+    // Initial connect-burst filter:
+    // Providers dump 20-30 MB of historical buffer over TCP at line speed on connect.
+    // Holding those chunks primes our jitter buffer reserve, but counting them toward
+    // bitrate would inflate the pace to 25 Mbps and drain the buffer in 40s!
+    if (channel.inInitialBurst) {
+      channel.burstBytes = (channel.burstBytes ?? 0) + chunk.length;
+      const connectAgeMs = now - (channel.lastConnectAt || channel.startTime);
+      if (connectAgeMs > 12_000 || (connectAgeMs > 3_000 && gapSinceLastChunk > 1_500)) {
+        channel.inInitialBurst = false;
+        // Only clear rateBuckets if a true high-volume TCP catch-up burst (>8 MB) occurred.
+        // If it was just normal live chunks (like in unit tests or low-latency upstreams),
+        // keep rateBuckets intact so early rate measurement works.
+        if (channel.burstBytes > 8_000_000) {
+          channel.rateBuckets.clear();
+          log(`[StreamHub] Initial connect burst ended for ${channel.channelKey} (${Math.round(connectAgeMs / 1000)}s, ${Math.round(channel.burstBytes / 1024)} KB) — buffer primed with ${Math.round(channel.bufferedBytes / 1024)} KB. Starting steady-state rate tracking.`);
+        }
+      }
+    }
+
     channel.rateBuckets.set(second, (channel.rateBuckets.get(second) ?? 0) + chunk.length);
     for (const key of channel.rateBuckets.keys()) {
       if (second - key > LIVE_BUFFER_RATE_WINDOW_S) channel.rateBuckets.delete(key);
@@ -415,7 +456,8 @@ class StreamHub {
     // so counting them inflates the rate — with two provider bursts that reads double
     // the truth, and pacing above real time drains the reserve instead of filling it.
     const oldestBytes = channel.rateBuckets.get(seconds[0]) ?? 0;
-    return (total - oldestBytes) / spanSeconds;
+    const rawRate = (total - oldestBytes) / spanSeconds;
+    return Math.min(LIVE_BUFFER_MAX_STREAM_RATE_BPS, Math.max(0, rawRate));
   }
 
   /**
@@ -452,6 +494,7 @@ class StreamHub {
     // matched against something concrete in the logs.
     if (channel.buffer.length === 0) {
       channel.starvedSince ??= now;
+      channel.pacingTokens = 0;
       return;
     }
     if (channel.starvedSince !== undefined) {
@@ -463,24 +506,34 @@ class StreamHub {
     }
 
     const upstreamQuietMs = now - (channel.lastChunkAt || now);
-    const drainFully = upstreamQuietMs > LIVE_BUFFER_DRAIN_AFTER_MS;
+    const drainFully = upstreamQuietMs > liveBufferDrainAfterMs();
 
     // Pacing is the only thing that gates release; the reserve is maintained by
     // releasing a little slower until it is filled. Gating release on the reserve
     // itself would make output gulp-synced, because the buffer only grows when a
     // gulp arrives.
 
-    const pacing = measuredRate > 0 && !drainFully;
-    const reserveBytes = measuredRate * liveBufferReserveSeconds();
-    const releaseRate = pacing && channel.bufferedBytes < reserveBytes
-      ? measuredRate * LIVE_BUFFER_FILL_FACTOR
-      : measuredRate;
+    const effectiveRate = measuredRate > 0
+      ? measuredRate
+      : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0);
+    const pacing = effectiveRate > 0 && !drainFully;
+    const reserveBytes = effectiveRate * liveBufferReserveSeconds();
+    // When buffer holds a comfortable reserve, allow downstream to draw slightly faster (1.08x)
+    // to absorb VBR bitrate peaks and gently burn down excess buffer.
+    // When at or below reserve, pace at 100% of real-time stream rate.
+    // NEVER throttle below 1.0x — a video decoder runs at 1.0x wall-clock speed,
+    // so throttling below 1.0x is guaranteed to deplete the player's internal buffer and stall!
+    const releaseRate = pacing && channel.bufferedBytes > reserveBytes * 1.2
+      ? effectiveRate * 1.08
+      : effectiveRate;
 
     // Allowance accumulates at the release rate and is capped so a long stall cannot
-    // be repaid as one huge burst.
+    // be repaid as one huge burst. Allow burning down the initial startup burst.
     if (releaseRate > 0) {
       const cap = Math.max(LIVE_SLICE_BYTES, releaseRate * LIVE_BUFFER_BURST_SECONDS);
-      channel.pacingTokens = Math.min(cap, channel.pacingTokens + (releaseRate * elapsedMs) / 1000);
+      channel.pacingTokens = channel.pacingTokens > cap
+        ? channel.pacingTokens
+        : Math.min(cap, channel.pacingTokens + (releaseRate * elapsedMs) / 1000);
     }
 
 
@@ -611,6 +664,10 @@ class StreamHub {
 
       channel.upstreamResponse = response;
       channel.lastChunkAt = Date.now();
+      channel.lastConnectAt = Date.now();
+      channel.inInitialBurst = true;
+      channel.burstBytes = 0;
+      channel.rateBuckets.clear();
       this.bindUpstreamResponse(channel);
       this.reconnectRetries.delete(channelKey);
 
@@ -679,6 +736,8 @@ class StreamHub {
     sub.res.setHeader('Content-Type', 'video/mp2t');
     sub.res.setHeader('Connection', 'keep-alive');
     sub.res.setHeader('Cache-Control', 'no-cache, no-store');
+    sub.res.setHeader('X-Accel-Buffering', 'no');
+    sub.res.socket?.setNoDelay?.(true);
 
     channel.subscribers.set(sub.id, sub);
 
