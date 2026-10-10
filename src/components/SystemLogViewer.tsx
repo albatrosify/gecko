@@ -463,6 +463,7 @@ export function SystemLogViewer() {
 
           {/* Download Logs */}
           <button
+            aria-label="Download logs as .txt"
             onClick={handleDownload}
             disabled={filteredLines.length === 0}
             title="Download logs as .txt"

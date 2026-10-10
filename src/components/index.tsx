@@ -2868,6 +2868,7 @@ export function SourceManager({ user }: { user: User }) {
                 </button>
                 {connectionLogs.length > 0 && (
                   <button
+                    aria-label="Clear Connection History"
                     onClick={handleClearConnections}
                     className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
                     title="Clear Connection History"
@@ -5655,6 +5656,7 @@ export function PlaylistEditor({ user }: { user: User }) {
                         <ChevronRight className="-rotate-90" size={13} />
                       </button>
                       <button 
+                        aria-label={`Reset ${selectedCategoryIds.size} selected categories to default`}
                         onClick={handleBatchCategoryReset}
                         className="px-2 py-1.5 bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg text-[10px] font-bold hover:bg-orange-500/20 transition-all shrink-0 flex items-center gap-1"
                         title={`Reset ${selectedCategoryIds.size} selected categories to default`}
@@ -6325,6 +6327,7 @@ function AiCleanupModal({ kind, items, onApply, onClose }: AiCleanupModalProps) 
             </p>
           </div>
           <button
+            aria-label="Close"
             onClick={onClose}
             className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
             title="Close"
@@ -6590,6 +6593,7 @@ function CategoryPane({
             <>
               {!isCustom && onAiCleanCategories && (
                 <button
+                  aria-label={`Clean ${selectedCategoryIds.size} category names with AI`}
                   onClick={onAiCleanCategories}
                   className="p-1.5 rounded hover:bg-violet-500/10 transition-colors text-violet-400 hover:text-violet-300 cursor-pointer"
                   title="Clean this category name with AI"
@@ -6599,6 +6603,7 @@ function CategoryPane({
               )}
               {!isCustom && mapping?.customName && mapping.customName !== (category?.category_name || category?.name) && (
                 <button
+                  aria-label={`Reset category name to upstream default ("${category?.category_name || category?.name}")`}
                   onClick={handleResetSingleCategory}
                   className="p-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 rounded transition-colors cursor-pointer"
                   title={`Reset category name to upstream default ("${category?.category_name || category?.name}")`}
@@ -6615,6 +6620,7 @@ function CategoryPane({
               </button>
               {!isCustom && (
                 <button
+                  aria-label={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
                   onClick={handleToggleSync}
                   className={`p-1.5 rounded hover:bg-zinc-800 transition-colors cursor-pointer ${isSynced ? 'text-blue-400' : 'text-zinc-600'}`}
                   title={isSynced ? 'Disable on-demand sync' : 'Enable on-demand sync'}
@@ -6624,7 +6630,7 @@ function CategoryPane({
               )}
             </>
           )}
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close">
+          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close">
             <X size={14} />
           </button>
         </div>
@@ -6678,7 +6684,7 @@ function CategoryPane({
                 )}
               </div>
               {onAiCleanCategories && (
-                <button
+                <button aria-label={`Clean ${selectedCategoryIds.size} category names with AI`}
                   onClick={onAiCleanCategories}
                   className="w-full flex justify-center items-center gap-1.5 px-2.5 py-1.5 bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg text-xs font-bold hover:bg-violet-500/20 transition-all cursor-pointer"
                   title={`Clean ${selectedCategoryIds.size} category names with AI`}
@@ -6927,6 +6933,7 @@ function SortableCategory({
         )}
         {!cat._isCustom && (
           <button 
+            aria-label={mapping?.syncOnDemand ? "Disable Dynamic Name Sync" : "Enable Dynamic Name Sync"}
             onClick={toggleSyncOnDemand}
             className={cn(
               "p-1 hover:bg-zinc-800 rounded transition-colors", 
@@ -7745,7 +7752,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 to-zinc-900" />
           )}
 
-          <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 text-zinc-400 hover:text-white rounded-full transition-colors z-10">
+          <button aria-label="Close" onClick={onClose} className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 text-zinc-400 hover:text-white rounded-full transition-colors z-10">
             <X size={20} />
           </button>
 
@@ -8175,6 +8182,7 @@ function EditorPane({
             </p>
           </div>
           <button
+            aria-label="Close"
             onClick={onClose}
             className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 shrink-0 transition-colors"
             title="Close"
@@ -9309,6 +9317,7 @@ function DvrPlaybackModal({
               VLC
             </button>
             <button
+              aria-label="Close"
               onClick={onClose}
               className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-all cursor-pointer ml-1"
               title="Close"
