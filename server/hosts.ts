@@ -8,8 +8,9 @@ import { XtreamClient } from "./xtream.ts";
 import { log } from "./logger.ts";
 import { getCached } from "./cache.ts";
 import { eq } from "drizzle-orm";
-import { SourceHost } from "../src/types.ts";
+import { SourceHost, SourceHostResolvedIp } from "../src/types.ts";
 import { recordVpnBlock } from "./vpn.ts";
+import { resolveHostIps, rankHostIps, createIpPinnedAgent } from "./dns-resolver.ts";
 
 const PROBE_CAP_BYTES = 2 * 1024 * 1024; // 2MB (enables measuring real 4K / high-bitrate stream speeds)
 const PROBE_MAX_MS = 3500; // 3.5s timeout per host
@@ -136,16 +137,27 @@ function guessNetworkType(rawUrl: string): { networkType: 'cdn' | 'direct'; cdnP
   return { networkType: 'direct', cdnProvider: null };
 }
 
-async function detectHostNetwork(
+export async function detectHostNetwork(
   rawUrl: string,
   headers?: Record<string, any> | null
-): Promise<{ networkType: 'cdn' | 'direct'; cdnProvider: string | null; resolvedIp: string | null }> {
+): Promise<{
+  networkType: 'cdn' | 'direct';
+  cdnProvider: string | null;
+  resolvedIp: string | null;
+  resolvedIps?: SourceHostResolvedIp[];
+  ipCount?: number;
+}> {
   let hostname = "";
+  let port: number | undefined;
+  let isHttps = false;
   try {
     const u = new URL(rawUrl.startsWith("http") ? rawUrl : `http://${rawUrl}`);
     hostname = u.hostname;
+    if (u.port) port = parseInt(u.port, 10);
+    isHttps = u.protocol === "https:";
   } catch {
     hostname = rawUrl.replace(/^https?:\/\//, "").split(/[:/]/)[0];
+    isHttps = /^https:/i.test(rawUrl);
   }
   hostname = hostname.replace(/^\[|\]$/g, "");
 
@@ -153,18 +165,7 @@ async function detectHostNetwork(
     return { networkType: 'direct', cdnProvider: null, resolvedIp: null };
   }
 
-  // 1. If response headers explicitly identify a CDN
-  const headerCdn = detectCdnFromHeaders(headers);
-  if (headerCdn) {
-    let resolvedIp: string | null = null;
-    try {
-      const lookup = await dns.promises.lookup(hostname).catch(() => null);
-      if (lookup?.address) resolvedIp = lookup.address;
-    } catch {}
-    return { networkType: 'cdn', cdnProvider: headerCdn, resolvedIp };
-  }
-
-  // 2. Check if hostname is an IP address
+  // 1. Check if hostname is a direct IP address
   if (net.isIP(hostname)) {
     if (isCloudflareIp(hostname)) {
       return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp: hostname };
@@ -172,26 +173,50 @@ async function detectHostNetwork(
     return { networkType: 'direct', cdnProvider: null, resolvedIp: hostname };
   }
 
-  const lowerHost = hostname.toLowerCase();
-  const isCfSubdomain = lowerHost.startsWith("cf.") || lowerHost.startsWith("cf-") || lowerHost.includes(".cf.");
-
-  // 3. Resolve DNS to check IP CIDR ranges
-  let resolvedIp: string | null = null;
+  // 2. Hostname is a domain: resolve and rank candidate IPs
+  let ranked: SourceHostResolvedIp[] = [];
   try {
-    const lookup = await Promise.race([
-      dns.promises.lookup(hostname),
-      new Promise<null>((_, reject) => setTimeout(() => reject(new Error("DNS timeout")), 1500))
-    ]) as dns.LookupAddress | null;
+    ranked = await rankHostIps(hostname, port, isHttps, 2500);
+  } catch {
+    ranked = [];
+  }
 
-    if (lookup?.address) {
-      resolvedIp = lookup.address;
-      if (isCloudflareIp(resolvedIp)) {
-        return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp };
-      }
+  let resolvedIp: string | null = null;
+  let resolvedIps: SourceHostResolvedIp[] | undefined;
+  let ipCount: number | undefined;
+
+  if (ranked.length > 0) {
+    resolvedIp = (ranked.find(r => r.healthy) || ranked[0])?.ip || null;
+    if (ranked.length > 1) {
+      ipCount = ranked.length;
+      resolvedIps = ranked;
     }
-  } catch {}
+  } else {
+    try {
+      const lookup = await Promise.race([
+        dns.promises.lookup(hostname),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("DNS timeout")), 1500))
+      ]) as dns.LookupAddress | null;
+      if (lookup?.address) resolvedIp = lookup.address;
+    } catch {}
+  }
 
-  // 4. Check CNAME records
+  // 3. If response headers explicitly identify a CDN
+  const headerCdn = detectCdnFromHeaders(headers);
+  if (headerCdn) {
+    return { networkType: 'cdn', cdnProvider: headerCdn, resolvedIp, resolvedIps, ipCount };
+  }
+
+  // 4. Check CDN status from IPs (if any IP is Cloudflare IP, classify appropriately)
+  const hasCloudflareIp = ranked.length > 0
+    ? ranked.some(r => isCloudflareIp(r.ip))
+    : (resolvedIp ? isCloudflareIp(resolvedIp) : false);
+
+  if (hasCloudflareIp) {
+    return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp, resolvedIps, ipCount };
+  }
+
+  // 5. Check CNAME records
   try {
     const cnames = await Promise.race([
       dns.promises.resolveCname(hostname),
@@ -199,15 +224,15 @@ async function detectHostNetwork(
     ]) as string[];
 
     const cnameStr = (cnames || []).join(" ").toLowerCase();
-    if (cnameStr.includes("cloudflare")) return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp };
-    if (cnameStr.includes("cloudfront")) return { networkType: 'cdn', cdnProvider: 'CloudFront', resolvedIp };
-    if (cnameStr.includes("fastly")) return { networkType: 'cdn', cdnProvider: 'Fastly', resolvedIp };
-    if (cnameStr.includes("akamai")) return { networkType: 'cdn', cdnProvider: 'Akamai', resolvedIp };
-    if (cnameStr.includes("b-cdn")) return { networkType: 'cdn', cdnProvider: 'BunnyCDN', resolvedIp };
-    if (cnameStr.includes("cdn77")) return { networkType: 'cdn', cdnProvider: 'CDN77', resolvedIp };
+    if (cnameStr.includes("cloudflare")) return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp, resolvedIps, ipCount };
+    if (cnameStr.includes("cloudfront")) return { networkType: 'cdn', cdnProvider: 'CloudFront', resolvedIp, resolvedIps, ipCount };
+    if (cnameStr.includes("fastly")) return { networkType: 'cdn', cdnProvider: 'Fastly', resolvedIp, resolvedIps, ipCount };
+    if (cnameStr.includes("akamai")) return { networkType: 'cdn', cdnProvider: 'Akamai', resolvedIp, resolvedIps, ipCount };
+    if (cnameStr.includes("b-cdn")) return { networkType: 'cdn', cdnProvider: 'BunnyCDN', resolvedIp, resolvedIps, ipCount };
+    if (cnameStr.includes("cdn77")) return { networkType: 'cdn', cdnProvider: 'CDN77', resolvedIp, resolvedIps, ipCount };
   } catch {}
 
-  // 5. Check PTR reverse DNS
+  // 6. Check PTR reverse DNS
   if (resolvedIp) {
     try {
       const ptrs = await Promise.race([
@@ -215,22 +240,24 @@ async function detectHostNetwork(
         new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error("PTR timeout")), 1500))
       ]) as string[];
       const ptrStr = (ptrs || []).join(" ").toLowerCase();
-      if (ptrStr.includes("cloudflare")) return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp };
-      if (ptrStr.includes("cloudfront")) return { networkType: 'cdn', cdnProvider: 'CloudFront', resolvedIp };
-      if (ptrStr.includes("fastly")) return { networkType: 'cdn', cdnProvider: 'Fastly', resolvedIp };
-      if (ptrStr.includes("akamai")) return { networkType: 'cdn', cdnProvider: 'Akamai', resolvedIp };
+      if (ptrStr.includes("cloudflare")) return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp, resolvedIps, ipCount };
+      if (ptrStr.includes("cloudfront")) return { networkType: 'cdn', cdnProvider: 'CloudFront', resolvedIp, resolvedIps, ipCount };
+      if (ptrStr.includes("fastly")) return { networkType: 'cdn', cdnProvider: 'Fastly', resolvedIp, resolvedIps, ipCount };
+      if (ptrStr.includes("akamai")) return { networkType: 'cdn', cdnProvider: 'Akamai', resolvedIp, resolvedIps, ipCount };
     } catch {}
   }
 
-  // 6. Subdomain heuristic fallback
+  // 7. Subdomain heuristic fallback
+  const lowerHost = hostname.toLowerCase();
+  const isCfSubdomain = lowerHost.startsWith("cf.") || lowerHost.startsWith("cf-") || lowerHost.includes(".cf.");
   if (isCfSubdomain) {
-    return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp };
+    return { networkType: 'cdn', cdnProvider: 'Cloudflare', resolvedIp, resolvedIps, ipCount };
   }
   if (lowerHost.startsWith("cdn.") || lowerHost.startsWith("cdn-")) {
-    return { networkType: 'cdn', cdnProvider: 'CDN', resolvedIp };
+    return { networkType: 'cdn', cdnProvider: 'CDN', resolvedIp, resolvedIps, ipCount };
   }
 
-  return { networkType: 'direct', cdnProvider: null, resolvedIp };
+  return { networkType: 'direct', cdnProvider: null, resolvedIp, resolvedIps, ipCount };
 }
 
 /**
@@ -281,6 +308,12 @@ export function normalizeHosts(
     const resolvedIp = (typeof raw === "object" && raw?.resolvedIp !== undefined)
       ? raw.resolvedIp
       : (prev?.resolvedIp ?? null);
+    const resolvedIps = (typeof raw === "object" && raw?.resolvedIps !== undefined)
+      ? raw.resolvedIps
+      : (prev?.resolvedIps !== undefined ? prev.resolvedIps : undefined);
+    const ipCount = (typeof raw === "object" && raw?.ipCount !== undefined)
+      ? raw.ipCount
+      : (prev?.ipCount !== undefined ? prev.ipCount : undefined);
 
     out.push({
       url,
@@ -294,6 +327,8 @@ export function normalizeHosts(
       networkType,
       cdnProvider,
       resolvedIp,
+      resolvedIps,
+      ipCount,
       lastBenchmark: (typeof raw === "object" && raw?.lastBenchmark) || prev?.lastBenchmark || null,
       ...prevStats,
     });
@@ -322,6 +357,8 @@ export function normalizeHosts(
       networkType: prev?.networkType !== undefined ? prev.networkType : initialNetwork.networkType,
       cdnProvider: prev?.cdnProvider !== undefined ? prev.cdnProvider : initialNetwork.cdnProvider,
       resolvedIp: prev?.resolvedIp ?? null,
+      resolvedIps: prev?.resolvedIps !== undefined ? prev.resolvedIps : undefined,
+      ipCount: prev?.ipCount !== undefined ? prev.ipCount : undefined,
       lastBenchmark: prev?.lastBenchmark || null,
       ...prevStats,
     });
@@ -442,7 +479,7 @@ export function initHostStatsFlusher(): void {
 /**
  * Probe the throughput of a single stream URL, returning Mbps.
  */
-async function probeThroughput(url: string): Promise<number> {
+async function probeThroughput(url: string, agent?: any): Promise<number> {
   const start = Date.now();
   let bytes = 0;
   const controller = new AbortController();
@@ -459,11 +496,13 @@ async function probeThroughput(url: string): Promise<number> {
         Range: `bytes=0-${PROBE_CAP_BYTES - 1}`,
       },
       validateStatus: () => true,
+      ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
     });
 
     if (response.status >= 400) {
       if (response.data?.destroy) response.data.destroy();
       controller.abort();
+      try { agent?.destroy?.(); } catch {}
       if (response.status === 511) {
         throw new Error('Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted)');
       }
@@ -480,6 +519,7 @@ async function probeThroughput(url: string): Promise<number> {
           if (response.data?.destroy) response.data.destroy();
         } catch {}
         controller.abort();
+        try { agent?.destroy?.(); } catch {}
         const secs = (Date.now() - start) / 1000;
         resolve(secs > 0 ? (bytes * 8) / secs / 1_000_000 : 0);
       };
@@ -497,11 +537,13 @@ async function probeThroughput(url: string): Promise<number> {
         clearTimeout(timeout);
         settled = true;
         controller.abort();
+        try { agent?.destroy?.(); } catch {}
         reject(err);
       });
     });
   } catch (err) {
     controller.abort();
+    try { agent?.destroy?.(); } catch {}
     throw err;
   }
 }
@@ -597,11 +639,15 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
       r.networkType = netInfo.networkType;
       r.cdnProvider = netInfo.cdnProvider;
       r.resolvedIp = netInfo.resolvedIp;
+      r.resolvedIps = netInfo.resolvedIps;
+      r.ipCount = netInfo.ipCount;
     } catch {
       const fallback = guessNetworkType(h.url);
       r.networkType = fallback.networkType;
       r.cdnProvider = fallback.cdnProvider;
       r.resolvedIp = null;
+      r.resolvedIps = undefined;
+      r.ipCount = undefined;
     }
 
     // 3. Stream throughput probe using selected/detected benchmark stream
@@ -609,7 +655,9 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
       try {
         if (benchmarkStreamId != null) {
           const probeUrl = client.getLiveStreamUrl(benchmarkStreamId);
-          r.throughputMbps = await probeThroughput(probeUrl);
+          const isHttps = /^https:/i.test(h.url);
+          const agent = r.resolvedIp ? createIpPinnedAgent(r.resolvedIp, isHttps) : undefined;
+          r.throughputMbps = await probeThroughput(probeUrl, agent);
           r.probeOk = true;
         } else {
           r.probeOk = false;
@@ -678,6 +726,8 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
       networkType: h.networkType,
       cdnProvider: h.cdnProvider,
       resolvedIp: h.resolvedIp,
+      resolvedIps: h.resolvedIps,
+      ipCount: h.ipCount,
       streamId: benchmarkStreamId,
       streamName: benchmarkStreamName,
       is4k,

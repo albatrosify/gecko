@@ -1,9 +1,14 @@
 import { Router } from "express";
 import axios from "axios";
+import zlib from "zlib";
+import { promisify } from "util";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { isValidHttpUrl } from "../utils.ts";
+import { clearEpgCache } from "../epg-service.ts";
+
+const gunzipAsync = promisify(zlib.gunzip);
 
 export function createEpgsRouter() {
   const router = Router();
@@ -57,6 +62,7 @@ export function createEpgsRouter() {
     const { eq, and } = await import('drizzle-orm');
     db.delete(schemaEpgs).where(and(eq(schemaEpgs.id, req.params.id), eq(schemaEpgs.userId, req.user!.id))).run();
     epgChannelCache.clear(); // EPG removed — could affect any playlist, clear all
+    clearEpgCache().catch(() => {});
     res.json({ success: true });
   });
 
@@ -108,8 +114,7 @@ export function createEpgsRouter() {
         const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
         let data = Buffer.from(response.data);
         if (url.endsWith('.gz') || response.headers['content-encoding'] === 'gzip') {
-          const zlib = await import('zlib');
-          data = zlib.gunzipSync(data);
+          data = await gunzipAsync(data);
         }
         const text = data.toString('utf-8');
         const cutoff = text.indexOf('<programme');

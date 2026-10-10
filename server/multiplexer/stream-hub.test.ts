@@ -387,6 +387,90 @@ describe('StreamHub', () => {
     pumpOnce();
     expect(subRes.write).toHaveBeenCalledWith(Buffer.from('chunk2'));
   });
+
+  it('rotates candidate IPs across reconnect attempts', async () => {
+    const fakeDataStream1 = new EventEmitter();
+    (fakeDataStream1 as any).destroy = vi.fn();
+
+    const fakeDataStream2 = new EventEmitter();
+    (fakeDataStream2 as any).destroy = vi.fn();
+
+    const fakeDataStream3 = new EventEmitter();
+    (fakeDataStream3 as any).destroy = vi.fn();
+
+    let callCount = 0;
+    const axiosCalls: any[] = [];
+    const mockAxios = vi.fn().mockImplementation((config: any) => {
+      axiosCalls.push(config);
+      callCount++;
+      return Promise.resolve({
+        status: 200,
+        data: callCount === 1 ? fakeDataStream2 : fakeDataStream3,
+        request: { setTimeout: vi.fn() },
+      });
+    });
+
+    vi.doMock('axios', () => ({
+      default: mockAxios,
+    }));
+
+    const candidateIps = ['198.51.100.1', '198.51.100.2', '198.51.100.3'];
+
+    const channel = streamHub.registerChannel(
+      'source-multi',
+      '200',
+      'Multi IP Channel',
+      'live',
+      'http://multi-ip.tv',
+      { data: fakeDataStream1 },
+      undefined,
+      {
+        url: 'http://multi-ip.tv/live/user/pass/200.ts',
+        candidateIps,
+        currentIpIndex: 0,
+      }
+    );
+
+    const subRes: any = new EventEmitter();
+    subRes.write = vi.fn();
+    subRes.setHeader = vi.fn();
+    subRes.destroy = vi.fn();
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-multi-ip',
+      res: subRes,
+      username: 'multi-user',
+      playlistName: 'Living Room',
+      ip: '192.168.1.10',
+      startTime: Date.now(),
+    });
+
+    // First reconnect should rotate from index 0 -> index 1 ('198.51.100.2')
+    const reconnected1 = await streamHub.reconnectChannel(channel.channelKey, 'gap test 1');
+    expect(reconnected1).toBe(true);
+    expect(channel.upstreamConfig?.currentIpIndex).toBe(1);
+    expect(axiosCalls[0].httpAgent).toBeDefined();
+
+    // Verify pinned agent lookup points to candidate IP index 1
+    const agent1 = axiosCalls[0].httpAgent;
+    let resolvedIp1 = '';
+    agent1.options.lookup('multi-ip.tv', {}, (err: any, addr: string) => {
+      resolvedIp1 = addr;
+    });
+    expect(resolvedIp1).toBe('198.51.100.2');
+
+    // Second reconnect should rotate from index 1 -> index 2 ('198.51.100.3')
+    const reconnected2 = await streamHub.reconnectChannel(channel.channelKey, 'gap test 2');
+    expect(reconnected2).toBe(true);
+    expect(channel.upstreamConfig?.currentIpIndex).toBe(2);
+
+    const agent2 = axiosCalls[1].httpAgent;
+    let resolvedIp2 = '';
+    agent2.options.lookup('multi-ip.tv', {}, (err: any, addr: string) => {
+      resolvedIp2 = addr;
+    });
+    expect(resolvedIp2).toBe('198.51.100.3');
+  });
 });
 
 

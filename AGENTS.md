@@ -40,10 +40,11 @@ npm run test     # vitest run
 - `auth.ts` — `createAuthRouter()` (register/login/me), `requireAuth` (JWT), `requireAuthOrQuery`.
 - `cache.ts` — Two-Tier-Cache: In-Memory Map (1 min) + SQLite `cache`-Tabelle (12 h).
 - `xtream.ts` — `XtreamClient` für Upstream-Xtream-API.
-- `hosts.ts` — Host-Erkennung, Failover, Benchmarking, Per-Host-Nutzungs-Statistiken.
+- `hosts.ts` — Host-Erkennung, Failover, Benchmarking, Multi-IP-Cluster-Evaluierung, Per-Host-Nutzungs-Statistiken.
+- `dns-resolver.ts` — Multi-A DNS-Resolution, 5-Min-In-Memory-Caching, IP-Latency-Ranking, IP-Pinned HTTP/HTTPS-Agents (TCP-Socket auf Ziel-IP gepinnt unter Beibehaltung von Host-Header & TLS-SNI für Zertifikate & Nginx Virtual Hosts).
 - `sync.ts` — `refreshSource()`, Changelogs, Cron-Manager (`activeCrons`, `initCronManager`).
 - `connection-monitor.ts` — Überwacht Upstream-Verbindungen, protokolliert in `source_connection_logs`.
-- `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz; **Live-Jitter-Buffer** (ratebasiertes Leaky-Bucket-Pacing, Reserve, Starvation-Logging). Tiefe über `GECKO_LIVE_BUFFER_SECONDS` (Sekunden, `0` = aus/passthrough, Default 3) — Reserve == zusätzliche Latenz.
+- `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect mit Multi-IP-Rotation bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz; **Live-Jitter-Buffer** (ratebasiertes Leaky-Bucket-Pacing, Reserve, Starvation-Logging). Tiefe über `GECKO_LIVE_BUFFER_SECONDS` (Sekunden, `0` = aus/passthrough, Default 3) — Reserve == zusätzliche Latenz.
 - `multiplexer/stream-guard.ts` — Einheitlicher Concurrency Guard über Live- und VOD-Streams hinweg (`evaluateStreamRequest`, Platzhalter bei Überlastung).
 - `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen); `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams; `playback.ts` — `serveRecordingFile()`: fertige Aufnahmen wie statische Dateien (seekbar), laufende im Follow-Mode ohne `Content-Length` mit 30 s Stall-Cutoff.
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
@@ -52,6 +53,7 @@ npm run test     # vitest run
 - `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (300 Datenpunkte, 2 s-Interval = 10 min für die Dashboard-Fenster 1m/5m/10m), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
 - `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
+- `epg-service.ts` — EPG Fetching, Disk-Caching (`.xml.gz`), Stale-While-Revalidate, Non-Blocking Streaming für `/xmltv.php`.
 
 **Frontend** (`src/`):
 - `main.tsx` — Entry. `App.tsx` — Router + Auth-Gate, Routen unter Sidebar.

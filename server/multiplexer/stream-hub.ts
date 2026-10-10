@@ -3,6 +3,7 @@ import { log } from '../logger.ts';
 import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
+import { createIpPinnedAgent } from '../dns-resolver.ts';
 
 /** How many consecutive reconnect failures to tolerate before waiting for the client. */
 const RECONNECT_MAX_ATTEMPTS = 4;
@@ -101,10 +102,13 @@ interface DownstreamSubscriber {
   stalledSince?: number;
 }
 
-interface UpstreamConfig {
+export interface UpstreamConfig {
   url: string;
   headers?: Record<string, string>;
+  candidateIps?: string[];
+  currentIpIndex?: number;
 }
+export type UpstreamStreamConfig = UpstreamConfig;
 
 interface ActiveStreamChannel {
   channelKey: string;
@@ -114,6 +118,7 @@ interface ActiveStreamChannel {
   type: 'live' | 'movie' | 'series';
   hostUrl: string;
   upstreamResponse: any;
+  upstreamAgent?: any;
   subscribers: Map<string, DownstreamSubscriber>;
   bytesRead: number;
   startTime: number;
@@ -636,9 +641,28 @@ class StreamHub {
     this.isReconnecting.add(channelKey);
     log(`[StreamHub] 🔄 Reconnecting upstream for ${channelKey} (${reason}) | ${channel.subscribers.size} subscriber(s) waiting...`);
 
+    let agent: any = undefined;
     try {
       if (channel.upstreamResponse?.data?.destroy) {
         try { channel.upstreamResponse.data.destroy(); } catch {}
+      }
+      if (channel.upstreamAgent?.destroy) {
+        try { channel.upstreamAgent.destroy(); } catch {}
+        channel.upstreamAgent = undefined;
+      }
+
+      if (channel.upstreamConfig.candidateIps && channel.upstreamConfig.candidateIps.length > 1) {
+        const candidateIps = channel.upstreamConfig.candidateIps;
+        const currentIpIndex = ((channel.upstreamConfig.currentIpIndex ?? 0) + 1) % candidateIps.length;
+        channel.upstreamConfig.currentIpIndex = currentIpIndex;
+        const targetIp = candidateIps[currentIpIndex];
+        const isHttps = channel.upstreamConfig.url.startsWith('https:');
+        agent = createIpPinnedAgent(targetIp, isHttps);
+        log(`[StreamHub] 🔄 In-place reconnecting ${channelKey} rotating to IP ${targetIp} (${currentIpIndex + 1}/${candidateIps.length})`);
+      } else if (channel.upstreamConfig.candidateIps && channel.upstreamConfig.candidateIps.length === 1) {
+        const targetIp = channel.upstreamConfig.candidateIps[0];
+        const isHttps = channel.upstreamConfig.url.startsWith('https:');
+        agent = createIpPinnedAgent(targetIp, isHttps);
       }
 
       const axios = (await import('axios')).default;
@@ -649,11 +673,13 @@ class StreamHub {
         timeout: 8000,
         headers: channel.upstreamConfig.headers || { 'User-Agent': 'Mozilla/5.0 IPTV-Proxy/1.0' },
         validateStatus: () => true,
+        ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
       });
 
       if (response.status >= 400) {
         log(`[StreamHub] ⚠️ Reconnect failed for ${channelKey}: Upstream returned HTTP ${response.status}`);
         if (response.data?.destroy) try { response.data.destroy(); } catch {}
+        if (agent?.destroy) try { agent.destroy(); } catch {}
         this.scheduleReconnectRetry(channelKey, `HTTP ${response.status}`);
         return false;
       }
@@ -663,6 +689,7 @@ class StreamHub {
       (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
 
       channel.upstreamResponse = response;
+      channel.upstreamAgent = agent;
       channel.lastChunkAt = Date.now();
       channel.lastConnectAt = Date.now();
       channel.inInitialBurst = true;
@@ -674,6 +701,7 @@ class StreamHub {
       log(`[StreamHub] ✅ In-place reconnect SUCCEEDED for ${channelKey}! Seamlessly resumed stream for ${channel.subscribers.size} subscriber(s).`);
       return true;
     } catch (err: any) {
+      if (agent?.destroy) try { agent.destroy(); } catch {}
       log(`[StreamHub] ⚠️ Reconnect error for ${channelKey}: ${err.message}`);
       this.scheduleReconnectRetry(channelKey, err.message);
       return false;
@@ -981,6 +1009,10 @@ class StreamHub {
     // Destroy upstream response
     if (channel.upstreamResponse?.data?.destroy) {
       channel.upstreamResponse.data.destroy();
+    }
+    if (channel.upstreamAgent?.destroy) {
+      try { channel.upstreamAgent.destroy(); } catch {}
+      channel.upstreamAgent = undefined;
     }
 
     this.channels.delete(channelKey);

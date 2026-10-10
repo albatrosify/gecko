@@ -14,7 +14,8 @@ import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
-import { Playlist, StreamMapping, CategoryMapping } from "../../src/types.ts";
+import { Playlist, StreamMapping, CategoryMapping, SourceHost } from "../../src/types.ts";
+import { resolveHostIps, createIpPinnedAgent, extractHostname } from "../dns-resolver.ts";
 import { computeDisplayName } from "../../src/quality.ts";
 import { dvrRecorder } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
@@ -23,6 +24,7 @@ import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
 import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
+import { servePlaylistEpg } from "../epg-service.ts";
 import fs from "fs";
 
 const limit = pLimit(5);
@@ -104,8 +106,16 @@ export function createProxyRouter() {
       return;
     }
 
-    const db = getDb();
-    const sourceIds: string[] = playlist.sourceIds || [];
+    const rawSourceIds = playlist.sourceIds;
+    let sourceIds: string[] = [];
+    if (Array.isArray(rawSourceIds)) {
+      sourceIds = rawSourceIds;
+    } else if (typeof rawSourceIds === 'string') {
+      try {
+        const parsed = JSON.parse(rawSourceIds);
+        if (Array.isArray(parsed)) sourceIds = parsed;
+      } catch {}
+    }
     if (!sourceIds.length) return res.status(400).send("No source configured");
 
     const globalFormat = await getGlobalQualityFormat();
@@ -117,6 +127,7 @@ export function createProxyRouter() {
     const activeTab = type === 'live' ? 'live' : (type === 'movie' ? 'vod' : 'series');
     const { mappings: schemaMappings, sources: schemaSources, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
     const { eq, and, inArray } = await import('drizzle-orm');
+    const db = getDb();
 
     const customItem = db.select().from(schemaCustomCategoryItems).where(and(eq(schemaCustomCategoryItems.playlistId, playlist.id), eq(schemaCustomCategoryItems.streamId, streamId))).get();
     let customItemSourceDoc: any = null;
@@ -177,7 +188,7 @@ export function createProxyRouter() {
     const targetSourceDocs = targetSourceIds.length > 0
       ? db.select().from(schemaSources).where(inArray(schemaSources.id, targetSourceIds)).all()
       : [];
-    const sourceMap = new Map(targetSourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
+    const sourceMap = new Map<string, any>(targetSourceDocs.map(doc => [doc.id, { ...doc, ...(doc.extra as any || {}) }]));
 
     // Try each source in order, fall back to the next on failure
     let lastError = '';
@@ -274,184 +285,247 @@ export function createProxyRouter() {
         const upstreamUrl = safeExt
           ? `${hostUrl}/${type}/${encUser}/${encPass}/${encId}.${safeExt}`
           : `${hostUrl}/${type}/${encUser}/${encPass}/${encId}`;
+        const isHttps = upstreamUrl.startsWith('https:') || hostUrl.startsWith('https:');
 
-        try {
-          const response = await axios({
-            method: 'get',
-            url: upstreamUrl,
-            responseType: 'stream',
-            timeout: 15000,
-            headers: upstreamHeaders,
-            validateStatus: () => true,
-          });
+        // Determine candidate IPs for this host
+        const hostsList: SourceHost[] = Array.isArray(sourceDoc.extra?.hosts)
+          ? sourceDoc.extra.hosts
+          : (Array.isArray(sourceDoc.hosts) ? sourceDoc.hosts : []);
+        const cleanHostUrl = hostUrl.trim().replace(/\/+$/, '');
+        const matchedHost = hostsList.find(h => (h.url ? h.url.trim().replace(/\/+$/, '') : '') === cleanHostUrl);
 
-          // Treat 4xx/5xx from upstream as a failure — try next host/source
-          if (response.status >= 400) {
-            lastStatus = response.status;
-            if (response.status === 511) {
-              lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
-              recordVpnBlock(sourceId, hostUrl, 511, lastError);
-              log(`[Proxy] ⚠️ Host ${hostUrl} BLOCKED by upstream CDN (511 Network Authentication Required) for ${type}/${streamId}. Egress IP appears blacklisted. Recommend rotating VPN. - ${getClientInfo(req)}`);
-            } else {
-              lastError = `upstream returned ${response.status}`;
-              log(`[Proxy] Host ${hostUrl} failed (${response.status}) for ${type}/${streamId}, trying next... - ${getClientInfo(req)}`);
-            }
-            if (response.data?.destroy) response.data.destroy();
-            recordHostUse(sourceId, hostUrl, false, lastError);
-            continue;
+        const candidateIps: string[] = [];
+        if (matchedHost?.resolvedIps && matchedHost.resolvedIps.length > 0) {
+          if (matchedHost.resolvedIp) {
+            candidateIps.push(matchedHost.resolvedIp);
           }
-
-          log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} - ${getClientInfo(req)}`);
-          recordHostUse(sourceId, hostUrl, true);
-
-          // Once upstream headers are received, detach the initial handshake socket timeout
-          // so streaming responses are not aborted when downstream clients buffer ahead or pause.
-          if ((response.request as any)?.setTimeout) (response.request as any).setTimeout(0);
-          if ((response.data as any)?.socket?.setTimeout) (response.data as any).socket.setTimeout(0);
-
-          // Handle live stream multiplexing
-          if (type === 'live') {
-            const forwardHeaders: Record<string, string> = {};
-            const headerKeys = ['content-type', 'accept-ranges', 'cache-control'];
-            for (const h of headerKeys) {
-              if (response.headers[h]) forwardHeaders[h] = response.headers[h];
+          for (const item of matchedHost.resolvedIps) {
+            if (item.healthy !== false && !candidateIps.includes(item.ip)) {
+              candidateIps.push(item.ip);
             }
+          }
+        } else if (matchedHost?.resolvedIp) {
+          candidateIps.push(matchedHost.resolvedIp);
+        }
 
-            const channel = streamHub.registerChannel(
-              sourceId,
-              originalId,
-              streamName,
-              type,
-              hostUrl,
-              response,
-              forwardHeaders,
-              { url: upstreamUrl, headers: upstreamHeaders }
-            );
+        if (candidateIps.length === 0) {
+          const { hostname } = extractHostname(hostUrl);
+          if (hostname) {
+            try {
+              const resolved = await resolveHostIps(hostname);
+              if (resolved && resolved.length > 0) {
+                candidateIps.push(...resolved);
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
 
-            const subId = generateId();
-            streamHub.addSubscriber(channel.channelKey, {
-              id: subId,
-              playlistId: playlist.id,
-              req,
-              res,
-              username,
-              playlistName: (playlist as any).name || username,
-              ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
-              startTime: Date.now(),
+        const ipsToTry: (string | undefined)[] = candidateIps.length > 0 ? candidateIps : [undefined];
+
+        let hostSucceeded = false;
+        for (const targetIp of ipsToTry) {
+          const agent = targetIp ? createIpPinnedAgent(targetIp, isHttps) : undefined;
+
+          try {
+            const response = await axios({
+              method: 'get',
+              url: upstreamUrl,
+              responseType: 'stream',
+              timeout: 15000,
+              headers: upstreamHeaders,
+              validateStatus: () => true,
+              ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
             });
 
-            return; // success — stream multiplexer handles streaming and teardown
-          }
+            // Treat 4xx/5xx from upstream as a failure — try next candidate IP
+            if (response.status >= 400) {
+              lastStatus = response.status;
+              if (response.status === 511) {
+                lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
+                recordVpnBlock(sourceId, hostUrl, 511, lastError);
+                log(`[Proxy] ⚠️ Host ${hostUrl} (IP: ${targetIp || 'default'}) BLOCKED by upstream CDN (511 Network Authentication Required) for ${type}/${streamId}. Egress IP appears blacklisted. Recommend rotating VPN. - ${getClientInfo(req)}`);
+              } else {
+                lastError = `upstream returned ${response.status}`;
+                log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) failed (${response.status}), trying next candidate IP... - ${getClientInfo(req)}`);
+              }
+              if (response.data?.destroy) {
+                try { response.data.destroy(); } catch {}
+              }
+              if (agent?.destroy) {
+                try { agent.destroy(); } catch {}
+              }
+              continue;
+            }
 
-          // Non-live (movies / series) standard 1:1 stream piping
-          res.status(response.status);
-          const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
-          for (const h of forwardHeaders) {
-            if (response.headers[h]) res.setHeader(h, response.headers[h]);
-          }
+            log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} (IP: ${targetIp || 'default'}) - ${getClientInfo(req)}`);
+            recordHostUse(sourceId, hostUrl, true);
+            hostSucceeded = true;
 
-          // Enable TCP keepalives to prevent NAT/VPN middleboxes from dropping paused sockets
-          req.socket?.setKeepAlive?.(true, 10000);
-          (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
+            // Once upstream headers are received, detach the initial handshake socket timeout
+            // so streaming responses are not aborted when downstream clients buffer ahead or pause.
+            if ((response.request as any)?.setTimeout) (response.request as any).setTimeout(0);
+            if ((response.data as any)?.socket?.setTimeout) (response.data as any).socket.setTimeout(0);
 
-          const connId = generateId();
-          const connectionInfo = {
-            id: connId,
-            sourceId,
-            playlistId: playlist.id,
-            host: hostUrl,
-            username,
-            streamId,
-            streamName,
-            playlistName: (playlist as any).name || username,
-            type,
-            ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
-            startTime: Date.now(),
-            bytesRead: 0,
-            intervalBytes: 0,
-            currentBps: 0,
-            proxied: true,
-          };
+            // Handle live stream multiplexing
+            if (type === 'live') {
+              const forwardHeaders: Record<string, string> = {};
+              const headerKeys = ['content-type', 'accept-ranges', 'cache-control'];
+              for (const h of headerKeys) {
+                if (response.headers[h]) forwardHeaders[h] = response.headers[h];
+              }
 
-          proxyStats.connections.set(connId, connectionInfo);
-          proxyStats.activeStreams++;
+              const channel = streamHub.registerChannel(
+                sourceId,
+                originalId,
+                streamName,
+                type,
+                hostUrl,
+                response,
+                forwardHeaders,
+                {
+                  url: upstreamUrl,
+                  headers: upstreamHeaders,
+                  candidateIps: candidateIps.length > 0 ? candidateIps : undefined,
+                  currentIpIndex: targetIp && candidateIps.length > 0 ? Math.max(0, candidateIps.indexOf(targetIp)) : 0,
+                }
+              );
 
-          // 10-minute inactivity watchdog: If a client pauses playback (or device goes to sleep without closing)
-          // and consumes zero data for 10 consecutive minutes, release the upstream connection to prevent slot hoarding.
-          const VOD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
-          let idleTimer: NodeJS.Timeout | null = null;
-          const resetIdleTimer = () => {
-            if (idleTimer) clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => {
-              log(`[Proxy] VOD stream ${type}/${streamId} for ${username} idle for 10 minutes (paused/abandoned). Releasing upstream connection.`);
-              cleanup();
-            }, VOD_IDLE_TIMEOUT_MS);
-            idleTimer.unref?.();
-          };
-          resetIdleTimer();
+              const subId = generateId();
+              streamHub.addSubscriber(channel.channelKey, {
+                id: subId,
+                playlistId: playlist.id,
+                req,
+                res,
+                username,
+                playlistName: (playlist as any).name || username,
+                ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+                startTime: Date.now(),
+              });
 
-          response.data.on('data', (chunk: Buffer) => {
+              return; // success — stream multiplexer handles streaming and teardown
+            }
+
+            // Non-live (movies / series) standard 1:1 stream piping
+            res.status(response.status);
+            const forwardHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'];
+            for (const h of forwardHeaders) {
+              if (response.headers[h]) res.setHeader(h, response.headers[h]);
+            }
+
+            // Enable TCP keepalives to prevent NAT/VPN middleboxes from dropping paused sockets
+            req.socket?.setKeepAlive?.(true, 10000);
+            (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
+
+            const connId = generateId();
+            const connectionInfo = {
+              id: connId,
+              sourceId,
+              playlistId: playlist.id,
+              host: hostUrl,
+              username,
+              streamId,
+              streamName,
+              playlistName: (playlist as any).name || username,
+              type,
+              ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
+              startTime: Date.now(),
+              bytesRead: 0,
+              intervalBytes: 0,
+              currentBps: 0,
+              proxied: true,
+            };
+
+            proxyStats.connections.set(connId, connectionInfo);
+            proxyStats.activeStreams++;
+
+            // 10-minute inactivity watchdog: If a client pauses playback (or device goes to sleep without closing)
+            // and consumes zero data for 10 consecutive minutes, release the upstream connection to prevent slot hoarding.
+            const VOD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+            let idleTimer: NodeJS.Timeout | null = null;
+            const resetIdleTimer = () => {
+              if (idleTimer) clearTimeout(idleTimer);
+              idleTimer = setTimeout(() => {
+                log(`[Proxy] VOD stream ${type}/${streamId} for ${username} idle for 10 minutes (paused/abandoned). Releasing upstream connection.`);
+                cleanup();
+              }, VOD_IDLE_TIMEOUT_MS);
+              idleTimer.unref?.();
+            };
             resetIdleTimer();
-            proxyStats.totalBytes += chunk.length;
-            proxyStats.intervalBytes += chunk.length;
-            connectionInfo.bytesRead += chunk.length;
-            connectionInfo.intervalBytes += chunk.length;
-            recordTraffic(playlist.id, (playlist as any).name || username, type, chunk.length);
-          });
 
-          response.data.pipe(res);
+            response.data.on('data', (chunk: Buffer) => {
+              resetIdleTimer();
+              proxyStats.totalBytes += chunk.length;
+              proxyStats.intervalBytes += chunk.length;
+              connectionInfo.bytesRead += chunk.length;
+              connectionInfo.intervalBytes += chunk.length;
+              recordTraffic(playlist.id, (playlist as any).name || username, type, chunk.length);
+            });
 
-          let cleanedUp = false;
-          const cleanup = () => {
-            if (cleanedUp) return;
-            cleanedUp = true;
-            if (idleTimer) {
-              clearTimeout(idleTimer);
-              idleTimer = null;
+            response.data.pipe(res);
+
+            let cleanedUp = false;
+            const cleanup = () => {
+              if (cleanedUp) return;
+              cleanedUp = true;
+              if (idleTimer) {
+                clearTimeout(idleTimer);
+                idleTimer = null;
+              }
+              unregisterStreamController(connId);
+              if (proxyStats.connections.has(connId)) {
+                proxyStats.connections.delete(connId);
+                proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+              }
+              if (response.data?.destroy) {
+                try { response.data.destroy(); } catch {}
+              }
+              if (agent?.destroy) {
+                try { agent.destroy(); } catch {}
+              }
+              if (!res.writableEnded && !res.destroyed) {
+                try { res.destroy(); } catch {}
+              }
+            };
+
+            // Force-teardown for the Dashboard's "Trennen" button
+            registerStreamController(
+              connId,
+              () => {
+                log(`[Proxy] Force-quitting VOD stream ${type}/${streamId} for ${username} (conn ${connId})`);
+                cleanup();
+              },
+              () => !res.destroyed && !res.writableEnded && !(req && req.destroyed)
+            );
+
+            // Downstream client events
+            req.on('close', cleanup);
+            req.socket?.on('close', cleanup);
+            req.socket?.on('error', cleanup);
+            res.on('finish', cleanup);
+            res.on('close', cleanup);
+            res.on('error', cleanup);
+
+            // Upstream provider events
+            response.data.on('close', cleanup);
+            response.data.on('end', cleanup);
+            response.data.on('error', cleanup);
+            (response.data as any)?.socket?.on('close', cleanup);
+            (response.data as any)?.socket?.on('error', cleanup);
+            return; // success — stop trying sources
+          } catch (err: any) {
+            lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
+            lastError = err.message;
+            if (agent?.destroy) {
+              try { agent.destroy(); } catch {}
             }
-            unregisterStreamController(connId);
-            if (proxyStats.connections.has(connId)) {
-              proxyStats.connections.delete(connId);
-              proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
-            }
-            if (response.data?.destroy) {
-              try { response.data.destroy(); } catch {}
-            }
-            if (!res.writableEnded && !res.destroyed) {
-              try { res.destroy(); } catch {}
-            }
-          };
+            log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) error for ${type}/${streamId}: ${err.message}, trying next candidate IP... - ${getClientInfo(req)}`);
+          }
+        }
 
-          // Force-teardown for the Dashboard's "Trennen" button
-          registerStreamController(
-            connId,
-            () => {
-              log(`[Proxy] Force-quitting VOD stream ${type}/${streamId} for ${username} (conn ${connId})`);
-              cleanup();
-            },
-            () => !res.destroyed && !res.writableEnded && !(req && req.destroyed)
-          );
-
-          // Downstream client events
-          req.on('close', cleanup);
-          req.socket?.on('close', cleanup);
-          req.socket?.on('error', cleanup);
-          res.on('finish', cleanup);
-          res.on('close', cleanup);
-          res.on('error', cleanup);
-
-          // Upstream provider events
-          response.data.on('close', cleanup);
-          response.data.on('end', cleanup);
-          response.data.on('error', cleanup);
-          (response.data as any)?.socket?.on('close', cleanup);
-          (response.data as any)?.socket?.on('error', cleanup);
-          return; // success — stop trying sources
-        } catch (err: any) {
-          lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
-          lastError = err.message;
-          recordHostUse(sourceId, hostUrl, false, err.message);
-          log(`[Proxy] Host ${hostUrl} error for ${type}/${streamId}: ${err.message}, trying next... - ${getClientInfo(req)}`);
+        if (!hostSucceeded) {
+          recordHostUse(sourceId, hostUrl, false, lastError);
         }
       }
     }
@@ -1834,7 +1908,7 @@ export function createProxyRouter() {
   });
 
 
-  // EPG Export — fetches and merges all EPG sources for the playlist
+  // EPG Export — fetches and merges all EPG sources for the playlist with asynchronous disk caching
   router.get("/xmltv.php", async (req, res) => {
     const { username, password } = req.query;
     if (!username || !password) return res.status(400).send("Missing credentials");
@@ -1842,104 +1916,15 @@ export function createProxyRouter() {
     const playlist = await findPlaylistByCredentials(username as string, password as string) as Playlist | null;
     if (!playlist) return res.status(401).send("Invalid credentials");
 
-    const db = getDb();
     const imgBase = getBaseUrl(req);
 
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-
     try {
-      const fetchXml = async (url: string): Promise<string | null> => {
-        try {
-          const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
-          let data = Buffer.from(response.data);
-          if (url.endsWith('.gz') || response.headers['content-encoding'] === 'gzip') {
-            const zlib = await import('zlib');
-            data = zlib.gunzipSync(data);
-          }
-          let xml = data.toString('utf-8');
-          // Fix unescaped & in attribute values from malformed upstream feeds
-          xml = xml.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/gi, '&amp;');
-          return xml;
-        } catch (err: any) {
-          log(`[EPG] Failed to fetch ${url}: ${err.message}`);
-          return null;
-        }
-      };
-
-      const xmlParts: string[] = [];
-      const fetchPromises: Promise<void>[] = [];
-
-      const { epgs: schemaEpgs, sources: schemaSources } = await import('../schema.ts');
-      const { inArray } = await import('drizzle-orm');
-
-      // 1. Custom EPG sources linked to this playlist
-      const epgIds: string[] = playlist.epgIds || [];
-      if (epgIds.length) {
-        const epgDocs = db.select().from(schemaEpgs).where(inArray(schemaEpgs.id, epgIds)).all();
-        for (const epgDoc of epgDocs) {
-          if (!epgDoc.url) continue;
-          fetchPromises.push(fetchXml(epgDoc.url).then(xml => {
-            if (xml) xmlParts.push(xml);
-          }));
-        }
-      }
-
-      // 2. Upstream sources with useUpstreamEpg enabled
-      const playlistSourceIds = (Array.isArray(playlist.sourceIds) ? playlist.sourceIds : []) as string[];
-      const sourceDocs = playlistSourceIds.length > 0
-        ? db.select().from(schemaSources).where(inArray(schemaSources.id, playlistSourceIds)).all()
-        : [];
-
-      for (const sourceRow of sourceDocs) {
-        const sExtra = (sourceRow.extra as any) || {};
-        const overrides = (playlist as any).sourceOverrides?.[sourceRow.id];
-        const effectiveUsername = overrides?.username || sourceRow.username;
-        const effectivePassword = overrides?.password || sourceRow.password;
-
-        if (!sExtra.useUpstreamEpg || !sourceRow.url || !effectiveUsername) continue;
-        const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
-        log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
-        fetchPromises.push(fetchXml(upstreamEpgUrl).then(xml => {
-          if (xml) xmlParts.push(xml);
-        }));
-      }
-
-      await Promise.all(fetchPromises);
-
-      if (!xmlParts.length) {
-        return res.send('<?xml version="1.0" encoding="UTF-8"?><tv></tv>');
-      }
-
-      if (xmlParts.length === 1) {
-        return res.send(proxyXmlIcons(xmlParts[0], imgBase));
-      }
-
-      // Merge: extract inner content from each XMLTV doc and wrap in a single <tv>
-      // Use faster index lookup instead of global regex on massive strings
-      const extractInnerTv = (xml: string) => {
-        const startTag = xml.indexOf('<tv');
-        if (startTag === -1) return '';
-        const start = xml.indexOf('>', startTag) + 1;
-        const end = xml.lastIndexOf('</tv>');
-        if (start > 0 && end > start) {
-          const inner = xml.slice(start, end);
-          return proxyXmlIcons(inner, imgBase);
-        }
-        return '';
-      };
-
-      res.write(`<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n`);
-      for (let i = 0; i < xmlParts.length; i++) {
-        res.write(extractInnerTv(xmlParts[i]));
-        if (i < xmlParts.length - 1) res.write('\n');
-        // Help GC by clearing strings
-        xmlParts[i] = "";
-      }
-      res.end(`\n</tv>`);
+      await servePlaylistEpg(req, res, playlist, imgBase);
     } catch (err: any) {
       log(`[EPG] Export error: ${err.message} - ${getClientInfo(req)}`);
-      res.status(502).send("Failed to fetch EPG data");
+      if (!res.headersSent) {
+        res.status(502).send("Failed to fetch EPG data");
+      }
     }
   });
 

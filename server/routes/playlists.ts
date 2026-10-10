@@ -10,6 +10,7 @@ import { buildStreamUrl } from "../quality-scan.ts";
 import { getBaseUrl, proxySeriesInfoImages } from "../utils.ts";
 import { recordTraffic } from "../traffic.ts";
 import { rememberSeriesInfo } from "../stream-title-cache.ts";
+import { clearEpgCache } from "../epg-service.ts";
 
 export function createPlaylistsRouter(epgsRouter?: Router) {
   const router = Router();
@@ -309,6 +310,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
     if (epgsRouter && (epgsRouter as any).invalidateEpgChannelCache) {
       (epgsRouter as any).invalidateEpgChannelCache(req.params.id);
     }
+    clearEpgCache(req.params.id).catch(() => {});
     res.json({ success: true });
   });
 
@@ -352,6 +354,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       tx.delete(schemaCategoryMappings).where(eq(schemaCategoryMappings.playlistId, playlistId)).run();
     });
 
+    clearEpgCache(playlistId).catch(() => {});
     res.json({ success: true });
   });
 

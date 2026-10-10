@@ -4,6 +4,12 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface SourceHostResolvedIp {
+  ip: string;
+  latencyMs: number | null;
+  healthy: boolean;
+}
+
 export interface SourceHost {
   url: string;
   label?: string;
@@ -17,6 +23,8 @@ export interface SourceHost {
   networkType?: 'cdn' | 'direct' | null; // Detected network routing (CDN vs Direct)
   cdnProvider?: string | null;    // Detected CDN provider (e.g. Cloudflare, CloudFront, Fastly)
   resolvedIp?: string | null;     // Resolved IP address
+  resolvedIps?: SourceHostResolvedIp[]; // Multi-IP cluster resolved IP addresses with health/latency
+  ipCount?: number;               // Number of detected resolved IPs
   lastBenchmark?: string | null;  // ISO timestamp of last benchmark for this host
   uses: number;                   // Successful proxied stream uses
   failures: number;               // Failed proxied stream attempts

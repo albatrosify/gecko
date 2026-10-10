@@ -93,7 +93,8 @@ import {
   Sparkles,
   BarChart3,
   HardDrive,
-  Power
+  Power,
+  Layers
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -2049,10 +2050,26 @@ export function SourceManager({ user }: { user: User }) {
                                   ) : (
                                     <span
                                       className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30"
-                                      title={h.resolvedIp ? `IP: ${h.resolvedIp}` : undefined}
+                                      title={h.resolvedIp ? `Active IP: ${h.resolvedIp}` : undefined}
                                     >
                                       <Network size={9} className="shrink-0" />
                                       <span>Direct</span>
+                                    </span>
+                                  )}
+                                  {((h.ipCount && h.ipCount > 1) || (h.resolvedIps && h.resolvedIps.length > 1)) && (
+                                    <span
+                                      className="inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 cursor-help"
+                                      title={
+                                        h.resolvedIps && h.resolvedIps.length > 0
+                                          ? `${h.ipCount || h.resolvedIps.length} IPs in cluster:\n` +
+                                            h.resolvedIps
+                                              .map(r => `• ${r.ip} (${r.latencyMs != null ? `${r.latencyMs}ms` : 'unreachable'}${r.ip === h.resolvedIp ? ' - Active' : ''})`)
+                                              .join('\n')
+                                          : `${h.ipCount} IPs resolved`
+                                      }
+                                    >
+                                      <Layers size={9} className="shrink-0" />
+                                      <span>{h.ipCount || h.resolvedIps?.length} IPs</span>
                                     </span>
                                   )}
                                 </td>
