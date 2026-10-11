@@ -326,7 +326,7 @@ export function createProxyRouter() {
 
         let hostSucceeded = false;
         for (const targetIp of ipsToTry) {
-          const agent = targetIp ? createIpPinnedAgent(targetIp, isHttps) : undefined;
+          const agent = targetIp ? createIpPinnedAgent(targetIp, extractHostname(hostUrl).hostname, isHttps) : undefined;
 
           try {
             const response = await axios({

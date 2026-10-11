@@ -12,9 +12,10 @@ Direktes Verwenden von Roh-IPs in URLs bricht jedoch:
 ## Lösung
 1. **`server/dns-resolver.ts`**:
    - `resolveHostIps(hostname)`: Löst alle IPv4-A-Records via `dns.promises.resolve4` (Fallback `lookup`) auf und puffert sie mit 5-Minuten-TTL.
-   - `createIpPinnedAgent(targetIp, isHttps)`: Erzeugt `http.Agent` / `https.Agent` mit benutzerdefiniertem `lookup`.
+   - `createIpPinnedAgent(targetIp, pinnedHostname, isHttps)`: Erzeugt `http.Agent` / `https.Agent` mit benutzerdefiniertem `lookup`.
      - **Wichtig für Node 20+ Happy Eyeballs**: Wenn `options.all === true`, muss `callback(null, [{ address: targetIp, family: 4 }])` zurückgegeben werden; andernfalls `callback(null, targetIp, 4)`.
      - Dadurch pinnt der TCP-Socket exakt auf `targetIp`, während URL, `Host`-Header und TLS SNI der Originaldomain vollständig intakt bleiben.
+     - Pinning greift **nur** für `pinnedHostname`; fremde Hostnames (z. B. Cross-Host-Redirect-Ziele eines Loadbalancers) werden per echtem DNS aufgelöst — siehe `2026-10-11-ip-pinning-redirect-loop.md`.
    - `rankHostIps(hostname, port, isHttps)`: Ermittelt die Latenzen aller Cluster-IPs parallel und sortiert nach Antwortzeit aufsteigend.
 2. **`server/hosts.ts`**:
    - `detectHostNetwork` und `benchmarkSourceHosts` erkennen Multi-IP-Domains, ranken die Kandidaten und speichern die schnellste gesunde IP als `resolvedIp` sowie den gesamten Pool in `resolvedIps` & `ipCount`.

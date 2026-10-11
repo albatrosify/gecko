@@ -3,7 +3,7 @@ import { log } from '../logger.ts';
 import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
-import { createIpPinnedAgent } from '../dns-resolver.ts';
+import { createIpPinnedAgent, extractHostname } from '../dns-resolver.ts';
 
 /** How many consecutive reconnect failures to tolerate before waiting for the client. */
 const RECONNECT_MAX_ATTEMPTS = 4;
@@ -657,12 +657,12 @@ class StreamHub {
         channel.upstreamConfig.currentIpIndex = currentIpIndex;
         const targetIp = candidateIps[currentIpIndex];
         const isHttps = channel.upstreamConfig.url.startsWith('https:');
-        agent = createIpPinnedAgent(targetIp, isHttps);
+        agent = createIpPinnedAgent(targetIp, extractHostname(channel.upstreamConfig.url).hostname, isHttps);
         log(`[StreamHub] 🔄 In-place reconnecting ${channelKey} rotating to IP ${targetIp} (${currentIpIndex + 1}/${candidateIps.length})`);
       } else if (channel.upstreamConfig.candidateIps && channel.upstreamConfig.candidateIps.length === 1) {
         const targetIp = channel.upstreamConfig.candidateIps[0];
         const isHttps = channel.upstreamConfig.url.startsWith('https:');
-        agent = createIpPinnedAgent(targetIp, isHttps);
+        agent = createIpPinnedAgent(targetIp, extractHostname(channel.upstreamConfig.url).hostname, isHttps);
       }
 
       const axios = (await import('axios')).default;

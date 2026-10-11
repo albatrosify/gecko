@@ -58,12 +58,23 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     }
   });
 
-  function inspectAgentIp(agent: any): string {
+  type AgentLookup = (
+    hostname: string,
+    options: object,
+    callback: (err: NodeJS.ErrnoException | null, address: string, family?: number) => void
+  ) => void;
+  const isAgentLookup = (value: unknown): value is AgentLookup => typeof value === 'function';
+
+  /** Returns the IP the agent's custom lookup pins `hostname` to ('' if it has none). */
+  function inspectAgentIp(agent: unknown, hostname: string): string {
     let resolved = '';
-    if (agent?.options?.lookup) {
-      agent.options.lookup('dummy.host', {}, (_err: any, address: string) => {
-        resolved = address;
-      });
+    if (agent && typeof agent === 'object' && 'options' in agent) {
+      const options: unknown = agent.options;
+      if (options && typeof options === 'object' && 'lookup' in options && isAgentLookup(options.lookup)) {
+        options.lookup(hostname, {}, (_err, address) => {
+          resolved = typeof address === 'string' ? address : '';
+        });
+      }
     }
     return resolved;
   }
@@ -137,8 +148,8 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     const call1Config = mockAxios.mock.calls[0][0];
     const call2Config = mockAxios.mock.calls[1][0];
 
-    expect(inspectAgentIp(call1Config.httpAgent)).toBe('198.51.100.10');
-    expect(inspectAgentIp(call2Config.httpAgent)).toBe('198.51.100.20');
+    expect(inspectAgentIp(call1Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.10');
+    expect(inspectAgentIp(call2Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.20');
 
     // Verify streamHub registered channel with candidate IPs and correct index
     const channel = streamHub.getChannel('src-multi', '100');
@@ -205,8 +216,8 @@ describe('Multi-IP Stream Proxying & Failover', () => {
 
     // Both candidate IPs were tried
     expect(mockAxios).toHaveBeenCalledTimes(2);
-    expect(inspectAgentIp(mockAxios.mock.calls[0][0].httpAgent)).toBe('198.51.100.1');
-    expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent)).toBe('198.51.100.2');
+    expect(inspectAgentIp(mockAxios.mock.calls[0][0].httpAgent, 'failing.upstream.tv')).toBe('198.51.100.1');
+    expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent, 'failing.upstream.tv')).toBe('198.51.100.2');
   });
 
   it('dynamically resolves candidate IPs via resolveHostIps when not present in source extra', async () => {
@@ -270,8 +281,8 @@ describe('Multi-IP Stream Proxying & Failover', () => {
 
     expect(resolveSpy).toHaveBeenCalledWith('dynamic.nodes.tv');
     expect(mockAxios).toHaveBeenCalledTimes(2);
-    expect(inspectAgentIp(mockAxios.mock.calls[0][0].httpAgent)).toBe('203.0.113.50');
-    expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent)).toBe('203.0.113.60');
+    expect(inspectAgentIp(mockAxios.mock.calls[0][0].httpAgent, 'dynamic.nodes.tv')).toBe('203.0.113.50');
+    expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent, 'dynamic.nodes.tv')).toBe('203.0.113.60');
 
     abortController.abort();
     resolveSpy.mockRestore();

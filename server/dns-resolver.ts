@@ -170,35 +170,48 @@ export async function resolveHostIps(
   return uniqueIps;
 }
 
+export type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | dns.LookupAddress[],
+  family?: number
+) => void;
+
 /**
  * Creates an http.Agent or https.Agent that pins TCP connections to targetIp
  * while preserving hostname semantics (Host header and TLS SNI).
+ * Only requests to `pinnedHostname` are pinned; other hostnames (e.g. the target of a
+ * cross-host HTTP redirect) resolve via normal DNS, otherwise load balancers that
+ * redirect to per-node hostnames send us into an endless redirect loop.
  * Handles Node 20+ Happy Eyeballs options.all signature.
  */
 export function createIpPinnedAgent(
   targetIp: string,
+  pinnedHostname: string,
   isHttps = false,
   customOptions?: http.AgentOptions | https.AgentOptions
 ): http.Agent | https.Agent {
+  const normalizeHost = (h: string | undefined): string =>
+    (h || "").trim().toLowerCase().replace(/\.$/, "");
+  const pinnedHost = normalizeHost(pinnedHostname);
+
+  const lookup = (hostname: string, options: dns.LookupOptions, callback: LookupCallback): void => {
+    if (!pinnedHost || normalizeHost(hostname) !== pinnedHost) {
+      // Different host (e.g. after an HTTP redirect): fall back to real DNS resolution
+      dns.lookup(hostname, options, callback);
+      return;
+    }
+    if (options?.all) {
+      callback(null, [{ address: targetIp, family: 4 }]);
+    } else {
+      callback(null, targetIp, 4);
+    }
+  };
+
   const agentOptions = {
     keepAlive: false,
     rejectUnauthorized: false,
     ...customOptions,
-    lookup: (
-      hostname: string,
-      options: any,
-      callback: (err: NodeJS.ErrnoException | null, address?: any, family?: number) => void
-    ) => {
-      if (typeof options === "function") {
-        callback = options;
-        options = {};
-      }
-      if (options?.all) {
-        callback(null, [{ address: targetIp, family: 4 }]);
-      } else {
-        callback(null, targetIp, 4);
-      }
-    },
+    lookup,
   };
 
   return isHttps ? new https.Agent(agentOptions) : new http.Agent(agentOptions);
@@ -220,7 +233,7 @@ export function measureIpLatency(
     const { hostname: cleanHost, port: extractedPort, path: extractedPath } = extractHostname(hostname);
     const effectivePort = port ?? extractedPort ?? (isHttps ? 443 : 80);
     const reqPath = extractedPath || "/";
-    const agent = createIpPinnedAgent(ip, isHttps);
+    const agent = createIpPinnedAgent(ip, cleanHost, isHttps);
     const transport = isHttps ? https : http;
 
     const startTime = Date.now();

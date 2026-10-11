@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import http from "http";
 import https from "https";
 import dns from "dns";
+import axios from "axios";
 import {
   resolveHostIps,
   createIpPinnedAgent,
@@ -117,23 +118,57 @@ describe("dns-resolver", () => {
   });
 
   describe("createIpPinnedAgent", () => {
+    type LookupFn = (
+      hostname: string,
+      options: dns.LookupOptions,
+      callback: (err: NodeJS.ErrnoException | null, address?: string | dns.LookupAddress[], family?: number) => void
+    ) => void;
+    const isLookupFn = (value: unknown): value is LookupFn => typeof value === "function";
+    // Node's Agent type does not expose `options`, but it exists at runtime and holds the
+    // custom `lookup` that Agent passes through to net.connect.
+    const getLookup = (agent: http.Agent | https.Agent): LookupFn => {
+      const instance: unknown = agent;
+      if (instance && typeof instance === "object" && "options" in instance) {
+        const options: unknown = instance.options;
+        if (options && typeof options === "object" && "lookup" in options && isLookupFn(options.lookup)) {
+          return options.lookup;
+        }
+      }
+      throw new Error("agent options have no lookup function");
+    };
+
+    /** Mocks dns.lookup like a resolver: resolves each hostname to one address. */
+    const mockDnsLookup = (resolve: (hostname: string) => { address: string; family: number } | Error) =>
+      vi.spyOn(dns, "lookup").mockImplementation((hostname: string, ...rest: unknown[]) => {
+        const done = rest.find((arg): arg is NonNullable<Parameters<LookupFn>[2]> => typeof arg === "function");
+        const opts = rest[0];
+        const wantsAll = typeof opts === "object" && opts !== null && "all" in opts && opts.all === true;
+        const result = resolve(hostname);
+        if (!done) return;
+        if (result instanceof Error) {
+          done(result);
+        } else if (wantsAll) {
+          done(null, [result]);
+        } else {
+          done(null, result.address, result.family);
+        }
+      });
+
     it("creates an http.Agent and an https.Agent", () => {
-      const httpAgent = createIpPinnedAgent("198.51.100.1", false);
-      const httpsAgent = createIpPinnedAgent("198.51.100.1", true);
+      const httpAgent = createIpPinnedAgent("198.51.100.1", "my-host.com", false);
+      const httpsAgent = createIpPinnedAgent("198.51.100.1", "my-host.com", true);
 
       expect(httpAgent).toBeInstanceOf(http.Agent);
       expect(httpsAgent).toBeInstanceOf(https.Agent);
     });
 
-    it("custom lookup handles Node 20 Happy Eyeballs options.all: true", () => {
-      const agent = createIpPinnedAgent("198.51.100.1", false) as any;
-      const lookupFn = agent.options.lookup;
-      expect(typeof lookupFn).toBe("function");
+    it("pins the configured hostname and handles Node 20 Happy Eyeballs options.all: true", () => {
+      const lookupFn = getLookup(createIpPinnedAgent("198.51.100.1", "my-host.com", false));
 
-      let calledErr: any = null;
-      let calledResult: any = null;
+      let calledErr: unknown = null;
+      let calledResult: unknown = null;
 
-      lookupFn("my-host.com", { all: true }, (err: any, addresses: any) => {
+      lookupFn("my-host.com", { all: true }, (err, addresses) => {
         calledErr = err;
         calledResult = addresses;
       });
@@ -142,22 +177,36 @@ describe("dns-resolver", () => {
       expect(calledResult).toEqual([{ address: "198.51.100.1", family: 4 }]);
     });
 
-    it("custom lookup handles single address lookup and swapped callback", () => {
-      const agent = createIpPinnedAgent("198.51.100.2", false) as any;
-      const lookupFn = agent.options.lookup;
+    it("pins the configured hostname case-insensitively and ignores a trailing dot", () => {
+      const lookupFn = getLookup(createIpPinnedAgent("198.51.100.1", "My-Host.com", false));
 
-      // Without options (callback passed as 2nd arg)
-      let resAddr: any;
-      let resFam: any;
-      lookupFn("my-host.com", (err: any, addr: any, family: any) => {
-        resAddr = addr;
-        resFam = family;
+      let calledResult: unknown = null;
+      lookupFn("my-host.com.", { all: true }, (err, addresses) => {
+        calledResult = addresses;
       });
-      expect(resAddr).toBe("198.51.100.2");
-      expect(resFam).toBe(4);
 
-      // With options { all: false }
-      lookupFn("my-host.com", { all: false }, (err: any, addr: any, family: any) => {
+      expect(calledResult).toEqual([{ address: "198.51.100.1", family: 4 }]);
+    });
+
+    it("resolves foreign hostnames via real DNS instead of pinning them (HTTP redirect targets)", () => {
+      const lookupFn = getLookup(createIpPinnedAgent("198.51.100.1", "my-host.com", false));
+      const lookupSpy = mockDnsLookup(() => ({ address: "203.0.113.9", family: 4 }));
+
+      let calledResult: unknown = null;
+      lookupFn("redirect-target.example.com", { all: true }, (err, addresses) => {
+        calledResult = addresses;
+      });
+
+      expect(lookupSpy).toHaveBeenCalledWith("redirect-target.example.com", { all: true }, expect.any(Function));
+      expect(calledResult).toEqual([{ address: "203.0.113.9", family: 4 }]);
+    });
+
+    it("custom lookup handles single address lookup", () => {
+      const lookupFn = getLookup(createIpPinnedAgent("198.51.100.2", "my-host.com", false));
+
+      let resAddr: unknown;
+      let resFam: unknown;
+      lookupFn("my-host.com", { all: false }, (err, addr, family) => {
         resAddr = addr;
         resFam = family;
       });
@@ -175,10 +224,12 @@ describe("dns-resolver", () => {
       });
 
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const port = (server.address() as any).port;
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("expected TCP port");
+      const port = address.port;
 
       try {
-        const pinnedAgent = createIpPinnedAgent("127.0.0.1", false);
+        const pinnedAgent = createIpPinnedAgent("127.0.0.1", "unresolvable-domain.invalid", false);
 
         await new Promise<void>((resolve, reject) => {
           const req = http.request(
@@ -203,6 +254,53 @@ describe("dns-resolver", () => {
         expect(receivedHostHeader).toBe("unresolvable-domain.invalid");
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it("follows cross-host HTTP redirects via real DNS instead of the pinned IP", async () => {
+      // serverB listens only on ::1. If the redirect hop were still sent to the pinned IP
+      // (127.0.0.1) it would hit nothing on portB — reproducing the provider redirect loop.
+      let serverBHost: string | undefined;
+      const serverB = http.createServer((req, res) => {
+        serverBHost = req.headers.host;
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("server-b");
+      });
+      await new Promise<void>((resolve) => serverB.listen(0, "::1", resolve));
+      const addressB = serverB.address();
+      if (addressB === null || typeof addressB === "string") throw new Error("expected TCP port");
+      const portB = addressB.port;
+
+      const serverA = http.createServer((_req, res) => {
+        res.writeHead(302, { Location: `http://node-b.example:${portB}/stream` });
+        res.end();
+      });
+      await new Promise<void>((resolve) => serverA.listen(0, "127.0.0.1", resolve));
+      const addressA = serverA.address();
+      if (addressA === null || typeof addressA === "string") throw new Error("expected TCP port");
+      const portA = addressA.port;
+
+      const lookupSpy = mockDnsLookup((hostname) =>
+        hostname === "node-b.example"
+          ? { address: "::1", family: 6 }
+          : new Error(`unexpected DNS lookup for ${hostname}`)
+      );
+
+      const agent = createIpPinnedAgent("127.0.0.1", "lb.example", false);
+      try {
+        const response = await axios.get(`http://lb.example:${portA}/live/user/pass/1.ts`, {
+          httpAgent: agent,
+          httpsAgent: agent,
+          timeout: 5000,
+        });
+        expect(response.status).toBe(200);
+        expect(response.data).toBe("server-b");
+        expect(serverBHost).toBe(`node-b.example:${portB}`);
+      } finally {
+        agent.destroy();
+        lookupSpy.mockRestore();
+        await new Promise<void>((resolve) => serverA.close(() => resolve()));
+        await new Promise<void>((resolve) => serverB.close(() => resolve()));
       }
     });
   });
