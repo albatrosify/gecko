@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
-import { formatBytes } from '../format.ts';
+import { formatBytes, formatDuration } from '../format.ts';
 import { User, Playlist, UpstreamSource, EPGSource, StreamMapping, CategoryMapping, SourceConnectionLog, SourceHost, Recording } from '../types';
 import { SystemLogViewer } from './SystemLogViewer';
 import { BandwidthChart } from './BandwidthChart';
@@ -9163,7 +9163,7 @@ export function DvrManager({ user }: { user: User }) {
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800 text-xs text-zinc-400">
                   <div>
                     <span className="block text-[9px] text-zinc-500 uppercase font-bold">Laufzeit</span>
-                    <span className="font-mono text-xs text-zinc-200">{formatElapsedSince(rec.durationSeconds)}</span>
+                    <span className="font-mono text-xs text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
                   </div>
                   <div>
                     <span className="block text-[9px] text-zinc-500 uppercase font-bold">Größe</span>
@@ -9255,7 +9255,7 @@ export function DvrManager({ user }: { user: User }) {
                       {new Date(rec.startTime).toLocaleDateString()} {new Date(rec.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
-                      {formatElapsedSince(rec.durationSeconds)}
+                      {formatDuration(rec.durationSeconds)}
                     </td>
                     <td className="px-4 py-2.5 text-center font-mono text-[11px] text-zinc-300">
                       {formatBytes(rec.fileSizeBytes)}
@@ -9279,22 +9279,16 @@ export function DvrManager({ user }: { user: User }) {
                           </button>
                         )}
 
-                        <button
-                          onClick={() => handleRepair(rec.id)}
-                          disabled={actionBusy[rec.id]}
-                          className={`p-1.5 rounded-lg transition-all disabled:opacity-50 cursor-pointer ${
-                            rec.extra?.needsRepair
-                              ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 ring-1 ring-amber-500/30'
-                              : 'text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10'
-                          }`}
-                          title={
-                            rec.extra?.needsRepair
-                              ? 'Timestamp issue detected — click to losslessly repair timestamps'
-                              : 'Repair timestamps (lossless FFmpeg stream copy)'
-                          }
-                        >
-                          <Wrench size={14} />
-                        </button>
+                        {rec.extra?.needsRepair && !rec.extra?.repairedAt && (
+                          <button
+                            onClick={() => handleRepair(rec.id)}
+                            disabled={actionBusy[rec.id]}
+                            className="p-1.5 rounded-lg transition-all disabled:opacity-50 cursor-pointer text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 ring-1 ring-amber-500/30"
+                            title="Timestamp issue detected — click to losslessly repair timestamps"
+                          >
+                            <Wrench size={14} />
+                          </button>
+                        )}
 
                         <button
                           onClick={() => setActivePlayback(rec)}
