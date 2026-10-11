@@ -86,6 +86,12 @@ export function createProxyRouter() {
   const handleStreamProxy = async (req: express.Request, res: express.Response, type: 'live' | 'movie' | 'series') => {
     const { username, password, streamId, ext } = req.params;
 
+    // Server-side DVR recordings drive this endpoint via an internal loopback request
+    // and identify themselves with this header so the recorder can attach to the channel.
+    const dvrRecordingId = typeof req.headers['x-gecko-dvr-recording-id'] === 'string'
+      ? req.headers['x-gecko-dvr-recording-id']
+      : undefined;
+
     const playlist = await findPlaylistByCredentials(username, password) as Playlist | null;
     if (!playlist) return res.status(403).send("Invalid credentials");
 
@@ -233,6 +239,10 @@ export function createProxyRouter() {
       );
 
       if (guardDecision.action === 'block_placeholder') {
+        if (dvrRecordingId) {
+          log(`[DVR] Refusing server-side recording for ${type}/${streamId}: source ${sourceId} busy with "${guardDecision.activeStreamName || guardDecision.activeStreamId}"`);
+          return res.status(409).json({ error: `Quelle ist durch "${guardDecision.activeStreamName || guardDecision.activeStreamId}" belegt. Aufnahme nicht gestartet.` });
+        }
         log(`[Proxy] Concurrency Guard blocked request for ${type}/${streamId} on source ${sourceId}: ${guardDecision.reason} - ${getClientInfo(req)}`);
         return servePlaceholderStream(
           req,
@@ -253,6 +263,14 @@ export function createProxyRouter() {
       }
 
       if (type === 'live' && guardDecision.action === 'join_existing' && guardDecision.existingChannelKey) {
+        if (dvrRecordingId) {
+          await dvrRecorder.attachExternalRecording(
+            dvrRecordingId,
+            sourceId,
+            guardDecision.activeStreamId || String(originalId),
+            guardDecision.activeStreamName || streamName
+          );
+        }
         const subId = generateId();
         const joined = streamHub.addSubscriber(guardDecision.existingChannelKey, {
           id: subId,
@@ -391,6 +409,10 @@ export function createProxyRouter() {
                   currentIpIndex: targetIp && candidateIps.length > 0 ? Math.max(0, candidateIps.indexOf(targetIp)) : 0,
                 }
               );
+
+              if (dvrRecordingId) {
+                await dvrRecorder.attachExternalRecording(dvrRecordingId, sourceId, String(originalId), streamName);
+              }
 
               const subId = generateId();
               streamHub.addSubscriber(channel.channelKey, {

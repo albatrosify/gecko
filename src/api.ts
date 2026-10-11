@@ -480,6 +480,24 @@ export const dvr = {
       body: JSON.stringify({ connectionId }),
     });
   },
+  async startChannelRecording(payload: {
+    playlistId: string;
+    streamId: string;
+    streamName?: string;
+    durationMinutes?: number;
+  }): Promise<{ success: boolean; recording: import('./types').Recording }> {
+    return request('/api/dvr/record-channel', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+  /** Live channels as a downstream client sees them (via the playlist's player_api endpoint). */
+  async getLiveChannels(username: string, password: string): Promise<{ stream_id: string | number; name: string; stream_icon?: string }[]> {
+    const data = await request<unknown>(
+      `/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`
+    );
+    return Array.isArray(data) ? (data as any[]) : [];
+  },
   async stopRecording(id: string): Promise<{ success: boolean; recording: import('./types').Recording }> {
     return request(`/api/dvr/recordings/${id}/stop`, {
       method: 'POST',

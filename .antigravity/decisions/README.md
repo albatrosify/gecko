@@ -22,4 +22,4 @@ Positive/negative Folgen; was nun anders ist.
 
 ## Bisherige Entscheidungen
 
-- Noch keine erfasst. Beim nächsten signifikanten Architektur-Eingriff die erste anlegen.
+- `0001-dvr-server-side-recordings.md` — Server-seitige DVR-Aufnahmen über internen Loopback an `/live/...` (Start aus dem DVR-Tab ohne Player).

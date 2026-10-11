@@ -9002,6 +9002,7 @@ export function DvrManager({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [activePlayback, setActivePlayback] = useState<import('../types').Recording | null>(null);
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+  const [showStartModal, setShowStartModal] = useState(false);
 
   const loadRecordings = useCallback(async () => {
     try {
@@ -9053,11 +9054,19 @@ export function DvrManager({ user }: { user: User }) {
 
   return (
     <div className="p-6 space-y-5 max-w-6xl mx-auto">
-      <header className="flex justify-between items-end">
+      <header className="flex justify-between items-end gap-3">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-zinc-100">DVR / Aufnahmen</h2>
           <p className="text-xs text-zinc-500">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
         </div>
+        <button
+          onClick={() => setShowStartModal(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shrink-0 cursor-pointer"
+          title="Eine Live-Sendung direkt aufnehmen – auch ohne laufenden Player"
+        >
+          <Plus size={14} />
+          Neue Aufnahme
+        </button>
       </header>
 
       {/* Summary Cards */}
@@ -9102,6 +9111,12 @@ export function DvrManager({ user }: { user: User }) {
                         <span>⚠️ Fernseher getrennt – Aufnahme läuft im Hintergrund</span>
                       </div>
                     )}
+                    {rec.extra?.manual && rec.extra?.durationMinutes ? (
+                      <div className="mt-1 inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-400 bg-zinc-800/60 px-1.5 py-0.5 rounded border border-zinc-700/50">
+                        <Clock size={10} />
+                        <span>Stoppt automatisch nach {rec.extra.durationMinutes} Min.</span>
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     onClick={() => handleStop(rec.id)}
@@ -9143,7 +9158,7 @@ export function DvrManager({ user }: { user: User }) {
             </div>
             <h4 className="text-sm font-bold text-zinc-300">Noch keine Aufnahmen vorhanden</h4>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Klicke im <strong>Dashboard</strong> bei einem aktiven Live-Stream auf <strong>Aufnehmen</strong>, um eine Sendung direkt ohne zweite Verbindung mitzuschneiden.
+              Klicke auf <strong>Neue Aufnahme</strong>, um eine Live-Sendung direkt aus Gecko aufzunehmen – ganz ohne laufenden Player.
             </p>
           </div>
         ) : (
@@ -9221,6 +9236,14 @@ export function DvrManager({ user }: { user: User }) {
         <DvrPlaybackModal
           recording={activePlayback}
           onClose={() => setActivePlayback(null)}
+        />
+      )}
+
+      {/* Start a new server-side recording */}
+      {showStartModal && (
+        <StartRecordingModal
+          onClose={() => setShowStartModal(false)}
+          onStarted={loadRecordings}
         />
       )}
     </div>
@@ -9364,6 +9387,256 @@ function DvrPlaybackModal({
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const RECORDING_DURATIONS: { label: string; minutes: number }[] = [
+  { label: 'Unbegrenzt (bis manuell gestoppt)', minutes: 0 },
+  { label: '30 Minuten', minutes: 30 },
+  { label: '1 Stunde', minutes: 60 },
+  { label: '1,5 Stunden', minutes: 90 },
+  { label: '2 Stunden', minutes: 120 },
+  { label: '2,5 Stunden', minutes: 150 },
+  { label: '3 Stunden', minutes: 180 },
+  { label: '4 Stunden', minutes: 240 },
+];
+
+/**
+ * Starts a server-side recording of a live channel from the DVR page.
+ * The channel list comes from the playlist's own player_api endpoint, so it matches
+ * exactly what downstream clients (TiviMate, etc.) see.
+ */
+function StartRecordingModal({
+  onClose,
+  onStarted,
+}: {
+  onClose: () => void;
+  onStarted: () => void;
+}) {
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistId, setPlaylistId] = useState('');
+  const [channels, setChannels] = useState<{ stream_id: string | number; name: string; stream_icon?: string }[]>([]);
+  const [loadingPlaylists, setLoadingPlaylists] = useState(true);
+  const [loadingChannels, setLoadingChannels] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const [search, setSearch] = useState('');
+  const [durationChoice, setDurationChoice] = useState('0');
+  const [customMinutes, setCustomMinutes] = useState(150);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const durationMinutes = durationChoice === 'custom'
+    ? Math.max(1, Math.min(24 * 60, Math.floor(customMinutes) || 0))
+    : parseInt(durationChoice, 10) || 0;
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await api.playlists.list();
+        setPlaylists(list || []);
+        if (list && list.length > 0) setPlaylistId(list[0].id);
+      } catch (err: any) {
+        setError(`Playlists konnten nicht geladen werden: ${err.message}`);
+      } finally {
+        setLoadingPlaylists(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!playlistId) return;
+    const pl = playlists.find(p => p.id === playlistId);
+    if (!pl) return;
+    setLoadingChannels(true);
+    setChannels([]);
+    setSelectedId(null);
+    setSearch('');
+    setError(null);
+    api.dvr.getLiveChannels(pl.username, pl.password)
+      .then(data => {
+        setChannels(data);
+        if (data.length > 0) setSelectedId(data[0].stream_id);
+      })
+      .catch(err => setError(`Sender konnten nicht geladen werden: ${err.message}`))
+      .finally(() => setLoadingChannels(false));
+  }, [playlistId, playlists]);
+
+  const filteredChannels = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const base = q ? channels.filter(c => (c.name || '').toLowerCase().includes(q)) : channels;
+    return base.slice(0, 300);
+  }, [channels, search]);
+
+  const selected = channels.find(c => c.stream_id === selectedId) || null;
+
+  const handleStart = async () => {
+    if (!selected || !playlistId) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await api.dvr.startChannelRecording({
+        playlistId,
+        streamId: String(selected.stream_id),
+        streamName: selected.name,
+        durationMinutes,
+      });
+      onStarted();
+      onClose();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800/80">
+          <div>
+            <h3 className="text-base font-bold text-zinc-100">Neue Aufnahme starten</h3>
+            <p className="text-[11px] text-zinc-500">Gecko öffnet die Quelle selbst – ohne laufenden Player oder Zweitverbindung.</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-all cursor-pointer shrink-0"
+            title="Schließen"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto">
+          {/* Playlist */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Playlist</label>
+            {loadingPlaylists ? (
+              <div className="text-xs text-zinc-500 animate-pulse py-2">Lade Playlists...</div>
+            ) : playlists.length === 0 ? (
+              <div className="text-xs text-amber-400 py-2">Keine Playlist vorhanden.</div>
+            ) : (
+              <select
+                value={playlistId}
+                onChange={e => setPlaylistId(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:border-red-500/50 outline-none"
+              >
+                {playlists.map(pl => (
+                  <option key={pl.id} value={pl.id}>{pl.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Channel */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender</label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Sender suchen..."
+                disabled={loadingChannels || channels.length === 0}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-red-500/50 outline-none disabled:opacity-50"
+              />
+            </div>
+            <div className="border border-zinc-800 rounded-xl bg-zinc-950 overflow-hidden">
+              {loadingChannels ? (
+                <div className="p-4 text-center text-xs text-zinc-500 animate-pulse">Lade Sender von der Quelle...</div>
+              ) : filteredChannels.length === 0 ? (
+                <div className="p-4 text-center text-xs text-zinc-500">
+                  {channels.length === 0 ? 'Keine Live-Sender gefunden.' : 'Kein Treffer für die Suche.'}
+                </div>
+              ) : (
+                <div className="max-h-56 overflow-y-auto divide-y divide-zinc-800/70">
+                  {filteredChannels.map(ch => {
+                    const isSel = ch.stream_id === selectedId;
+                    return (
+                      <button
+                        key={String(ch.stream_id)}
+                        onClick={() => setSelectedId(ch.stream_id)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-all cursor-pointer ${isSel ? 'bg-red-500/10' : 'hover:bg-zinc-800/50'}`}
+                      >
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${isSel ? 'bg-red-500' : 'bg-zinc-700'}`} />
+                        <span className={`text-xs truncate flex-1 ${isSel ? 'text-red-300 font-semibold' : 'text-zinc-200'}`}>{ch.name}</span>
+                        <span className="text-[10px] font-mono text-zinc-600 shrink-0">#{ch.stream_id}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Duration */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Aufnahmedauer</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={durationChoice}
+                onChange={e => setDurationChoice(e.target.value)}
+                className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:border-red-500/50 outline-none"
+              >
+                {RECORDING_DURATIONS.map(d => (
+                  <option key={d.minutes} value={String(d.minutes)}>{d.label}</option>
+                ))}
+                <option value="custom">Benutzerdefiniert…</option>
+              </select>
+              {durationChoice === 'custom' && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={customMinutes}
+                    onChange={e => setCustomMinutes(parseInt(e.target.value, 10))}
+                    className="w-20 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:border-red-500/50 outline-none"
+                  />
+                  <span className="text-xs text-zinc-500">Min.</span>
+                </div>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-500 flex items-center gap-1.5">
+              <Clock size={12} className="text-zinc-600" />
+              {durationMinutes > 0
+                ? `Die Aufnahme stoppt automatisch nach ${durationMinutes} Minuten.`
+                : 'Die Aufnahme läuft, bis du sie im DVR stoppst.'}
+            </p>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {selected && (
+            <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
+              <Radio size={13} className="text-red-500 shrink-0" />
+              <span className="truncate">Auswahl: <span className="font-semibold text-zinc-200">{selected.name}</span></span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4 sm:p-5 border-t border-zinc-800/80">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+          >
+            Abbrechen
+          </button>
+          <button
+            onClick={handleStart}
+            disabled={!selected || starting || loadingChannels}
+            className="flex items-center gap-1.5 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-white" />
+            {starting ? 'Starte Aufnahme...' : 'Aufnahme starten'}
+          </button>
         </div>
       </div>
     </div>

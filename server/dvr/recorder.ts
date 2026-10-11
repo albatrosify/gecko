@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
 import { getDb, generateId } from '../db.ts';
 import { recordings } from '../schema.ts';
 import { log } from '../logger.ts';
@@ -27,6 +28,20 @@ export function formatDuration(seconds: number): string {
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
+/**
+ * Deterministically computes a positive 32-bit integer for a recording ID.
+ * Maps into the 900,000,000 - 999,999,999 range so it fits in signed 32-bit int
+ * (max 2,147,483,647) and avoids collisions with typical upstream stream IDs.
+ */
+export function recordingIdToNumeric(recId: string): number {
+  let hash = 5381;
+  for (let i = 0; i < recId.length; i++) {
+    hash = ((hash << 5) + hash) + recId.charCodeAt(i);
+    hash = hash & 0x7fffffff;
+  }
+  return 900000000 + (hash % 100000000);
+}
+
 export interface ActiveRecordingSession {
   recordingId: string;
   connId: string;
@@ -42,12 +57,22 @@ export interface ActiveRecordingSession {
   isHandover: boolean;
   handoverAt?: number;
   hourlyTimer?: NodeJS.Timeout;
+  /** Auto-stop timer for server-side recordings with a requested duration. */
+  durationLimitTimer?: NodeJS.Timeout;
+  /** Tears down the internal loopback request that feeds a server-side recording. */
+  abortUpstream?: () => void;
+  /** Set once the proxy attached this recording to a live channel. */
+  attached?: boolean;
+  /** Reason why attaching to a channel failed (source locked etc.). */
+  attachError?: string;
   upstreamResponse?: any;
 }
 
 class DvrRecorder {
   private sessions = new Map<string, ActiveRecordingSession>(); // recordingId -> session
   private connToRecording = new Map<string, string>(); // connId -> recordingId
+  private numericIdToRecId = new Map<number, string>();
+  private recIdToNumericId = new Map<string, number>();
 
   /**
    * Starts recording from an existing live proxy connection (stream tee).
@@ -110,21 +135,7 @@ class DvrRecorder {
     (conn as any).recordingId = recordingId;
 
     // Set up hourly reminder timer
-    const hourlyTimer = setInterval(async () => {
-      const session = this.sessions.get(recordingId);
-      if (!session) return;
-      const elapsedSec = Math.round((Date.now() - session.startTime) / 1000);
-      const hours = (elapsedSec / 3600).toFixed(1);
-      const sizeStr = formatBytes(session.bytesWritten);
-
-      log(`[DVR] Hourly reminder for recording ${recordingId} (${streamName}) - running ${hours}h, ${sizeStr}`);
-      await sendTelegramNotification(
-        `⏳ <b>Gecko DVR Erinnerung</b>\n` +
-        `Aufnahme für <b>${streamName}</b> läuft seit <b>${hours} Std.</b> (${sizeStr}).\n` +
-        `Zum Stoppen im Gecko WebUI aufrufen.`
-      );
-    }, 60 * 60 * 1000);
-    hourlyTimer.unref?.();
+    const hourlyTimer = this.startHourlyReminder(recordingId, streamName);
 
     const session: ActiveRecordingSession = {
       recordingId,
@@ -180,6 +191,220 @@ class DvrRecorder {
       filePath,
       extra: { isHandover: false },
     };
+  }
+
+  /**
+   * Periodic reminder that a recording is still running, so long recordings are
+   * not forgotten (used by both stream-tee and server-side recordings).
+   */
+  private startHourlyReminder(recordingId: string, streamName: string): NodeJS.Timeout {
+    const timer = setInterval(async () => {
+      const session = this.sessions.get(recordingId);
+      if (!session) return;
+      const elapsedSec = Math.round((Date.now() - session.startTime) / 1000);
+      const hours = (elapsedSec / 3600).toFixed(1);
+      const sizeStr = formatBytes(session.bytesWritten);
+
+      log(`[DVR] Hourly reminder for recording ${recordingId} (${streamName}) - running ${hours}h, ${sizeStr}`);
+      await sendTelegramNotification(
+        `⏳ <b>Gecko DVR Erinnerung</b>\n` +
+        `Aufnahme für <b>${streamName}</b> läuft seit <b>${hours} Std.</b> (${sizeStr}).\n` +
+        `Zum Stoppen im Gecko WebUI aufrufen.`
+      );
+    }, 60 * 60 * 1000);
+    timer.unref?.();
+    return timer;
+  }
+
+  /**
+   * Starts a server-side recording of a live channel without any downstream client.
+   *
+   * The recorder opens an internal loopback request against the public proxy endpoint
+   * so the complete upstream pipeline is reused: host failover, multi-IP pinning, VPN
+   * routing, the unified concurrency guard and stream multiplexing. The proxy sees the
+   * `x-gecko-dvr-recording-id` header and calls {@link attachExternalRecording} so the
+   * resulting channel feeds this recording. The loopback response is drained purely to
+   * keep the multiplexer happy — the actual file is written from the raw upstream chunks.
+   *
+   * @param durationMinutes Stop automatically after this many minutes; 0 records until stopped.
+   */
+  async startChannelRecording(opts: {
+    playlistId: string;
+    username: string;
+    password: string;
+    streamId: string;
+    streamName?: string;
+    userId: string;
+    durationMinutes?: number;
+    serverPort?: number;
+  }): Promise<Recording> {
+    const { playlistId, username, password, userId } = opts;
+    const streamId = String(opts.streamId);
+    const streamName = opts.streamName && opts.streamName.trim() ? opts.streamName.trim() : `Stream ${streamId}`;
+    const durationMinutes = Number.isFinite(opts.durationMinutes) ? Math.max(0, Math.floor(opts.durationMinutes as number)) : 0;
+    const serverPort = opts.serverPort || parseInt(process.env.PORT || '3000', 10);
+
+    const recordingId = generateId();
+    const filePath = path.join(RECORDINGS_DIR, `${recordingId}.ts`);
+    const writeStream = fs.createWriteStream(filePath, { flags: 'a' });
+    const startTimeMs = Date.now();
+
+    const session: ActiveRecordingSession = {
+      recordingId,
+      connId: `dvr-${recordingId}`,
+      userId,
+      playlistId,
+      sourceId: '',
+      streamId,
+      streamName,
+      startTime: startTimeMs,
+      filePath,
+      writeStream,
+      bytesWritten: 0,
+      isHandover: false,
+      hourlyTimer: this.startHourlyReminder(recordingId, streamName),
+    };
+
+    this.sessions.set(recordingId, session);
+    this.connToRecording.set(recordingId, recordingId);
+    this.connToRecording.set(session.connId, recordingId);
+
+    const loopbackUrl = `http://127.0.0.1:${serverPort}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${encodeURIComponent(streamId)}`;
+
+    try {
+      const response = await axios({
+        method: 'get',
+        url: loopbackUrl,
+        responseType: 'stream',
+        timeout: 60000,
+        validateStatus: () => true,
+        headers: {
+          'User-Agent': 'Gecko-DVR/1.0',
+          'x-gecko-dvr-recording-id': recordingId,
+        },
+      });
+
+      if (response.status >= 400) {
+        try { response.data.destroy(); } catch {}
+        throw new Error(`Stream konnte nicht geöffnet werden (HTTP ${response.status}). Quelle möglicherweise belegt.`);
+      }
+
+      if (!this.sessions.has(recordingId) || !session.attached) {
+        try { response.data.destroy(); } catch {}
+        throw new Error(session.attachError || 'Aufnahme konnte nicht an den Stream angebunden werden.');
+      }
+
+      // Drain the loopback socket so the multiplexer does not flag a stalled subscriber.
+      // The recording file itself is written from the raw upstream chunks in handleUpstreamChunk.
+      session.abortUpstream = () => { try { response.data.destroy(); } catch {} };
+      response.data.on('data', () => {});
+      response.data.on('error', (err: any) => {
+        if (this.sessions.has(recordingId)) {
+          log(`[DVR] Loopback stream for ${recordingId} errored: ${err?.message || err}`);
+        }
+      });
+      response.data.resume();
+
+      // Schedule the requested duration (0 = run until manually stopped).
+      if (durationMinutes > 0) {
+        session.durationLimitTimer = setTimeout(() => {
+          log(`[DVR] Duration limit (${durationMinutes} min) reached for ${recordingId} (${streamName}) — stopping.`);
+          this.stopRecording(recordingId).catch((err: any) => log(`[DVR] Failed to stop recording ${recordingId} on duration limit: ${err.message}`));
+        }, durationMinutes * 60 * 1000);
+        session.durationLimitTimer.unref?.();
+      }
+
+      const startTimeIso = new Date(startTimeMs).toISOString();
+      getDb().insert(recordings).values({
+        id: recordingId,
+        userId,
+        playlistId,
+        sourceId: session.sourceId,
+        streamId: session.streamId,
+        streamName,
+        channelName: streamName,
+        type: 'live',
+        status: 'recording',
+        startTime: startTimeIso,
+        endTime: null,
+        durationSeconds: 0,
+        fileSizeBytes: 0,
+        filePath,
+        extra: { isHandover: false, manual: true, durationMinutes: durationMinutes || null },
+      }).run();
+
+      log(`[DVR] Started manual channel recording for ${streamName} (id: ${recordingId}, source: ${session.sourceId})`);
+
+      sendTelegramNotification(
+        `🔴 <b>Gecko DVR Aufnahme gestartet</b>\n` +
+        `Sender: <b>${streamName}</b>\n` +
+        `Startzeit: <code>${new Date(startTimeMs).toLocaleTimeString()}</code>\n` +
+        `Dauer: ${durationMinutes > 0 ? `<b>${formatDuration(durationMinutes * 60)}</b>` : 'bis manuell gestoppt'}`
+      ).catch(() => {});
+
+      return this.getRecordingById(recordingId)!;
+    } catch (err: any) {
+      // Roll back the half-started session so it neither lingers nor blocks the source.
+      await this.discardSession(recordingId);
+      throw err;
+    }
+  }
+
+  /**
+   * Attaches a server-side recording to a live channel the proxy just opened or joined.
+   * Called by the proxy when it sees the `x-gecko-dvr-recording-id` request header.
+   */
+  async attachExternalRecording(recordingId: string, sourceId: string, streamId: string, streamName: string): Promise<boolean> {
+    const session = this.sessions.get(recordingId);
+    if (!session) return false;
+
+    if (!connectionArbiter.acquireDvrLock(sourceId, String(streamId), recordingId, streamName)) {
+      session.attachError = 'Die Quelle ist bereits durch eine andere Aufnahme gesperrt.';
+      log(`[DVR] Refused manual recording ${recordingId}: source ${sourceId} already locked by another recording.`);
+      return false;
+    }
+
+    session.sourceId = sourceId;
+    session.streamId = String(streamId);
+    if (streamName) session.streamName = streamName;
+    session.attached = true;
+    this.connToRecording.set(`${sourceId}:${streamId}`, recordingId);
+
+    try {
+      const { streamHub } = await import('../multiplexer/stream-hub.ts');
+      streamHub.attachDvr(sourceId, String(streamId), recordingId);
+    } catch (err: any) {
+      log(`[DVR] streamHub attach warning (external): ${err.message}`);
+    }
+
+    return true;
+  }
+
+  /**
+   * Removes a session that never successfully started (failed attach or upstream open).
+   */
+  private async discardSession(recordingId: string): Promise<void> {
+    const session = this.sessions.get(recordingId);
+    if (!session) return;
+
+    if (session.hourlyTimer) clearInterval(session.hourlyTimer);
+    if (session.durationLimitTimer) clearTimeout(session.durationLimitTimer);
+    try { session.abortUpstream?.(); } catch {}
+    try { session.writeStream.destroy(); } catch {}
+
+    this.connToRecording.delete(recordingId);
+    this.connToRecording.delete(session.connId);
+    if (session.sourceId) {
+      this.connToRecording.delete(`${session.sourceId}:${session.streamId}`);
+      connectionArbiter.releaseDvrLock(session.sourceId, recordingId);
+      try {
+        const { streamHub } = await import('../multiplexer/stream-hub.ts');
+        streamHub.detachDvr(session.sourceId, session.streamId);
+      } catch {}
+    }
+
+    this.sessions.delete(recordingId);
+    try { if (fs.existsSync(session.filePath)) fs.unlinkSync(session.filePath); } catch {}
   }
 
   /**
@@ -262,6 +487,9 @@ class DvrRecorder {
       if (session.hourlyTimer) {
         clearInterval(session.hourlyTimer);
       }
+      if (session.durationLimitTimer) {
+        clearTimeout(session.durationLimitTimer);
+      }
 
       // Close write stream
       await new Promise<void>((resolve) => {
@@ -322,6 +550,10 @@ class DvrRecorder {
       this.connToRecording.delete(session.connId);
       this.connToRecording.delete(channelKey);
       this.sessions.delete(recordingId);
+
+      // For server-side recordings, tear down the internal loopback request as well so
+      // the multiplexer closes the upstream channel once the last subscriber is gone.
+      try { session.abortUpstream?.(); } catch {}
 
       log(`[DVR] Stopped recording ${recordingId} for ${session.streamName} (${durationSeconds}s, ${fileSizeBytes} bytes)`);
 

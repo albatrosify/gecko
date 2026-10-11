@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PassThrough } from 'stream';
 import { dvrRecorder, formatDuration } from './recorder.ts';
 import { formatBytes } from '../utils.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import { connectionArbiter } from './connection-arbiter.ts';
+import axios from 'axios';
+
+vi.mock('axios', () => ({
+  default: vi.fn(),
+}));
 
 vi.mock('../logger.ts', () => ({
   log: vi.fn(),
@@ -111,5 +117,62 @@ describe('DvrRecorder', () => {
     expect(stopped.status).toBe('completed');
     expect(dvrRecorder.isRecordingConnection(connId)).toBe(false);
     expect(connectionArbiter.getSourceLock('source-3')).toBeUndefined();
+  });
+
+  it('starts a server-side channel recording and attaches to the opened channel', async () => {
+    // Simulate the proxy attaching this recording to the channel it just opened,
+    // then delivering the loopback response (as handleStreamProxy would).
+    (axios as any).mockImplementation(async () => {
+      await dvrRecorder.attachExternalRecording('rec-test-123', 'source-manual', '100', 'Sport HD');
+      const data = new PassThrough();
+      return { status: 200, headers: {}, data };
+    });
+
+    const recording = await dvrRecorder.startChannelRecording({
+      playlistId: 'playlist-1',
+      username: 'user',
+      password: 'pass',
+      streamId: '100',
+      streamName: 'Sport HD',
+      userId: 'user-1',
+      durationMinutes: 120,
+    });
+
+    expect(recording.id).toBe('rec-test-123');
+    expect(recording.status).toBe('recording');
+    expect(recording.sourceId).toBe('source-manual');
+    expect(recording.streamName).toBe('Sport HD');
+    expect(connectionArbiter.getSourceLock('source-manual')?.streamId).toBe('100');
+
+    const stopped = await dvrRecorder.stopRecording('rec-test-123');
+    expect(stopped.status).toBe('completed');
+    expect(connectionArbiter.getSourceLock('source-manual')).toBeUndefined();
+    expect(dvrRecorder.getRecordingById('rec-test-123')).toBeNull();
+  });
+
+  it('cleans up a server-side recording when the source is busy (HTTP 409)', async () => {
+    (axios as any).mockResolvedValue({
+      status: 409,
+      headers: {},
+      data: { destroy: vi.fn() },
+    });
+
+    await expect(dvrRecorder.startChannelRecording({
+      playlistId: 'playlist-1',
+      username: 'user',
+      password: 'pass',
+      streamId: '200',
+      streamName: 'Busy Channel',
+      userId: 'user-1',
+      durationMinutes: 60,
+    })).rejects.toThrow(/HTTP 409/);
+
+    // Identified itself as a DVR request to the loopback proxy.
+    const call = (axios as any).mock.calls[0][0];
+    expect(call.headers['x-gecko-dvr-recording-id']).toBe('rec-test-123');
+    expect(call.url).toContain('/live/user/pass/200');
+
+    // No lingering session and nothing left behind.
+    expect(dvrRecorder.getRecordingById('rec-test-123')).toBeNull();
   });
 });

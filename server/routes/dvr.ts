@@ -4,6 +4,7 @@ import { requireAuth, requireAuthOrQuery, type AuthRequest } from '../auth.ts';
 import { dvrRecorder } from '../dvr/recorder.ts';
 import { log } from '../logger.ts';
 import { serveRecordingFile } from '../dvr/playback';
+import { getDb } from '../db.ts';
 
 export function createDvrRouter() {
   const router = Router();
@@ -32,6 +33,49 @@ export function createDvrRouter() {
       res.json({ success: true, recording });
     } catch (err: any) {
       log(`[DVR] Failed to start live recording for connection ${connectionId}: ${err.message}`);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Start a server-side recording of a live channel ("record from DVR", no client needed)
+  router.post('/record-channel', requireAuth, async (req: AuthRequest, res) => {
+    const { playlistId, streamId, streamName, durationMinutes } = req.body || {};
+    if (!playlistId || streamId === undefined || streamId === null || String(streamId).length === 0) {
+      return res.status(400).json({ error: 'playlistId and streamId are required' });
+    }
+
+    try {
+      const db = getDb();
+      const { playlists: schemaPlaylists } = await import('../schema.ts');
+      const { eq, and } = await import('drizzle-orm');
+
+      const playlist = db.select().from(schemaPlaylists)
+        .where(req.user?.role === 'admin'
+          ? eq(schemaPlaylists.id, String(playlistId))
+          : and(eq(schemaPlaylists.id, String(playlistId)), eq(schemaPlaylists.userId, req.user!.id)))
+        .get();
+      if (!playlist) {
+        return res.status(404).json({ error: 'Playlist not found' });
+      }
+
+      // durationMinutes: 0 / omitted = record until manually stopped. Cap at 24h.
+      const parsedDuration = durationMinutes === undefined || durationMinutes === null
+        ? 0
+        : Math.max(0, Math.min(24 * 60, parseInt(String(durationMinutes), 10) || 0));
+
+      const recording = await dvrRecorder.startChannelRecording({
+        playlistId: playlist.id,
+        username: playlist.username,
+        password: playlist.password,
+        streamId: String(streamId),
+        streamName: typeof streamName === 'string' && streamName.trim() ? streamName.trim() : undefined,
+        userId: req.user?.id || 'admin',
+        durationMinutes: parsedDuration,
+      });
+
+      res.json({ success: true, recording });
+    } catch (err: any) {
+      log(`[DVR] Failed to start channel recording (playlist ${playlistId}, stream ${streamId}): ${err.message}`);
       res.status(400).json({ error: err.message });
     }
   });
