@@ -3,9 +3,14 @@ import http from "http";
 import https from "https";
 import dns from "dns";
 import axios from "axios";
+import { execSync } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import {
   resolveHostIps,
   createIpPinnedAgent,
+  createIpPinnedAgents,
   measureIpLatency,
   rankHostIps,
   clearDnsCache,
@@ -301,6 +306,76 @@ describe("dns-resolver", () => {
         lookupSpy.mockRestore();
         await new Promise<void>((resolve) => serverA.close(() => resolve()));
         await new Promise<void>((resolve) => serverB.close(() => resolve()));
+      }
+    });
+
+    it("createIpPinnedAgents returns distinct protocol-appropriate agents", () => {
+      const agents = createIpPinnedAgents("198.51.100.7", "my-host.com");
+      expect(agents.http).toBeInstanceOf(http.Agent);
+      expect(agents.https).toBeInstanceOf(https.Agent);
+      expect(agents.http).not.toBe(agents.https);
+
+      const pin = (agent: http.Agent | https.Agent): string => {
+        let resolved = "";
+        getLookup(agent)("my-host.com", {}, (_err, address) => {
+          resolved = typeof address === "string" ? address : "";
+        });
+        return resolved;
+      };
+      expect(pin(agents.http)).toBe("198.51.100.7");
+      expect(pin(agents.https)).toBe("198.51.100.7");
+    });
+
+    it("follows HTTPS→HTTP redirects when agents are provided per protocol", async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gecko-tls-"));
+      const keyPath = path.join(tmp, "key.pem");
+      const certPath = path.join(tmp, "cert.pem");
+      execSync(
+        `openssl req -x509 -newkey rsa:2048 -nodes -keyout "${keyPath}" -out "${certPath}" -days 1 -subj "/CN=lb.example" 2>/dev/null`
+      );
+      const key = fs.readFileSync(keyPath);
+      const cert = fs.readFileSync(certPath);
+
+      const serverB = http.createServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("server-b");
+      });
+      await new Promise<void>((resolve) => serverB.listen(0, "127.0.0.1", resolve));
+      const addressB = serverB.address();
+      if (addressB === null || typeof addressB === "string") throw new Error("expected TCP port");
+      const portB = addressB.port;
+
+      const serverA = https.createServer({ key, cert }, (_req, res) => {
+        res.writeHead(302, { Location: `http://node-b.example:${portB}/stream` });
+        res.end();
+      });
+      await new Promise<void>((resolve) => serverA.listen(0, "127.0.0.1", resolve));
+      const addressA = serverA.address();
+      if (addressA === null || typeof addressA === "string") throw new Error("expected TCP port");
+      const portA = addressA.port;
+
+      const lookupSpy = mockDnsLookup((hostname) =>
+        hostname === "node-b.example"
+          ? { address: "127.0.0.1", family: 4 }
+          : new Error(`unexpected DNS lookup for ${hostname}`)
+      );
+
+      const agents = createIpPinnedAgents("127.0.0.1", "lb.example");
+      try {
+        const response = await axios.get(`https://lb.example:${portA}/live/user/pass/1.ts`, {
+          httpAgent: agents.http,
+          httpsAgent: agents.https,
+          timeout: 5000,
+        });
+        expect(response.status).toBe(200);
+        expect(response.data).toBe("server-b");
+      } finally {
+        agents.http.destroy();
+        agents.https.destroy();
+        lookupSpy.mockRestore();
+        await new Promise<void>((resolve) => serverA.close(() => resolve()));
+        await new Promise<void>((resolve) => serverB.close(() => resolve()));
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
     });
   });

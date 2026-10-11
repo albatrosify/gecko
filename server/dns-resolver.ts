@@ -218,6 +218,32 @@ export function createIpPinnedAgent(
 }
 
 /**
+ * A protocol-appropriate agent pair that pins TCP connections to `targetIp`.
+ */
+export interface IpPinnedAgents {
+  http: http.Agent;
+  https: https.Agent;
+}
+
+/**
+ * Creates a matching http.Agent / https.Agent pair, both pinning `pinnedHostname` to
+ * `targetIp`. Clients such as axios select `agents[http]`/`agents[https]` by the
+ * redirect target's protocol, so a single protocol-specific agent passed for both
+ * schemes breaks cross-protocol redirects (`Protocol "http:" not supported.
+ * Expected "https:"`). Creating one agent per scheme keeps redirects working while
+ * preserving IP pinning on same-host redirects across protocol changes.
+ */
+export function createIpPinnedAgents(
+  targetIp: string,
+  pinnedHostname: string
+): IpPinnedAgents {
+  return {
+    http: createIpPinnedAgent(targetIp, pinnedHostname, false) as http.Agent,
+    https: createIpPinnedAgent(targetIp, pinnedHostname, true) as https.Agent,
+  };
+}
+
+/**
  * Lightweight probe that measures latency to a specific IP for a given hostname.
  * Connects to targetIp via pinned agent with Host header, detaches on first byte/headers.
  * Returns latency in ms, or null on timeout/error.

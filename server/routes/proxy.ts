@@ -14,12 +14,14 @@ import { getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
-import { Playlist, StreamMapping, CategoryMapping, SourceHost } from "../../src/types.ts";
-import { resolveHostIps, createIpPinnedAgent, extractHostname } from "../dns-resolver.ts";
+import { Playlist, StreamMapping, CategoryMapping, SourceHost, Recording } from "../../src/types.ts";
+import { resolveHostIps, createIpPinnedAgents, extractHostname } from "../dns-resolver.ts";
 import { computeDisplayName } from "../../src/quality.ts";
 import { dvrRecorder } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
 import { serveRecordingFile } from "../dvr/playback.ts";
+
+export const DVR_CATEGORY_ID = "999999";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
@@ -96,16 +98,27 @@ export function createProxyRouter() {
     if (!playlist) return res.status(403).send("Invalid credentials");
 
     // Handle Gecko Recording playback under VOD / Movies
-    if (type === 'movie' && streamId.startsWith('rec_')) {
-      const recId = streamId.slice(4);
-      const recording = dvrRecorder.getRecordingById(recId);
-      if (!recording || !recording.filePath || !fs.existsSync(recording.filePath)) {
+    let rec: Recording | null = null;
+    if (type === 'movie') {
+      if (streamId.startsWith('rec_')) {
+        rec = dvrRecorder.getRecordingById(streamId.slice(4));
+      } else {
+        const numId = parseInt(streamId, 10);
+        if (!isNaN(numId)) {
+          rec = dvrRecorder.getRecordingByNumericId(numId);
+        }
+      }
+    }
+
+    if (rec) {
+      if (!rec.filePath || !fs.existsSync(rec.filePath)) {
         return res.status(404).send("Recording file not found");
       }
 
+      const recId = rec.id;
       serveRecordingFile(req, res, {
-        filePath: recording.filePath,
-        isGrowing: recording.status === 'recording',
+        filePath: rec.filePath,
+        isGrowing: rec.status === 'recording',
         isStillGrowing: () => dvrRecorder.getRecordingById(recId)?.status === 'recording',
         onBytes: (bytes) => recordTraffic(playlist.id, playlist.name || username, 'movie', bytes),
       });
@@ -303,7 +316,6 @@ export function createProxyRouter() {
         const upstreamUrl = safeExt
           ? `${hostUrl}/${type}/${encUser}/${encPass}/${encId}.${safeExt}`
           : `${hostUrl}/${type}/${encUser}/${encPass}/${encId}`;
-        const isHttps = upstreamUrl.startsWith('https:') || hostUrl.startsWith('https:');
 
         // Determine candidate IPs for this host
         const hostsList: SourceHost[] = Array.isArray(sourceDoc.extra?.hosts)
@@ -344,7 +356,11 @@ export function createProxyRouter() {
 
         let hostSucceeded = false;
         for (const targetIp of ipsToTry) {
-          const agent = targetIp ? createIpPinnedAgent(targetIp, extractHostname(hostUrl).hostname, isHttps) : undefined;
+          const agents = targetIp ? createIpPinnedAgents(targetIp, extractHostname(hostUrl).hostname) : undefined;
+          const destroyAgents = () => {
+            try { agents?.http.destroy(); } catch {}
+            try { agents?.https.destroy(); } catch {}
+          };
 
           try {
             const response = await axios({
@@ -354,7 +370,7 @@ export function createProxyRouter() {
               timeout: 15000,
               headers: upstreamHeaders,
               validateStatus: () => true,
-              ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
+              ...(agents ? { httpAgent: agents.http, httpsAgent: agents.https } : {}),
             });
 
             // Treat 4xx/5xx from upstream as a failure — try next candidate IP
@@ -371,9 +387,7 @@ export function createProxyRouter() {
               if (response.data?.destroy) {
                 try { response.data.destroy(); } catch {}
               }
-              if (agent?.destroy) {
-                try { agent.destroy(); } catch {}
-              }
+              destroyAgents();
               continue;
             }
 
@@ -503,9 +517,7 @@ export function createProxyRouter() {
               if (response.data?.destroy) {
                 try { response.data.destroy(); } catch {}
               }
-              if (agent?.destroy) {
-                try { agent.destroy(); } catch {}
-              }
+              destroyAgents();
               if (!res.writableEnded && !res.destroyed) {
                 try { res.destroy(); } catch {}
               }
@@ -539,9 +551,7 @@ export function createProxyRouter() {
           } catch (err: any) {
             lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
             lastError = err.message;
-            if (agent?.destroy) {
-              try { agent.destroy(); } catch {}
-            }
+            destroyAgents();
             log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) error for ${type}/${streamId}: ${err.message}, trying next candidate IP... - ${getClientInfo(req)}`);
           }
         }
@@ -1108,10 +1118,10 @@ export function createProxyRouter() {
             });
 
             // Virtual category for Gecko DVR Recordings
-            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && m.originalId === 'gecko_recordings');
+            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && (m.originalId === 'gecko_recordings' || m.originalId === DVR_CATEGORY_ID));
             if (!dvrCatMapping?.hidden) {
               data.push({
-                category_id: 'gecko_recordings',
+                category_id: DVR_CATEGORY_ID,
                 category_name: dvrCatMapping?.customName || '📁 Gecko Recordings',
                 parent_id: 0,
                 _sourceIdx: -1,
@@ -1291,21 +1301,23 @@ export function createProxyRouter() {
             }
 
             // Add completed Gecko DVR recordings
-            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && m.originalId === 'gecko_recordings');
-            if (!dvrCatMapping?.hidden && (!categoryId || categoryId === 'gecko_recordings')) {
+            const dvrCatMapping = catMappings.find(m => m.type === 'vod' && (m.originalId === 'gecko_recordings' || m.originalId === DVR_CATEGORY_ID));
+            if (!dvrCatMapping?.hidden && (!categoryId || categoryId === 'gecko_recordings' || categoryId === DVR_CATEGORY_ID)) {
               const completedRecordings = dvrRecorder.getAllRecordings().filter(r => r.status === 'completed');
               completedRecordings.forEach((rec, recIdx) => {
                 const addedSec = Math.floor(new Date(rec.startTime).getTime() / 1000).toString();
+                const numericStreamId = dvrRecorder.getNumericId(rec.id);
                 filteredData.push({
                   num: filteredData.length + 1,
                   name: `${rec.streamName} (${new Date(rec.startTime).toLocaleDateString()})`,
                   stream_type: 'movie',
-                  stream_id: `rec_${rec.id}`,
+                  stream_id: numericStreamId,
                   stream_icon: '',
                   rating: '',
                   rating_5based: 0,
                   added: addedSec,
-                  category_id: 'gecko_recordings',
+                  category_id: DVR_CATEGORY_ID,
+                  category_ids: [parseInt(DVR_CATEGORY_ID, 10)],
                   container_extension: 'ts',
                   custom_sid: null,
                   direct_source: '',
@@ -1611,30 +1623,38 @@ export function createProxyRouter() {
             break;
           }
 
+          let rec: Recording | null = null;
           if (vodId.startsWith('rec_')) {
-            const recId = vodId.slice(4);
-            const rec = dvrRecorder.getRecordingById(recId);
-            if (rec) {
-              data = {
-                info: {
-                  name: rec.streamName,
-                  movie_image: '',
-                  genre: 'Gecko Recordings',
-                  plot: `Aufgenommen am ${new Date(rec.startTime).toLocaleString()}`,
-                  duration_secs: rec.durationSeconds,
-                  duration: `${Math.floor(rec.durationSeconds / 60)} min`,
-                  releasedate: new Date(rec.startTime).toISOString().slice(0, 10),
-                },
-                movie_data: {
-                  stream_id: `rec_${rec.id}`,
-                  name: rec.streamName,
-                  added: Math.floor(new Date(rec.startTime).getTime() / 1000).toString(),
-                  category_id: 'gecko_recordings',
-                  container_extension: 'ts',
-                },
-              };
-              break;
+            rec = dvrRecorder.getRecordingById(vodId.slice(4));
+          } else {
+            const numId = parseInt(vodId, 10);
+            if (!isNaN(numId)) {
+              rec = dvrRecorder.getRecordingByNumericId(numId);
             }
+          }
+
+          if (rec) {
+            const numericStreamId = dvrRecorder.getNumericId(rec.id);
+            data = {
+              info: {
+                name: rec.streamName,
+                movie_image: '',
+                genre: 'Gecko Recordings',
+                plot: `Aufgenommen am ${new Date(rec.startTime).toLocaleString()}`,
+                duration_secs: rec.durationSeconds,
+                duration: `${Math.floor(rec.durationSeconds / 60)} min`,
+                releasedate: new Date(rec.startTime).toISOString().slice(0, 10),
+              },
+              movie_data: {
+                stream_id: numericStreamId,
+                name: rec.streamName,
+                added: Math.floor(new Date(rec.startTime).getTime() / 1000).toString(),
+                category_id: DVR_CATEGORY_ID,
+                category_ids: [parseInt(DVR_CATEGORY_ID, 10)],
+                container_extension: 'ts',
+              },
+            };
+            break;
           }
 
           let targetSIdx: number | null = null;
@@ -1714,7 +1734,8 @@ export function createProxyRouter() {
           data = { error: "Action not supported" };
       }
       res.json(data);
-    } catch (error) {
+    } catch (error: any) {
+      log(`[Proxy] player_api.php error: ${error?.message || error} - ${getClientInfo(req)}`);
       res.status(500).json({ error: "Upstream error" });
     }
   });

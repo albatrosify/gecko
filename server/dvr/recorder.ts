@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import axios from 'axios';
 import { getDb, generateId } from '../db.ts';
 import { recordings } from '../schema.ts';
@@ -26,6 +27,68 @@ export function formatDuration(seconds: number): string {
     return `${h}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`;
   }
   return `${m}m ${s.toString().padStart(2, '0')}s`;
+}
+
+/**
+ * Uses ffprobe to determine the actual container duration in seconds.
+ */
+export async function probeFileDuration(filePath: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const ffprobeCmd = process.env.FFPROBE_PATH || 'ffprobe';
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ];
+    const proc = spawn(ffprobeCmd, args, {
+      env: {
+        ...process.env,
+        PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
+      },
+    });
+    let stdout = '';
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        const dur = parseFloat(stdout.trim());
+        if (!isNaN(dur) && dur > 0) return resolve(Math.round(dur));
+      }
+      resolve(null);
+    });
+    proc.on('error', () => resolve(null));
+  });
+}
+
+/**
+ * Runs a lossless stream-copy remux using FFmpeg to rebuild continuous PTS timestamps
+ * and resolve upstream timestamp resets / 33-bit rollovers.
+ */
+export async function remuxRecordingLossless(inputPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ffmpegCmd = process.env.FFMPEG_PATH || 'ffmpeg';
+    const args = [
+      '-y',
+      '-err_detect', 'ignore_err',
+      '-fflags', '+genpts+discardcorrupt',
+      '-i', inputPath,
+      '-c', 'copy',
+      outputPath,
+    ];
+    const proc = spawn(ffmpegCmd, args, {
+      env: {
+        ...process.env,
+        PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
+      },
+    });
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg remux exited with code ${code}: ${stderr.slice(-300)}`));
+    });
+    proc.on('error', (err) => reject(new Error(`FFmpeg spawn error: ${err.message}`)));
+  });
 }
 
 /**
@@ -66,6 +129,7 @@ export interface ActiveRecordingSession {
   /** Reason why attaching to a channel failed (source locked etc.). */
   attachError?: string;
   upstreamResponse?: any;
+  hasDiscontinuity?: boolean;
 }
 
 class DvrRecorder {
@@ -73,6 +137,7 @@ class DvrRecorder {
   private connToRecording = new Map<string, string>(); // connId -> recordingId
   private numericIdToRecId = new Map<number, string>();
   private recIdToNumericId = new Map<string, number>();
+  private repairingIds = new Set<string>();
 
   /**
    * Starts recording from an existing live proxy connection (stream tee).
@@ -422,6 +487,20 @@ class DvrRecorder {
   }
 
   /**
+   * Flags that a stream discontinuity / upstream reconnect occurred on this recording.
+   */
+  markDiscontinuity(connIdOrKeyOrRecId: string, reason = 'reconnect'): void {
+    const recordingId = this.connToRecording.get(connIdOrKeyOrRecId) || (this.sessions.has(connIdOrKeyOrRecId) ? connIdOrKeyOrRecId : undefined);
+    if (!recordingId) return;
+
+    const session = this.sessions.get(recordingId);
+    if (session) {
+      session.hasDiscontinuity = true;
+      log(`[DVR] Flagged timestamp discontinuity for recording ${recordingId} (${session.streamName}): ${reason}`);
+    }
+  }
+
+  /**
    * Checks if a proxy connection is currently being recorded.
    */
   isRecordingConnection(connId: string): boolean {
@@ -530,6 +609,11 @@ class DvrRecorder {
       const endTimeIso = now.toISOString();
       const durationSeconds = Math.max(1, Math.round((now.getTime() - session.startTime) / 1000));
       const fileSizeBytes = session.bytesWritten;
+      const completedExtra = {
+        isHandover: session.isHandover,
+        completedAt: endTimeIso,
+        ...(session.hasDiscontinuity ? { needsRepair: true, discontinuityReason: 'reconnect' } : {}),
+      };
 
       // Update SQLite record
       db.update(recordings)
@@ -538,10 +622,7 @@ class DvrRecorder {
           endTime: endTimeIso,
           durationSeconds,
           fileSizeBytes,
-          extra: {
-            isHandover: session.isHandover,
-            completedAt: endTimeIso,
-          },
+          extra: completedExtra,
         })
         .where(eq(recordings.id, recordingId))
         .run();
@@ -580,7 +661,7 @@ class DvrRecorder {
         durationSeconds,
         fileSizeBytes,
         filePath: session.filePath,
-        extra: { isHandover: session.isHandover },
+        extra: completedExtra,
       };
     }
 
@@ -740,6 +821,7 @@ class DvrRecorder {
       log(`[DVR] Reconciled orphaned recording ${row.id} (${row.streamName}) — marked completed at ${formatBytes(fileSizeBytes)}`);
     }
 
+    this.pruneExpiredBackups();
     return orphans.length;
   }
 
@@ -765,9 +847,268 @@ class DvrRecorder {
       }
     }
 
+    // Also delete original backup if it exists
+    const extra = (row.extra as Record<string, any>) || {};
+    if (extra.backupPath && fs.existsSync(extra.backupPath)) {
+      try {
+        fs.unlinkSync(extra.backupPath);
+        log(`[DVR] Deleted backup file ${extra.backupPath}`);
+      } catch (err: any) {
+        log(`[DVR] Failed to delete backup file ${extra.backupPath}: ${err.message}`);
+      }
+    }
+
+    const num = this.recIdToNumericId.get(recordingId);
+    if (num !== undefined) {
+      this.numericIdToRecId.delete(num);
+      this.recIdToNumericId.delete(recordingId);
+    }
+
     db.delete(recordings).where(eq(recordings.id, recordingId)).run();
     log(`[DVR] Deleted recording record ${recordingId}`);
     return true;
+  }
+
+  isRepairing(recordingId: string): boolean {
+    return this.repairingIds.has(recordingId);
+  }
+
+  async remuxLossless(inputPath: string, outputPath: string): Promise<void> {
+    return remuxRecordingLossless(inputPath, outputPath);
+  }
+
+  async probeDuration(filePath: string): Promise<number | null> {
+    return probeFileDuration(filePath);
+  }
+
+  /**
+   * Losslessly repairs recording timestamps using FFmpeg stream copy.
+   * Keeps the original file as a backup (.orig.ts) with an expiration timestamp.
+   */
+  async repairRecording(recordingId: string): Promise<Recording> {
+    if (this.repairingIds.has(recordingId)) {
+      throw new Error(`Recording ${recordingId} is already being repaired.`);
+    }
+    this.repairingIds.add(recordingId);
+
+    try {
+      const db = getDb();
+      const row = db.select().from(recordings).where(eq(recordings.id, recordingId)).get();
+      if (!row) throw new Error(`Recording ${recordingId} not found.`);
+      if (row.status !== 'completed') throw new Error(`Only completed recordings can be repaired.`);
+      if (!row.filePath || !fs.existsSync(row.filePath)) throw new Error(`Recording file not found on disk.`);
+
+      const originalFilePath = row.filePath;
+      const repairedTempPath = `${originalFilePath}.repaired.ts`;
+      const backupPath = `${originalFilePath}.orig.ts`;
+
+      log(`[DVR] Starting lossless remux repair for recording ${recordingId} (${row.streamName})...`);
+
+      // Remux lossless stream copy
+      await this.remuxLossless(originalFilePath, repairedTempPath);
+
+      if (!fs.existsSync(repairedTempPath) || fs.statSync(repairedTempPath).size === 0) {
+        throw new Error('Repaired file is empty or was not created.');
+      }
+
+      // Probe new duration
+      const probedSec = await this.probeDuration(repairedTempPath);
+      const newDurationSeconds = probedSec || row.durationSeconds;
+      const newSizeBytes = fs.statSync(repairedTempPath).size;
+
+      // Keep original file as backup
+      if (fs.existsSync(backupPath)) {
+        try { fs.unlinkSync(backupPath); } catch {}
+      }
+      fs.renameSync(originalFilePath, backupPath);
+      fs.renameSync(repairedTempPath, originalFilePath);
+
+      // Calculate backup expiration (default 3 days)
+      const retentionDays = Math.max(1, parseInt(process.env.DVR_BACKUP_RETENTION_DAYS || '3', 10));
+      const backupExpiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
+      const nowIso = new Date().toISOString();
+
+      const existingExtra = (row.extra as Record<string, any>) || {};
+      const updatedExtra = {
+        ...existingExtra,
+        repairedAt: nowIso,
+        needsRepair: false,
+        backupPath,
+        backupExpiresAt,
+        originalDurationSeconds: existingExtra.originalDurationSeconds || row.durationSeconds,
+        originalFileSizeBytes: existingExtra.originalFileSizeBytes || row.fileSizeBytes,
+      };
+
+      db.update(recordings)
+        .set({
+          durationSeconds: newDurationSeconds,
+          fileSizeBytes: newSizeBytes,
+          extra: updatedExtra,
+        })
+        .where(eq(recordings.id, recordingId))
+        .run();
+
+      log(`[DVR] Successfully repaired recording ${recordingId}. New duration: ${newDurationSeconds}s (${formatDuration(newDurationSeconds)}), size: ${formatBytes(newSizeBytes)}. Backup kept at ${backupPath} (prunes in ${retentionDays} days).`);
+
+      return {
+        id: row.id,
+        userId: row.userId,
+        playlistId: row.playlistId || undefined,
+        sourceId: row.sourceId,
+        streamId: row.streamId,
+        streamName: row.streamName,
+        channelName: row.channelName || undefined,
+        type: row.type as any,
+        status: row.status as any,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        durationSeconds: newDurationSeconds,
+        fileSizeBytes: newSizeBytes,
+        filePath: originalFilePath,
+        extra: updatedExtra,
+      };
+    } finally {
+      this.repairingIds.delete(recordingId);
+    }
+  }
+
+  /**
+   * Reverts a repaired recording back to its original backup file.
+   */
+  async revertRecording(recordingId: string): Promise<Recording> {
+    const db = getDb();
+    const row = db.select().from(recordings).where(eq(recordings.id, recordingId)).get();
+    if (!row) throw new Error(`Recording ${recordingId} not found.`);
+
+    const extra = (row.extra as Record<string, any>) || {};
+    const backupPath = extra.backupPath;
+    if (!backupPath || !fs.existsSync(backupPath)) {
+      throw new Error(`No original backup found to revert for recording ${recordingId}.`);
+    }
+
+    log(`[DVR] Reverting recording ${recordingId} (${row.streamName}) to original backup...`);
+
+    if (fs.existsSync(row.filePath)) {
+      try { fs.unlinkSync(row.filePath); } catch {}
+    }
+    fs.renameSync(backupPath, row.filePath);
+
+    const originalDuration = extra.originalDurationSeconds || row.durationSeconds;
+    const originalSize = extra.originalFileSizeBytes || fs.statSync(row.filePath).size;
+
+    const updatedExtra = { ...extra };
+    delete updatedExtra.backupPath;
+    delete updatedExtra.backupExpiresAt;
+    delete updatedExtra.repairedAt;
+    delete updatedExtra.originalDurationSeconds;
+    delete updatedExtra.originalFileSizeBytes;
+
+    db.update(recordings)
+      .set({
+        durationSeconds: originalDuration,
+        fileSizeBytes: originalSize,
+        extra: updatedExtra,
+      })
+      .where(eq(recordings.id, recordingId))
+      .run();
+
+    log(`[DVR] Reverted recording ${recordingId} to original backup successfully.`);
+
+    return {
+      id: row.id,
+      userId: row.userId,
+      playlistId: row.playlistId || undefined,
+      sourceId: row.sourceId,
+      streamId: row.streamId,
+      streamName: row.streamName,
+      channelName: row.channelName || undefined,
+      type: row.type as any,
+      status: row.status as any,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      durationSeconds: originalDuration,
+      fileSizeBytes: originalSize,
+      filePath: row.filePath,
+      extra: updatedExtra,
+    };
+  }
+
+  /**
+   * Removes expired original backup files after their retention period (default 3 days).
+   * Only deletes the original backup, never the repaired/active recording.
+   */
+  pruneExpiredBackups(): number {
+    const db = getDb();
+    const rows = db.select().from(recordings).all();
+    const now = Date.now();
+    let prunedCount = 0;
+
+    for (const row of rows) {
+      const extra = (row.extra as Record<string, any>) || {};
+      if (extra.backupPath && extra.backupExpiresAt) {
+        const expiresTime = new Date(extra.backupExpiresAt).getTime();
+        if (now >= expiresTime) {
+          if (fs.existsSync(extra.backupPath)) {
+            try {
+              fs.unlinkSync(extra.backupPath);
+              log(`[DVR] Pruned expired original backup for recording ${row.id}: ${extra.backupPath}`);
+            } catch (err: any) {
+              log(`[DVR] Failed to delete expired backup file ${extra.backupPath}: ${err.message}`);
+            }
+          }
+          const updatedExtra = { ...extra };
+          delete updatedExtra.backupPath;
+          delete updatedExtra.backupExpiresAt;
+          delete updatedExtra.originalDurationSeconds;
+          delete updatedExtra.originalFileSizeBytes;
+
+          db.update(recordings)
+            .set({ extra: updatedExtra })
+            .where(eq(recordings.id, row.id))
+            .run();
+
+          prunedCount++;
+        }
+      }
+    }
+
+    if (prunedCount > 0) {
+      log(`[DVR] Pruned ${prunedCount} expired backup file(s)`);
+    }
+    return prunedCount;
+  }
+
+  /**
+   * Retrieves or computes a unique numeric ID for the given recording ID.
+   */
+  getNumericId(recId: string): number {
+    const existing = this.recIdToNumericId.get(recId);
+    if (existing) return existing;
+
+    let num = recordingIdToNumeric(recId);
+    while (this.numericIdToRecId.has(num) && this.numericIdToRecId.get(num) !== recId) {
+      num++;
+    }
+    this.recIdToNumericId.set(recId, num);
+    this.numericIdToRecId.set(num, recId);
+    return num;
+  }
+
+  /**
+   * Finds a recording by its numeric stream ID.
+   */
+  getRecordingByNumericId(numericId: number): Recording | null {
+    const recId = this.numericIdToRecId.get(numericId);
+    if (recId) {
+      return this.getRecordingById(recId);
+    }
+    const all = this.getAllRecordings();
+    for (const r of all) {
+      if (this.getNumericId(r.id) === numericId) {
+        return r;
+      }
+    }
+    return null;
   }
 }
 
@@ -781,3 +1122,11 @@ import('../multiplexer/stream-hub.ts').then(({ streamHub }) => {
 }).catch((err: any) => {
   log(`[DVR] Failed to hook streamHub onChunk: ${err.message}`);
 });
+
+// Periodically prune expired original recording backups (every 6 hours)
+const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const pruneTimer = setInterval(() => {
+  dvrRecorder.pruneExpiredBackups();
+}, PRUNE_INTERVAL_MS);
+pruneTimer.unref?.();
+

@@ -508,6 +508,16 @@ export const dvr = {
       method: 'DELETE',
     });
   },
+  async repairRecording(id: string): Promise<{ success: boolean; recording: import('./types').Recording }> {
+    return request(`/api/dvr/recordings/${id}/repair`, {
+      method: 'POST',
+    });
+  },
+  async revertRecording(id: string): Promise<{ success: boolean; recording: import('./types').Recording }> {
+    return request(`/api/dvr/recordings/${id}/revert`, {
+      method: 'POST',
+    });
+  },
   getStreamUrl(id: string, download: boolean = false): string {
     const token = getToken();
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';

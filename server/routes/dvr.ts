@@ -108,6 +108,30 @@ export function createDvrRouter() {
     }
   });
 
+  // Losslessly repair a recording's timestamps
+  router.post('/recordings/:id/repair', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    try {
+      const recording = await dvrRecorder.repairRecording(id);
+      res.json({ success: true, recording });
+    } catch (err: any) {
+      log(`[DVR] Failed to repair recording ${id}: ${err.message}`);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Revert a repaired recording to its original backup
+  router.post('/recordings/:id/revert', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    try {
+      const recording = await dvrRecorder.revertRecording(id);
+      res.json({ success: true, recording });
+    } catch (err: any) {
+      log(`[DVR] Failed to revert recording ${id}: ${err.message}`);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Stream / download recording file with Range request support
   router.get('/recordings/:id/stream', requireAuthOrQuery, async (req: AuthRequest, res) => {
     const { id } = req.params;

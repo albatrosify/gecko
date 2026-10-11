@@ -3,7 +3,7 @@ import { log } from '../logger.ts';
 import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
-import { createIpPinnedAgent, extractHostname } from '../dns-resolver.ts';
+import { createIpPinnedAgents, extractHostname, type IpPinnedAgents } from '../dns-resolver.ts';
 
 /** How many consecutive reconnect failures to tolerate before waiting for the client. */
 const RECONNECT_MAX_ATTEMPTS = 4;
@@ -84,6 +84,13 @@ function isLivePacingEnabled(): boolean {
   return liveBufferReserveSeconds() > 0;
 }
 
+/** Destroys both agents of a pinned pair, ignoring any close errors. */
+function destroyIpPinnedAgents(agents?: IpPinnedAgents): void {
+  if (!agents) return;
+  try { agents.http.destroy(); } catch {}
+  try { agents.https.destroy(); } catch {}
+}
+
 /** An upstream chunk plus the moment it arrived, which is what paces delivery. */
 interface BufferedChunk {
   at: number;
@@ -118,7 +125,7 @@ interface ActiveStreamChannel {
   type: 'live' | 'movie' | 'series';
   hostUrl: string;
   upstreamResponse: any;
-  upstreamAgent?: any;
+  upstreamAgents?: IpPinnedAgents;
   subscribers: Map<string, DownstreamSubscriber>;
   bytesRead: number;
   startTime: number;
@@ -641,28 +648,26 @@ class StreamHub {
     this.isReconnecting.add(channelKey);
     log(`[StreamHub] 🔄 Reconnecting upstream for ${channelKey} (${reason}) | ${channel.subscribers.size} subscriber(s) waiting...`);
 
-    let agent: any = undefined;
+    let agents: IpPinnedAgents | undefined;
     try {
       if (channel.upstreamResponse?.data?.destroy) {
         try { channel.upstreamResponse.data.destroy(); } catch {}
       }
-      if (channel.upstreamAgent?.destroy) {
-        try { channel.upstreamAgent.destroy(); } catch {}
-        channel.upstreamAgent = undefined;
-      }
+      destroyIpPinnedAgents(channel.upstreamAgents);
+      channel.upstreamAgents = undefined;
 
-      if (channel.upstreamConfig.candidateIps && channel.upstreamConfig.candidateIps.length > 1) {
-        const candidateIps = channel.upstreamConfig.candidateIps;
-        const currentIpIndex = ((channel.upstreamConfig.currentIpIndex ?? 0) + 1) % candidateIps.length;
-        channel.upstreamConfig.currentIpIndex = currentIpIndex;
-        const targetIp = candidateIps[currentIpIndex];
-        const isHttps = channel.upstreamConfig.url.startsWith('https:');
-        agent = createIpPinnedAgent(targetIp, extractHostname(channel.upstreamConfig.url).hostname, isHttps);
-        log(`[StreamHub] 🔄 In-place reconnecting ${channelKey} rotating to IP ${targetIp} (${currentIpIndex + 1}/${candidateIps.length})`);
-      } else if (channel.upstreamConfig.candidateIps && channel.upstreamConfig.candidateIps.length === 1) {
-        const targetIp = channel.upstreamConfig.candidateIps[0];
-        const isHttps = channel.upstreamConfig.url.startsWith('https:');
-        agent = createIpPinnedAgent(targetIp, extractHostname(channel.upstreamConfig.url).hostname, isHttps);
+      const candidateIps = channel.upstreamConfig.candidateIps;
+      if (candidateIps && candidateIps.length > 0) {
+        let targetIp: string;
+        if (candidateIps.length > 1) {
+          const currentIpIndex = ((channel.upstreamConfig.currentIpIndex ?? 0) + 1) % candidateIps.length;
+          channel.upstreamConfig.currentIpIndex = currentIpIndex;
+          targetIp = candidateIps[currentIpIndex];
+          log(`[StreamHub] 🔄 In-place reconnecting ${channelKey} rotating to IP ${targetIp} (${currentIpIndex + 1}/${candidateIps.length})`);
+        } else {
+          targetIp = candidateIps[0];
+        }
+        agents = createIpPinnedAgents(targetIp, extractHostname(channel.upstreamConfig.url).hostname);
       }
 
       const axios = (await import('axios')).default;
@@ -673,13 +678,13 @@ class StreamHub {
         timeout: 8000,
         headers: channel.upstreamConfig.headers || { 'User-Agent': 'Mozilla/5.0 IPTV-Proxy/1.0' },
         validateStatus: () => true,
-        ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
+        ...(agents ? { httpAgent: agents.http, httpsAgent: agents.https } : {}),
       });
 
       if (response.status >= 400) {
         log(`[StreamHub] ⚠️ Reconnect failed for ${channelKey}: Upstream returned HTTP ${response.status}`);
         if (response.data?.destroy) try { response.data.destroy(); } catch {}
-        if (agent?.destroy) try { agent.destroy(); } catch {}
+        destroyIpPinnedAgents(agents);
         this.scheduleReconnectRetry(channelKey, `HTTP ${response.status}`);
         return false;
       }
@@ -689,19 +694,26 @@ class StreamHub {
       (response.data as any)?.socket?.setKeepAlive?.(true, 10000);
 
       channel.upstreamResponse = response;
-      channel.upstreamAgent = agent;
+      channel.upstreamAgents = agents;
       channel.lastChunkAt = Date.now();
       channel.lastConnectAt = Date.now();
       channel.inInitialBurst = true;
       channel.burstBytes = 0;
       channel.rateBuckets.clear();
       this.bindUpstreamResponse(channel);
-      this.reconnectRetries.delete(channelKey);
-
       log(`[StreamHub] ✅ In-place reconnect SUCCEEDED for ${channelKey}! Seamlessly resumed stream for ${channel.subscribers.size} subscriber(s).`);
+
+      // If a DVR recording is attached to this channel, flag that a timestamp discontinuity occurred
+      if (channel.dvrRecordingId) {
+        try {
+          const { dvrRecorder } = await import('../dvr/recorder.ts');
+          dvrRecorder.markDiscontinuity(channel.dvrRecordingId, reason);
+        } catch {}
+      }
+
       return true;
     } catch (err: any) {
-      if (agent?.destroy) try { agent.destroy(); } catch {}
+      destroyIpPinnedAgents(agents);
       log(`[StreamHub] ⚠️ Reconnect error for ${channelKey}: ${err.message}`);
       this.scheduleReconnectRetry(channelKey, err.message);
       return false;
@@ -1010,10 +1022,8 @@ class StreamHub {
     if (channel.upstreamResponse?.data?.destroy) {
       channel.upstreamResponse.data.destroy();
     }
-    if (channel.upstreamAgent?.destroy) {
-      try { channel.upstreamAgent.destroy(); } catch {}
-      channel.upstreamAgent = undefined;
-    }
+    destroyIpPinnedAgents(channel.upstreamAgents);
+    channel.upstreamAgents = undefined;
 
     this.channels.delete(channelKey);
     log(`[StreamHub] Channel ${channelKey} closed.`);

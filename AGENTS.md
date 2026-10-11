@@ -46,7 +46,7 @@ npm run test     # vitest run
 - `connection-monitor.ts` — Überwacht Upstream-Verbindungen, protokolliert in `source_connection_logs`.
 - `multiplexer/stream-hub.ts` — bündelt Live-Streams; In-Place Self-Healing Reconnect mit Multi-IP-Rotation bei Upstream-Gaps/Abbrüchen; Backpressure- & Stalled-Subscriber-Schutz; **Live-Jitter-Buffer** (ratebasiertes Leaky-Bucket-Pacing, Reserve, Starvation-Logging). Tiefe über `GECKO_LIVE_BUFFER_SECONDS` (Sekunden, `0` = aus/passthrough, Default 3) — Reserve == zusätzliche Latenz.
 - `multiplexer/stream-guard.ts` — Einheitlicher Concurrency Guard über Live- und VOD-Streams hinweg (`evaluateStreamRequest`, Platzhalter bei Überlastung).
-- `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen). Zwei Startwege: **Stream-Tee** (`startLiveRecordingFromConnection`, aus einem aktiven Client) und **server-seitig** (`startChannelRecording`, direkt aus dem DVR-Tab ohne Player — öffnet den Upstream über einen internen Loopback-Request an `/live/...` mit Header `x-gecko-dvr-recording-id`, damit Host-Failover/IP-Pinning/Guard/Multiplexer wiederverwendet werden; optionale `durationMinutes` stoppen automatisch). `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams; `playback.ts` — `serveRecordingFile()`: fertige Aufnahmen wie statische Dateien (seekbar), laufende im Follow-Mode ohne `Content-Length` mit 30 s Stall-Cutoff.
+- `dvr/recorder.ts` — `DvrRecorder` (Aufnahmen). Zwei Startwege: **Stream-Tee** (`startLiveRecordingFromConnection`, aus einem aktiven Client) und **server-seitig** (`startChannelRecording`, direkt aus dem DVR-Tab ohne Player — öffnet den Upstream über einen internen Loopback-Request an `/live/...` mit Header `x-gecko-dvr-recording-id`, damit Host-Failover/IP-Pinning/Guard/Multiplexer wiederverwendet werden; optionale `durationMinutes` stoppen automatisch). Lossless Remux Repair (`repairRecording`), Revert to Backup (`revertRecording`), Auto-Pruning abgelaufener Backups (`pruneExpiredBackups`). `connection-arbiter.ts` — Verbindungszuteilung; `placeholder.ts` — Platzhalter-Streams; `playback.ts` — `serveRecordingFile()`: fertige Aufnahmen wie statische Dateien (seekbar), laufende im Follow-Mode ohne `Content-Length` mit 30 s Stall-Cutoff.
 - `llm.ts` — LLM-basierte Kanal-/Kategorie-Namensbereinigung.
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
@@ -109,7 +109,7 @@ Alle unter `/api` (Auth via `requireAuth`), außer Proxy-Endpoints. Detaillierte
 | Custom Categories | `server/routes/customCategories.ts` | `/custom-categories`, `/custom-category-items` (+ `batch`) |
 | Quality Scan | `server/routes/quality-scan.ts` | `/quality-scan`, `/quality-scan/:jobId` |
 | LLM | `server/routes/llm.ts` | `/llm/cleanup`, `/llm/test` |
-| DVR | `server/routes/dvr.ts` (mount `/api/dvr`) | `/recordings`, `/record-now`, `/record-channel`, `/recordings/:id/stop`, `/recordings/:id`, `/recordings/:id/stream` |
+| DVR | `server/routes/dvr.ts` (mount `/api/dvr`) | `/recordings`, `/record-now`, `/record-channel`, `/recordings/:id/stop`, `/recordings/:id`, `/recordings/:id/stream`, `/recordings/:id/repair`, `/recordings/:id/revert` |
 | Traffic | `server/routes/traffic.ts` (mount `/api/traffic`) | `/stats`, `/reset` |
 | Proxy (public) | `server/routes/proxy.ts` (mount `/`) | `/player_api.php`, `/get.php`, `/xmltv.php`, `/live\|movie\|series/:username/:password/:streamId`, `/timeshift/...`, `/img` |
 

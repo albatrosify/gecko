@@ -10,7 +10,7 @@ import { getCached } from "./cache.ts";
 import { eq } from "drizzle-orm";
 import { SourceHost, SourceHostResolvedIp } from "../src/types.ts";
 import { recordVpnBlock } from "./vpn.ts";
-import { resolveHostIps, rankHostIps, createIpPinnedAgent, extractHostname } from "./dns-resolver.ts";
+import { resolveHostIps, rankHostIps, createIpPinnedAgents, extractHostname, type IpPinnedAgents } from "./dns-resolver.ts";
 
 const PROBE_CAP_BYTES = 2 * 1024 * 1024; // 2MB (enables measuring real 4K / high-bitrate stream speeds)
 const PROBE_MAX_MS = 3500; // 3.5s timeout per host
@@ -479,10 +479,14 @@ export function initHostStatsFlusher(): void {
 /**
  * Probe the throughput of a single stream URL, returning Mbps.
  */
-async function probeThroughput(url: string, agent?: any): Promise<number> {
+async function probeThroughput(url: string, agents?: IpPinnedAgents): Promise<number> {
   const start = Date.now();
   let bytes = 0;
   const controller = new AbortController();
+  const destroyAgents = () => {
+    try { agents?.http.destroy(); } catch {}
+    try { agents?.https.destroy(); } catch {}
+  };
 
   try {
     const response = await axios({
@@ -496,13 +500,13 @@ async function probeThroughput(url: string, agent?: any): Promise<number> {
         Range: `bytes=0-${PROBE_CAP_BYTES - 1}`,
       },
       validateStatus: () => true,
-      ...(agent ? { httpAgent: agent, httpsAgent: agent } : {}),
+      ...(agents ? { httpAgent: agents.http, httpsAgent: agents.https } : {}),
     });
 
     if (response.status >= 400) {
       if (response.data?.destroy) response.data.destroy();
       controller.abort();
-      try { agent?.destroy?.(); } catch {}
+      destroyAgents();
       if (response.status === 511) {
         throw new Error('Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted)');
       }
@@ -519,7 +523,7 @@ async function probeThroughput(url: string, agent?: any): Promise<number> {
           if (response.data?.destroy) response.data.destroy();
         } catch {}
         controller.abort();
-        try { agent?.destroy?.(); } catch {}
+        destroyAgents();
         const secs = (Date.now() - start) / 1000;
         resolve(secs > 0 ? (bytes * 8) / secs / 1_000_000 : 0);
       };
@@ -537,13 +541,13 @@ async function probeThroughput(url: string, agent?: any): Promise<number> {
         clearTimeout(timeout);
         settled = true;
         controller.abort();
-        try { agent?.destroy?.(); } catch {}
+        destroyAgents();
         reject(err);
       });
     });
   } catch (err) {
     controller.abort();
-    try { agent?.destroy?.(); } catch {}
+    destroyAgents();
     throw err;
   }
 }
@@ -655,9 +659,8 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
       try {
         if (benchmarkStreamId != null) {
           const probeUrl = client.getLiveStreamUrl(benchmarkStreamId);
-          const isHttps = /^https:/i.test(h.url);
-          const agent = r.resolvedIp ? createIpPinnedAgent(r.resolvedIp, extractHostname(probeUrl).hostname, isHttps) : undefined;
-          r.throughputMbps = await probeThroughput(probeUrl, agent);
+          const agents = r.resolvedIp ? createIpPinnedAgents(r.resolvedIp, extractHostname(probeUrl).hostname) : undefined;
+          r.throughputMbps = await probeThroughput(probeUrl, agents);
           r.probeOk = true;
         } else {
           r.probeOk = false;

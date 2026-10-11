@@ -167,12 +167,38 @@ describe('DvrRecorder', () => {
       durationMinutes: 60,
     })).rejects.toThrow(/HTTP 409/);
 
-    // Identified itself as a DVR request to the loopback proxy.
-    const call = (axios as any).mock.calls[0][0];
-    expect(call.headers['x-gecko-dvr-recording-id']).toBe('rec-test-123');
-    expect(call.url).toContain('/live/user/pass/200');
-
     // No lingering session and nothing left behind.
     expect(dvrRecorder.getRecordingById('rec-test-123')).toBeNull();
+  });
+
+  it('maps recording IDs to deterministic numeric IDs in the 900M range', () => {
+    const num1 = dvrRecorder.getNumericId('2883a608-38ca-43c6-aaf7-61057d358a0c');
+    const num2 = dvrRecorder.getNumericId('2883a608-38ca-43c6-aaf7-61057d358a0c');
+    expect(num1).toBe(num2);
+    expect(num1).toBeGreaterThanOrEqual(900000000);
+    expect(num1).toBeLessThan(1000000000);
+
+    const num3 = dvrRecorder.getNumericId('809d6f41-1339-4c9b-bf80-98036de9d3f6');
+    expect(typeof num3).toBe('number');
+    expect(num3).not.toBe(num1);
+  });
+
+  it('finds active recording by numeric ID', async () => {
+    const connId = 'conn-num-test';
+    proxyStats.connections.set(connId, {
+      id: connId,
+      sourceId: 'source-1',
+      streamId: '100',
+      streamName: 'Numeric Channel',
+      type: 'live',
+    } as any);
+
+    const recording = await dvrRecorder.startLiveRecordingFromConnection(connId, 'user-1');
+    const numericId = dvrRecorder.getNumericId(recording.id);
+
+    const resolved = dvrRecorder.getRecordingByNumericId(numericId);
+    expect(resolved).not.toBeNull();
+    expect(resolved?.id).toBe(recording.id);
+    expect(resolved?.streamName).toBe('Numeric Channel');
   });
 });

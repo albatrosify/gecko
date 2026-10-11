@@ -94,7 +94,9 @@ import {
   BarChart3,
   HardDrive,
   Power,
-  Layers
+  Layers,
+  Wrench,
+  RotateCcw
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -9002,6 +9004,7 @@ export function DvrManager({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [activePlayback, setActivePlayback] = useState<import('../types').Recording | null>(null);
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+  const [actionStatus, setActionStatus] = useState<Record<string, string>>({});
   const [showStartModal, setShowStartModal] = useState(false);
 
   const loadRecordings = useCallback(async () => {
@@ -9027,14 +9030,45 @@ export function DvrManager({ user }: { user: User }) {
       await api.dvr.stopRecording(id);
       await loadRecordings();
     } catch (err: any) {
-      alert(`Fehler beim Stoppen: ${err.message}`);
+      alert(`Error stopping recording: ${err.message}`);
     } finally {
       setActionBusy(prev => ({ ...prev, [id]: false }));
     }
   };
 
+  const handleRepair = async (id: string) => {
+    setActionBusy(prev => ({ ...prev, [id]: true }));
+    setActionStatus(prev => ({ ...prev, [id]: 'Repairing...' }));
+    try {
+      await api.dvr.repairRecording(id);
+      await loadRecordings();
+    } catch (err: any) {
+      alert(`Repair failed: ${err.message}`);
+    } finally {
+      setActionBusy(prev => ({ ...prev, [id]: false }));
+      setActionStatus(prev => ({ ...prev, [id]: '' }));
+    }
+  };
+
+  const handleRevert = async (id: string, name: string) => {
+    if (!confirm(`Revert "${name}" to its original backup? The repaired file will be replaced by the original version.`)) {
+      return;
+    }
+    setActionBusy(prev => ({ ...prev, [id]: true }));
+    setActionStatus(prev => ({ ...prev, [id]: 'Reverting...' }));
+    try {
+      await api.dvr.revertRecording(id);
+      await loadRecordings();
+    } catch (err: any) {
+      alert(`Revert failed: ${err.message}`);
+    } finally {
+      setActionBusy(prev => ({ ...prev, [id]: false }));
+      setActionStatus(prev => ({ ...prev, [id]: '' }));
+    }
+  };
+
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Möchtest du die Aufnahme "${name}" wirklich löschen? Die Datei wird dauerhaft von der Festplatte gelöscht.`)) {
+    if (!confirm(`Do you really want to delete "${name}"? The file will be permanently removed from disk.`)) {
       return;
     }
     setActionBusy(prev => ({ ...prev, [id]: true }));
@@ -9042,7 +9076,7 @@ export function DvrManager({ user }: { user: User }) {
       await api.dvr.deleteRecording(id);
       await loadRecordings();
     } catch (err: any) {
-      alert(`Fehler beim Löschen: ${err.message}`);
+      alert(`Error deleting recording: ${err.message}`);
     } finally {
       setActionBusy(prev => ({ ...prev, [id]: false }));
     }
@@ -9182,8 +9216,38 @@ export function DvrManager({ user }: { user: User }) {
                           <Film size={14} />
                         </div>
                         <div className="min-w-0">
-                          <div className="font-bold truncate text-xs">{rec.streamName}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-bold truncate text-xs">{rec.streamName}</div>
+                            {rec.extra?.needsRepair && (
+                              <span
+                                className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] font-bold flex items-center gap-1 shrink-0"
+                                title="Timestamp discontinuity detected from upstream reconnect. Click Repair to fix."
+                              >
+                                <AlertTriangle size={10} />
+                                Timestamp issue
+                              </span>
+                            )}
+                            {rec.extra?.repairedAt && (
+                              <span
+                                className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-bold flex items-center gap-1 shrink-0"
+                                title={`Repaired on ${new Date(rec.extra.repairedAt).toLocaleDateString()}`}
+                              >
+                                <Sparkles size={10} />
+                                Repaired
+                              </span>
+                            )}
+                          </div>
                           {rec.playlistId && <div className="text-[10px] text-zinc-500">via {rec.playlistId}</div>}
+                          {rec.extra?.backupPath && (
+                            <div className="text-[10px] text-amber-500/80 flex items-center gap-1 mt-0.5">
+                              <span>Original backup available</span>
+                              {rec.extra?.backupExpiresAt && (
+                                <span className="text-zinc-500">
+                                  (prunes {new Date(rec.extra.backupExpiresAt).toLocaleDateString()})
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -9198,9 +9262,44 @@ export function DvrManager({ user }: { user: User }) {
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {actionStatus[rec.id] && (
+                          <span className="text-[11px] text-amber-400 animate-pulse font-mono mr-1">
+                            {actionStatus[rec.id]}
+                          </span>
+                        )}
+
+                        {rec.extra?.backupPath && (
+                          <button
+                            onClick={() => handleRevert(rec.id, rec.streamName)}
+                            disabled={actionBusy[rec.id]}
+                            className="p-1.5 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
+                            title="Revert to original backup file"
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => handleRepair(rec.id)}
+                          disabled={actionBusy[rec.id]}
+                          className={`p-1.5 rounded-lg transition-all disabled:opacity-50 cursor-pointer ${
+                            rec.extra?.needsRepair
+                              ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 ring-1 ring-amber-500/30'
+                              : 'text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10'
+                          }`}
+                          title={
+                            rec.extra?.needsRepair
+                              ? 'Timestamp issue detected — click to losslessly repair timestamps'
+                              : 'Repair timestamps (lossless FFmpeg stream copy)'
+                          }
+                        >
+                          <Wrench size={14} />
+                        </button>
+
                         <button
                           onClick={() => setActivePlayback(rec)}
-                          className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all cursor-pointer"
+                          disabled={actionBusy[rec.id]}
+                          className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
                           title="Im Web-Player abspielen"
                         >
                           <Play size={14} />

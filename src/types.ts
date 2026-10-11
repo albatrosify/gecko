@@ -181,6 +181,13 @@ export interface Recording {
     isHandover?: boolean;
     handoverAt?: string;
     error?: string;
+    needsRepair?: boolean;
+    discontinuityReason?: string;
+    repairedAt?: string;
+    backupPath?: string;
+    backupExpiresAt?: string;
+    originalDurationSeconds?: number;
+    originalFileSizeBytes?: number;
     [key: string]: any;
   };
 }

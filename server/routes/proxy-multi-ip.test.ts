@@ -136,28 +136,31 @@ describe('Multi-IP Stream Proxying & Failover', () => {
       });
 
     const abortController = new AbortController();
-    setTimeout(() => {
+    const dataTimer = setInterval(() => {
       fakeStreamSuccess.emit('data', Buffer.from('initial-chunk'));
     }, 20);
-    const res = await fetch(`${baseUrl}/live/multiuser/multipass/100.ts`, { signal: abortController.signal });
-    expect(res.status).toBe(200);
+    try {
+      const res = await fetch(`${baseUrl}/live/multiuser/multipass/100.ts`, { signal: abortController.signal });
+      expect(res.status).toBe(200);
 
-    // Verify Axios was called twice
-    expect(mockAxios).toHaveBeenCalledTimes(2);
+      // Verify Axios was called twice
+      expect(mockAxios).toHaveBeenCalledTimes(2);
 
-    const call1Config = mockAxios.mock.calls[0][0];
-    const call2Config = mockAxios.mock.calls[1][0];
+      const call1Config = mockAxios.mock.calls[0][0];
+      const call2Config = mockAxios.mock.calls[1][0];
 
-    expect(inspectAgentIp(call1Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.10');
-    expect(inspectAgentIp(call2Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.20');
+      expect(inspectAgentIp(call1Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.10');
+      expect(inspectAgentIp(call2Config.httpAgent, 'multi-node.upstream.tv')).toBe('198.51.100.20');
 
-    // Verify streamHub registered channel with candidate IPs and correct index
-    const channel = streamHub.getChannel('src-multi', '100');
-    expect(channel).toBeDefined();
-    expect(channel?.upstreamConfig?.candidateIps).toEqual(['198.51.100.10', '198.51.100.20']);
-    expect(channel?.upstreamConfig?.currentIpIndex).toBe(1);
-
-    abortController.abort();
+      // Verify streamHub registered channel with candidate IPs and correct index
+      const channel = streamHub.getChannel('src-multi', '100');
+      expect(channel).toBeDefined();
+      expect(channel?.upstreamConfig?.candidateIps).toEqual(['198.51.100.10', '198.51.100.20']);
+      expect(channel?.upstreamConfig?.currentIpIndex).toBe(1);
+    } finally {
+      clearInterval(dataTimer);
+      abortController.abort();
+    }
   });
 
   it('fails through all candidate IPs and returns error when all return 5xx', async () => {
