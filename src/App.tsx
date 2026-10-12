@@ -111,12 +111,12 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/traffic" element={<TrafficView user={user} />} />
-              <Route path="/dvr" element={<DvrManager user={user} />} />
-              <Route path="/playlists" element={<PlaylistManager user={user} />} />
-              <Route path="/sources" element={<SourceManager user={user} />} />
-              <Route path="/epgs" element={<EPGManager user={user} />} />
+              <Route path="/dvr" element={<DvrManager />} />
+              <Route path="/playlists" element={<PlaylistManager />} />
+              <Route path="/sources" element={<SourceManager />} />
+              <Route path="/epgs" element={<EPGManager />} />
               <Route path="/settings" element={<Settings user={user} />} />
-              <Route path="/playlist/:id" element={<PlaylistEditor user={user} />} />
+              <Route path="/playlist/:id" element={<PlaylistEditor />} />
               {user.role === 'admin' && <Route path="/users" element={<UserManager user={user} />} />}
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>

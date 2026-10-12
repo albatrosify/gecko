@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
 import { formatBytes } from '../format.ts';
 import { User, TrafficStatsResponse, PlaylistTrafficSummary } from '../types';

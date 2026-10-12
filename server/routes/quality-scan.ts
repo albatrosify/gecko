@@ -1,10 +1,12 @@
 import { Router } from "express";
+import pLimit from "p-limit";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scanJobs, ScanJob, buildStreamUrl } from "../quality-scan.ts";
 import { getCached } from "../cache.ts";
 import { probeStream } from "../quality.ts";
+import { parseSourceStreamId } from "../utils.ts";
 
 export function createQualityScanRouter() {
   const router = Router();
@@ -62,7 +64,7 @@ export function createQualityScanRouter() {
     const customItems = db.select().from(schemaCustomCategoryItems).where(eq(schemaCustomCategoryItems.playlistId, playlistId)).all();
     const customItemByStreamId = new Map(customItems.map(item => [item.streamId, item]));
 
-    const jobId = Math.random().toString(36).slice(2);
+    const jobId = generateId();
     const job: ScanJob = {
       id: jobId,
       userId: req.user!.id,
@@ -83,21 +85,14 @@ export function createQualityScanRouter() {
     (async () => {
       const cap = Math.max(1, Math.min(5, concurrency));
 
-      for (let i = 0; i < streamIds.length; i += cap) {
-        if (job.status === 'cancelled') break;
-        const batch = streamIds.slice(i, i + cap);
+      const limit = pLimit(cap);
 
-        await Promise.all(batch.map(async (streamId) => {
+      await Promise.all(
+        streamIds.map((streamId) => limit(async () => {
           if (job.status === 'cancelled') return;
 
           // Decode source-prefixed stream ID (e.g. "0_1234" → sIdx=0, originalId="1234")
-          let sIdx: number | null = null;
-          let originalStreamId = streamId;
-          if (streamId.includes('_')) {
-            const parts = streamId.split('_');
-            const firstPart = parseInt(parts[0]);
-            if (!isNaN(firstPart)) { sIdx = firstPart; originalStreamId = parts.slice(1).join('_'); }
-          }
+          const { sourceIdx: sIdx, id: originalStreamId } = parseSourceStreamId(streamId);
 
           // Check if this stream is a symlink (customCategoryItem)
           const customItem = customItemByStreamId.get(streamId) || customItemByStreamId.get(originalStreamId);
@@ -171,8 +166,8 @@ export function createQualityScanRouter() {
             job.failed++;
           }
           job.done++;
-        }));
-      }
+        }))
+      );
 
       if (job.status !== 'cancelled') job.status = 'done';
     })().catch((e) => {

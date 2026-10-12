@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, useDragControls } from 'motion/react';
-import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, AlertCircle, WifiOff, RotateCcw, Loader2, Copy, Check, Download, ChevronDown, Tv } from 'lucide-react';
+import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, AlertCircle, WifiOff, RotateCcw, Loader2, Copy, Check, Download, ChevronDown } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
 import { downloadStreamM3u, launchExternalPlayer, toAbsoluteUrl, ExternalPlayerType } from '../playerUtils';
@@ -311,7 +311,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         hls.loadSource(url);
         hls.attachMedia(video);
 
-        hls.on(Hls.Events.ERROR, async (event, data) => {
+        hls.on(Hls.Events.ERROR, async (_event, data) => {
           console.warn('HLS error:', data);
           if (data.fatal) {
             setIsLoading(false);
@@ -356,7 +356,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           }
         });
 
-        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (event, data) => {
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => {
            setActiveAudioTrack(data.id);
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {

@@ -4,7 +4,7 @@ import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { XtreamClient } from "./xtream.ts";
 import { getCached, setCache } from "./cache.ts";
-import { parseXtreamExpDate } from "./utils.ts";
+import { parseXtreamExpDate, parseSourceStreamId } from "./utils.ts";
 
 // Helper to compare data and generate a changelog
 function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
@@ -323,11 +323,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
 
     db.transaction((tx) => {
       for (const m of mList) {
-        let lookupId = m.originalId;
-        if (lookupId.includes('_')) {
-          const parts = lookupId.split('_');
-          if (!isNaN(parseInt(parts[0]))) lookupId = parts.slice(1).join('_');
-        }
+        const lookupId = parseSourceStreamId(m.originalId).id;
         const upstream = streamMap.get(lookupId) as any;
         if (!upstream) continue;
 

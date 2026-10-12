@@ -148,7 +148,7 @@ export function initProxyStatsInterval() {
       // Periodic zombie socket sweeper (runs every 10s / 5 ticks)
       sweepTick = (sweepTick + 1) % 5;
       if (sweepTick === 0) {
-        for (const [id, conn] of Array.from(proxyStats.connections.entries())) {
+        for (const [id] of Array.from(proxyStats.connections.entries())) {
           const ctrl = streamControllers.get(id);
           if (!ctrl) {
             // Orphan entry in proxyStats with no controller

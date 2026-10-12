@@ -142,7 +142,7 @@ export async function servePlaylistEpg(req: Request, res: Response, playlist: Pl
   // Cache miss, expired, or force refresh requested
   log(`[EPG] Cache miss / refresh requested for playlist ${playlist.name || playlist.id}`);
   try {
-    await refreshPlaylistEpg(playlist, imgBase, isForce);
+    await refreshPlaylistEpg(playlist, imgBase);
     streamEpgFile(req, res, cachePath);
   } catch (err: any) {
     if (stats) {
@@ -158,7 +158,7 @@ export async function servePlaylistEpg(req: Request, res: Response, playlist: Pl
  * Refreshes or builds the EPG cache for a given playlist.
  * Deduplicates concurrent requests for the same playlist.
  */
-export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string, force: boolean = false): Promise<void> {
+export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string): Promise<void> {
   const playlistId = playlist.id;
   const existing = inFlightBuilds.get(playlistId);
   if (existing) {

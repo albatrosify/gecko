@@ -424,9 +424,9 @@ export function createSourcesRouter() {
     }
 
     // Deep clone cached data to avoid modifying global cache in-place
-    const liveCats = data.liveCats ? JSON.parse(JSON.stringify(data.liveCats)) : null;
-    const vodCats = data.vodCats ? JSON.parse(JSON.stringify(data.vodCats)) : null;
-    const seriesCats = data.seriesCats ? JSON.parse(JSON.stringify(data.seriesCats)) : null;
+    const liveCats = data.liveCats ? structuredClone(data.liveCats) : null;
+    const vodCats = data.vodCats ? structuredClone(data.vodCats) : null;
+    const seriesCats = data.seriesCats ? structuredClone(data.seriesCats) : null;
 
     // Tag categories with source index for editor use — do NOT mutate category_id or id
     if (sourceIndex !== undefined && sourceIndex !== null) {
@@ -493,7 +493,7 @@ export function createSourcesRouter() {
     }
 
     // Deep clone cached data to avoid modifying global cache in-place
-    const streams = data.streams ? JSON.parse(JSON.stringify(data.streams)) : null;
+    const streams = data.streams ? structuredClone(data.streams) : null;
 
     // Tag streams with their source index for UI deduplication — do NOT mutate stream_id or category_id
     if (sourceIndex !== undefined && sourceIndex !== null) {

@@ -10,7 +10,7 @@ import { getCached } from "./cache.ts";
 import { eq } from "drizzle-orm";
 import { SourceHost, SourceHostResolvedIp } from "../src/types.ts";
 import { recordVpnBlock } from "./vpn.ts";
-import { resolveHostIps, rankHostIps, createIpPinnedAgents, extractHostname, type IpPinnedAgents } from "./dns-resolver.ts";
+import { rankHostIps, createIpPinnedAgents, extractHostname, type IpPinnedAgents } from "./dns-resolver.ts";
 
 const PROBE_CAP_BYTES = 2 * 1024 * 1024; // 2MB (enables measuring real 4K / high-bitrate stream speeds)
 const PROBE_MAX_MS = 3500; // 3.5s timeout per host

@@ -16,7 +16,7 @@ export function createSystemRouter() {
 
   // Public IP lookup (server-side so it reflects the VPN's IP)
   let ipCache: { data: any; expiresAt: number } | null = null;
-  router.get("/system/ip", requireAuth, async (req, res) => {
+  router.get("/system/ip", requireAuth, async (_req, res) => {
     try {
       const now = Date.now();
       if (ipCache && now < ipCache.expiresAt) {
@@ -48,7 +48,7 @@ export function createSystemRouter() {
   });
 
   // VPN Status & Diagnostics
-  router.get("/system/vpn", requireAuth, async (req, res) => {
+  router.get("/system/vpn", requireAuth, async (_req, res) => {
     try {
       const { getGluetunStatus } = await import("../vpn.ts");
       const status = await getGluetunStatus();
@@ -59,7 +59,7 @@ export function createSystemRouter() {
   });
 
   // VPN Reconnect / Rotate
-  router.post("/system/vpn/reconnect", requireAuth, async (req, res) => {
+  router.post("/system/vpn/reconnect", requireAuth, async (_req, res) => {
     try {
       const { reconnectGluetun } = await import("../vpn.ts");
       const result = await reconnectGluetun();
@@ -86,7 +86,7 @@ export function createSystemRouter() {
     }
   });
 
-  router.get("/proxy/stats", requireAuth, async (req, res) => {
+  router.get("/proxy/stats", requireAuth, async (_req, res) => {
     try {
       const db = getDb();
       const { playlists, users } = await import('../schema.ts');
@@ -140,11 +140,11 @@ export function createSystemRouter() {
     res.json({ ok: true, killed: count });
   });
 
-  router.get("/health", (req, res) => {
+  router.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
 
-  router.get("/version", (req, res) => {
+  router.get("/version", (_req, res) => {
     res.json({ version: pkg.version });
   });
 

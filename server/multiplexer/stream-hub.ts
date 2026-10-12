@@ -33,12 +33,18 @@ const LIVE_BUFFER_RATE_WARMUP_S = 3;
  * Real upstreams (like Tivione) regularly pause for 9.8-10.5 s between bursts.
  */
 const LIVE_BUFFER_RATE_MAX_GAP_S = 12;
+// ── Subscriber backpressure limits ────────────────────────────────────────────
+/** Grace period after a subscriber connects before buffer pressure counts against it. */
+const STARTUP_GRACE_MS = 15_000;
 /**
- * Release rate factor used when the reserve drops dangerously low.
- * Kept close to 1.0 so the downstream player's internal buffer (ExoPlayer/TiviMate)
- * is not drained. The provider's natural 20-50 Mbps bursts naturally build the reserve.
+ * Per-subscriber buffer level above which the subscriber is treated as stalled.
+ * Sized by the `STREAM_BUFFER_MB` env var (megabytes, default 16).
  */
-const LIVE_BUFFER_FILL_FACTOR = 0.96;
+const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
+/** How long a subscriber may sit above the warn threshold before eviction. */
+const MAX_STALL_MS = 15_000;
+/** Absolute per-subscriber buffer ceiling; above this the subscriber is evicted immediately. */
+const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
 /**
  * Content kept queued at all times — the only latency the jitter buffer adds, and
  * what covers a provider outage. Output runs at the stream's own rate, so the reserve
@@ -115,8 +121,6 @@ export interface UpstreamConfig {
   candidateIps?: string[];
   currentIpIndex?: number;
 }
-export type UpstreamStreamConfig = UpstreamConfig;
-
 interface ActiveStreamChannel {
   channelKey: string;
   sourceId: string;
@@ -346,11 +350,6 @@ class StreamHub {
   }
 
   private handleUpstreamChunk(channel: ActiveStreamChannel, chunk: Buffer): void {
-    const STARTUP_GRACE_MS = 15_000;
-    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
-    const MAX_STALL_MS = 15_000;
-    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
-
     const now = Date.now();
     const gapSinceLastChunk = channel.lastChunkAt ? now - channel.lastChunkAt : 0;
     channel.lastChunkAt = now;
@@ -547,12 +546,6 @@ class StreamHub {
         ? channel.pacingTokens
         : Math.min(cap, channel.pacingTokens + (releaseRate * elapsedMs) / 1000);
     }
-
-
-    const STARTUP_GRACE_MS = 15_000;
-    const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
-    const MAX_STALL_MS = 15_000;
-    const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
 
     const deadSubscribers: string[] = [];
     while (channel.buffer.length > 0) {

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
-import { and, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { customCategories, customCategoryItems, playlists } from '../schema.ts';
 
 export function createCustomCategoriesRouter() {
@@ -103,7 +103,7 @@ export function createCustomCategoriesRouter() {
 
       if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
 
-      const { doc, playlist } = result;
+      const { playlist } = result;
 
       // Ownership check via playlist
       if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
@@ -156,7 +156,7 @@ export function createCustomCategoriesRouter() {
 
       if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
 
-      const { doc, playlist } = result;
+      const { playlist } = result;
 
       if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
         return res.status(403).json({ error: "Forbidden" });
@@ -305,7 +305,7 @@ export function createCustomCategoriesRouter() {
 
       if (!result || !result.doc) return res.status(404).json({ error: "Not found" });
 
-      const { doc, playlist } = result;
+      const { playlist } = result;
 
       if (!playlist || (req.user?.role !== 'admin' && playlist.userId !== req.user?.id)) {
         return res.status(403).json({ error: "Forbidden" });

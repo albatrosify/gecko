@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { log } from './logger.ts';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export interface VpnBlockEvent {
   sourceId: string;
@@ -149,7 +150,7 @@ export async function reconnectGluetun(): Promise<{ success: boolean; message: s
   log(`[VPN] Sent stopped command to Gluetun via ${workedEndpoint}. Restarting VPN...`);
 
   // Wait 1.5 seconds for tunnel stop
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  await sleep(1500);
 
   // Trigger start / running
   try {
@@ -168,7 +169,7 @@ export async function reconnectGluetun(): Promise<{ success: boolean; message: s
   // Poll for up to 10 seconds for new public IP
   let newIp: string | undefined;
   for (let i = 0; i < 5; i++) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await sleep(2000);
     try {
       const ipRes = await axios.get(`${baseUrl}/v1/publicip/ip`, {
         headers,

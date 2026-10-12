@@ -1,5 +1,3 @@
-const API_BASE = '';
-
 function getToken(): string | null {
   if (typeof window !== 'undefined' && window.location) {
     const urlParams = new URLSearchParams(window.location.search);

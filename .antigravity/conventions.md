@@ -19,7 +19,6 @@ Self-hosted IPTV-Playlist-Aggregator. User verbinden Xtream-Codes-/M3U-Upstream-
 
 **Nebenprojekte:**
 - `player/` — eigenständige Expo-/React-Native-App (IPTV-Player-Client), spricht gegen die Xtream-Endpoints des Hauptservers.
-- `companion/` — leerer Expo-Router-Scaffold, derzeit ohne aktiven Code.
 
 ## Module & Imports
 

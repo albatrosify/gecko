@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo, forwardRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../api';
 import { formatBytes, formatDuration } from '../format.ts';
@@ -613,7 +613,7 @@ export function Dashboard() {
   );
 }
 
-export function PlaylistManager({ user }: { user: User }) {
+export function PlaylistManager() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newPlaylist, setNewPlaylist] = useState({ name: '', username: '', password: '', directStreams: false });
@@ -1440,7 +1440,7 @@ function ConnectionTimelineChart({
   );
 }
 
-export function SourceManager({ user }: { user: User }) {
+export function SourceManager() {
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -3135,8 +3135,7 @@ export function SourceManager({ user }: { user: User }) {
   );
 }
 
-export function EPGManager
-({ user }: { user: User }) {
+export function EPGManager() {
   const [epgs, setEpgs] = useState<EPGSource[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [newEpg, setNewEpg] = useState({ name: '', url: '' });
@@ -4072,14 +4071,14 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
   }
 }
 
-export function PlaylistEditor({ user }: { user: User }) {
+export function PlaylistEditor() {
   const { id } = useParams();
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [sources, setSources] = useState<UpstreamSource[]>([]);
   const [activeTab, setActiveTab] = useState<'live' | 'vod' | 'series'>('live');
   const [categories, setCategories] = useState<any[]>([]);
   const [customCategories, setCustomCategories] = useState<any[]>([]);
-  const [customCategoryItems, setCustomCategoryItems] = useState<any[]>([]);
+  const [, setCustomCategoryItems] = useState<any[]>([]);
   const [streams, setStreams] = useState<any[]>([]);
   const rawStreamsRef = useRef<any[]>([]);
 
@@ -4959,58 +4958,6 @@ export function PlaylistEditor({ user }: { user: User }) {
       alert("No suitable channels to link.");
     }
   };
-
-  const handleBatchMove = async (newCategoryId: string, scope: 'all' | 'categories' | 'streams') => {
-    let activeStreams: any[] = [];
-    
-    if (scope === 'all') {
-      activeStreams = sortedStreams;
-    } else if (scope === 'categories') {
-      activeStreams = sortedStreams.filter(s => selectedCategoryIds.has(String(s.category_id)));
-    } else if (scope === 'streams') {
-      activeStreams = sortedStreams.filter(s => selectedStreamIds.has(String(s._uniqueId)));
-    }
-
-    if (activeStreams.length === 0) {
-      alert("No channels selected in scope.");
-      return;
-    }
-
-    const mappingLookup = new Map(mappings.filter(m => m.type === activeTab).map(m => [m.originalId, m]));
-
-    const updates = activeStreams.map(stream => {
-      const sid = String(stream._rawId || stream._uniqueId);
-      const existingMapping = mappingLookup.get(sid);
-
-      if (existingMapping && existingMapping.categoryId === newCategoryId) return null;
-      if (!existingMapping && String(stream.category_id) === newCategoryId) return null;
-
-      return {
-        id: existingMapping?.id,
-        originalId: sid,
-        playlistId: id,
-        type: activeTab,
-        categoryId: newCategoryId
-      };
-    }).filter(Boolean);
-
-    if (updates.length > 0) {
-      try {
-        setLoading(true);
-        await api.mappings.batchUpdate(updates as any[]);
-        await refreshMappings();
-        alert(`Successfully moved ${updates.length} items.`);
-      } catch (error) {
-        console.error("Batch move failed:", error);
-        alert("Failed to apply batch changes.");
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      alert("No changes to apply.");
-    }
-  };
-
 
   const openAutoMatchModal = async () => {
     if (!id) return;
@@ -6310,7 +6257,6 @@ function AiCleanupModal({ kind, items, onApply, onClose }: AiCleanupModalProps) 
 
   const changedRows = rows.filter(r => r.cleaned !== r.original);
   const approvedCount = rows.filter(r => r.approved && r.cleaned !== r.original).length;
-  const allSelected = changedRows.length > 0 && changedRows.every(r => r.approved);
 
   const toggleAll = (value: boolean) => {
     setRows(prev => prev.map(r => (r.cleaned !== r.original ? { ...r, approved: value } : r)));
@@ -6758,10 +6704,6 @@ function SortableCategory({
   onMappingChange, 
   onUpdate,
   onBatchVisibilityToggle, 
-  allSources, 
-  playlistSourceIds,
-  customCategories,
-  allMappings
 }: { 
   cat: any; 
   mapping?: CategoryMapping;
@@ -7204,7 +7146,7 @@ const VirtualStreamRow = React.memo(({
   const originalId = stream?._rawId || stream?._uniqueId || "fallback-id"; // raw upstream ID, for DB ops
   const isSelected = selectedStreamIds.has(sortableId);
 
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id: sortableId });
 
   if (!stream) return <div style={style} />;
 
@@ -7319,29 +7261,6 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
         console.error('Failed to toggle visibility:', error);
       }
     };
-  
-    const handleRename = async (newName: string) => {
-       try {
-         if (mapping?.id) {
-           await api.mappings.update(mapping.id, { customName: newName });
-         } else {
-           await api.mappings.create({
-             playlistId,
-             type,
-             originalId,
-             originalName,
-             customName: newName,
-             order: mapping?.order ?? 999999,
-             hidden: false,
-             categoryId: String(stream.category_id || ""),
-             sourceIdx: stream._sourceIdx ?? 0
-           });
-         }
-       onMappingChange();
-     } catch (error) {
-       console.error('Failed to rename stream:', error);
-     }
-   };
 
   const isCopy = stream._isCopy && !stream._isMissing;
   const isDeadCopy = stream._isMissing;
@@ -7953,7 +7872,6 @@ function EditorPane({
   onAiCleanChannel,
   onAiCleanChannels,
   onBatchCopy,
-  customCategories,
   categories,
 }: {
   stream: any;
@@ -8999,7 +8917,7 @@ export function UserManager({ user }: { user: User }) {
   );
 }
 
-export function DvrManager({ user }: { user: User }) {
+export function DvrManager() {
   const [recordings, setRecordings] = useState<import('../types').Recording[]>([]);
   const [loading, setLoading] = useState(true);
   const [activePlayback, setActivePlayback] = useState<import('../types').Recording | null>(null);

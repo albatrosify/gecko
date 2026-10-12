@@ -58,7 +58,7 @@ export function proxySeriesInfoImages(data: any, imgBase: string): any {
 export function proxyXmlIcons(xml: string, imgBase: string): string {
   // Matches <icon\b ... src="http..." ... /> or <icon>...</icon>
   // We use a more robust regex that handles arbitrary attribute order
-  return xml.replace(/<icon\b([^>]*)\bsrc=["'](https?:\/\/[^"']+)["']([^>\/]*)\/?>/gi, (match, before, url, after) => {
+  return xml.replace(/<icon\b([^>]*)\bsrc=["'](https?:\/\/[^"']+)["']([^>\/]*)\/?>/gi, (_match, before, url, after) => {
     return `<icon${before}src="${proxyImageUrl(url, imgBase)}"${after}/>`;
   });
 }
@@ -76,6 +76,31 @@ export const applyRegex = (name: string, rules: { pattern: string; replacement: 
   }
   return result;
 };
+
+/**
+ * Strips the leading "<sourceIdx>_" prefix that Gecko adds when merging
+ * multiple upstream sources into one playlist. IDs without a prefix are
+ * returned unchanged. Matches the long-standing inline
+ * `id.split('_').slice(1).join('_')` behaviour (strips up to the first '_').
+ */
+export function decodeStreamId(id: string): string {
+  return id.includes('_') ? id.split('_').slice(1).join('_') : id;
+}
+
+/**
+ * Parses a "<sourceIdx>_<id>" stream/category ID into its parts. When the ID
+ * has no numeric prefix, `sourceIdx` is null and `id` is the original string.
+ */
+export function parseSourceStreamId(raw: string): { sourceIdx: number | null; id: string } {
+  if (raw.includes('_')) {
+    const parts = raw.split('_');
+    const idx = parseInt(parts[0], 10);
+    if (!Number.isNaN(idx)) {
+      return { sourceIdx: idx, id: parts.slice(1).join('_') };
+    }
+  }
+  return { sourceIdx: null, id: raw };
+}
 
 /**
  * Parse and normalize Xtream/IPTV account expiration date.

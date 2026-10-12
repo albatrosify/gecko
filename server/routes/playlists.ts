@@ -7,7 +7,7 @@ import { scheduleSourceCron, refreshSource } from "../sync.ts";
 import { duplicateCache, getCached } from "../cache.ts";
 import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
-import { getBaseUrl, proxySeriesInfoImages } from "../utils.ts";
+import { getBaseUrl, proxySeriesInfoImages, parseSourceStreamId } from "../utils.ts";
 import { recordTraffic } from "../traffic.ts";
 import { rememberSeriesInfo } from "../stream-title-cache.ts";
 import { clearEpgCache } from "../epg-service.ts";
@@ -280,7 +280,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
   router.put("/playlists/:id", requireAuth, async (req: AuthRequest, res) => {
     const db = getDb();
     const { playlists: schemaPlaylists } = await import('../schema.ts');
-    const { eq, and, ne } = await import('drizzle-orm');
+    const { eq, and } = await import('drizzle-orm');
     const { id, name, username, password, sourceIds, directStreams, ...extra } = req.body;
 
     const existing = db.select().from(schemaPlaylists).where(and(eq(schemaPlaylists.id, req.params.id), eq(schemaPlaylists.userId, req.user!.id))).get();
@@ -375,16 +375,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       if (!playlistDoc) return res.status(404).json({ error: 'Playlist not found' });
 
       // Strip sourceIdx prefix (e.g. "0_12345" → sourceIdx=0, rawId="12345")
-      let targetSIdx: number | null = null;
-      let rawSeriesId = seriesId;
-      if (seriesId.includes('_')) {
-        const parts = seriesId.split('_');
-        const possibleIdx = parseInt(parts[0]);
-        if (!isNaN(possibleIdx)) {
-          targetSIdx = possibleIdx;
-          rawSeriesId = parts.slice(1).join('_');
-        }
-      }
+      const { sourceIdx: targetSIdx, id: rawSeriesId } = parseSourceStreamId(seriesId);
 
       const imgBase = getBaseUrl(req);
       const sourceIds: string[] = (Array.isArray(playlistDoc.sourceIds) ? playlistDoc.sourceIds : []) as string[];

@@ -2,6 +2,7 @@ import { getDb } from './db.ts';
 import { traffic_stats, settings } from './schema.ts';
 import { eq, sql } from 'drizzle-orm';
 import { log } from './logger.ts';
+import type { TrafficTypeBreakdown, TrafficStatsResponse } from '../src/types.ts';
 
 interface BufferedTraffic {
   date: string;
@@ -9,44 +10,6 @@ interface BufferedTraffic {
   playlistName: string;
   streamType: string;
   bytes: number;
-}
-
-interface TrafficTypeBreakdown {
-  live: number;
-  movie: number;
-  series: number;
-  other: number;
-}
-
-interface PlaylistTrafficSummary {
-  playlistId: string;
-  playlistName: string;
-  totalBytes: number;
-  byType: TrafficTypeBreakdown;
-}
-
-interface DailyTrafficPoint {
-  date: string;
-  totalBytes: number;
-  byType: TrafficTypeBreakdown;
-}
-
-interface TrafficStatsResult {
-  range: {
-    startDate: string;
-    endDate: string;
-  };
-  summary: {
-    todayBytes: number;
-    monthBytes: number;
-    allTimeBytes: number;
-    monthlyQuotaBytes: number;
-    monthPercent: number;
-  };
-  totalBytes: number;
-  byType: TrafficTypeBreakdown;
-  byPlaylist: PlaylistTrafficSummary[];
-  daily: DailyTrafficPoint[];
 }
 
 const DEFAULT_MONTHLY_QUOTA_GB = 10240; // 10 TB (Oracle Cloud Always Free egress limit)
@@ -235,7 +198,7 @@ export function getMonthTrafficBytes(): { monthBytes: number; quotaBytes: number
 /**
  * Fetch detailed traffic statistics for a date range (defaults to current month).
  */
-export function getTrafficStats(customStartDate?: string, customEndDate?: string): TrafficStatsResult {
+export function getTrafficStats(customStartDate?: string, customEndDate?: string): TrafficStatsResponse {
   flushTraffic();
   const db = getDb();
   const now = new Date();

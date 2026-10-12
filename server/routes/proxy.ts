@@ -6,7 +6,7 @@ import https from "https";
 import dns from "dns";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
-import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, proxyXmlIcons } from "../utils.ts";
+import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, decodeStreamId } from "../utils.ts";
 import { proxyStats, registerStreamController, unregisterStreamController, killStream, getActiveVodConnectionsForSource } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { refreshSource } from "../sync.ts";
@@ -71,6 +71,50 @@ const safeLookup = (hostname: string, options: dns.LookupOptions, callback: (err
 
 const safeHttpAgent = new http.Agent({ lookup: safeLookup as any });
 const safeHttpsAgent = new https.Agent({ lookup: safeLookup as any });
+
+/**
+ * Resolves the effective target category id for a stream, applying a mapping's
+ * category override for non-copy streams. Kept separate from
+ * `shouldSkipStreamForCategory` because callers still need the resolved id for
+ * ordering after the skip check has run.
+ */
+function resolveTargetCategoryId(s: any, mapping: StreamMapping | null | undefined): string {
+  let targetCatId = s._isCopy
+    ? String(s.category_id || '')
+    : `${s._sourceIdx}_${String(s.category_id || '')}`;
+  if (!s._isCopy && mapping?.categoryId) {
+    targetCatId = mapping.categoryId;
+  }
+  return targetCatId;
+}
+
+/**
+ * Applies hidden-category filtering and the mapping category override to a
+ * stream. Mutates `s.category_id` for non-copy streams with a mapping category
+ * override, and returns true when the stream must be skipped for the requested
+ * category. Shared by the live, movie and series stream handlers.
+ */
+function shouldSkipStreamForCategory(
+  s: any,
+  mapping: StreamMapping | null | undefined,
+  catMap: Map<string, CategoryMapping>,
+  categoryId: string | undefined,
+): boolean {
+  const targetCatId = resolveTargetCategoryId(s, mapping);
+
+  // Check if the final category is hidden
+  const catMapping = catMap.get(targetCatId) || catMap.get(decodeStreamId(targetCatId)) || catMap.get(String(s.category_id));
+  if (catMapping?.hidden) return true;
+
+  // Apply category override to the stream object for output (only for non-copies)
+  if (!s._isCopy && mapping?.categoryId) {
+    s.category_id = mapping.categoryId;
+  }
+
+  if (categoryId && String(s.category_id) !== categoryId) return true;
+
+  return false;
+}
 
 export function createProxyRouter() {
   const router = Router();
@@ -143,7 +187,6 @@ export function createProxyRouter() {
     let originalId = streamId;
 
     // Resolve custom category items first!
-    const activeTab = type === 'live' ? 'live' : (type === 'movie' ? 'vod' : 'series');
     const { mappings: schemaMappings, sources: schemaSources, customCategoryItems: schemaCustomCategoryItems } = await import('../schema.ts');
     const { eq, and, inArray } = await import('drizzle-orm');
     const db = getDb();
@@ -919,7 +962,7 @@ export function createProxyRouter() {
           // Strip source prefix from category_id only if it matches pattern ^\d+_
           data.forEach((c: any) => {
             if (c.category_id && /^\d+_/.test(String(c.category_id))) {
-              c.category_id = String(c.category_id).split('_').slice(1).join('_');
+              c.category_id = decodeStreamId(String(c.category_id));
             }
           });
           data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
@@ -1022,24 +1065,8 @@ export function createProxyRouter() {
              if (mapping?.hidden) continue;
 
              // Determine target category ID (respect mapping override)
-             let targetCatId = s._isCopy
-               ? String(s.category_id || '')
-               : `${s._sourceIdx}_${String(s.category_id || '')}`;
-             if (!s._isCopy && mapping?.categoryId) {
-               targetCatId = mapping.categoryId;
-             }
-
-             // Check if the final category is hidden
-             const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
-             if (catMapping?.hidden) continue;
-
-             // Apply category override to the stream object for output (only for non-copies)
-             if (!s._isCopy && mapping?.categoryId) {
-               s.category_id = mapping.categoryId;
-             }
-
-             // Filter by processed category_id (stripped prefix for Telvizo)
-             if (categoryId && String(s.category_id) !== categoryId) continue;
+             const targetCatId = resolveTargetCategoryId(s, mapping);
+             if (shouldSkipStreamForCategory(s, mapping, catMap, categoryId)) continue;
 
              // Process names and icons
              if (mapping) {
@@ -1066,7 +1093,7 @@ export function createProxyRouter() {
              // Proxy icon and strip prefix
              if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase);
              if (s.category_id && /^\d+_/.test(String(s.category_id))) {
-               s.category_id = String(s.category_id).split('_').slice(1).join('_');
+               s.category_id = decodeStreamId(String(s.category_id));
              }
 
              // Cleanup
@@ -1149,7 +1176,7 @@ export function createProxyRouter() {
             // Strip source prefix from category_id only if it matches pattern ^\d+_
             data.forEach((c: any) => {
               if (c.category_id && /^\d+_/.test(String(c.category_id))) {
-                c.category_id = String(c.category_id).split('_').slice(1).join('_');
+                c.category_id = decodeStreamId(String(c.category_id));
               }
             });
             data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
@@ -1252,24 +1279,8 @@ export function createProxyRouter() {
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
-              let targetCatId = s._isCopy
-                ? String(s.category_id || '')
-                : `${s._sourceIdx}_${String(s.category_id || '')}`;
-              if (!s._isCopy && mapping?.categoryId) {
-                targetCatId = mapping.categoryId;
-              }
-
-              // Check if the final category is hidden
-              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
-              if (catMapping?.hidden) continue;
-
-              // Apply category override to the stream object for output (only for non-copies)
-              if (!s._isCopy && mapping?.categoryId) {
-                s.category_id = mapping.categoryId;
-              }
-
-              // Filter by raw upstream category ID (Xtream sends raw IDs)
-              if (categoryId && String(s.category_id) !== categoryId) continue;
+              const targetCatId = resolveTargetCategoryId(s, mapping);
+              if (shouldSkipStreamForCategory(s, mapping, catMap, categoryId)) continue;
 
               if (mapping) {
                 const baseName = computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat);
@@ -1286,7 +1297,7 @@ export function createProxyRouter() {
 
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
-                s.category_id = String(s.category_id).split('_').slice(1).join('_');
+                s.category_id = decodeStreamId(String(s.category_id));
               }
               if (s.stream_icon) s.stream_icon = proxyImageUrl(s.stream_icon, imgBase);
 
@@ -1380,7 +1391,7 @@ export function createProxyRouter() {
             // Strip source prefix from category_id only if it matches pattern ^\d+_
             data.forEach((c: any) => {
               if (c.category_id && /^\d+_/.test(String(c.category_id))) {
-                c.category_id = String(c.category_id).split('_').slice(1).join('_');
+                c.category_id = decodeStreamId(String(c.category_id));
               }
             });
             data.forEach((c: any) => { delete c._order; delete c._hidden; delete c._sourceIdx; });
@@ -1482,24 +1493,8 @@ export function createProxyRouter() {
               if (mapping?.hidden) continue;
 
               // Determine target category ID (respect mapping override)
-              let targetCatId = s._isCopy
-                ? String(s.category_id || '')
-                : `${s._sourceIdx}_${String(s.category_id || '')}`;
-              if (!s._isCopy && mapping?.categoryId) {
-                targetCatId = mapping.categoryId;
-              }
-
-              // Check if the final category is hidden
-              const catMapping = catMap.get(targetCatId) || (targetCatId.includes('_') ? catMap.get(targetCatId.split('_').slice(1).join('_')) : null) || catMap.get(String(s.category_id));
-              if (catMapping?.hidden) continue;
-
-              // Apply category override to the stream object for output (only for non-copies)
-              if (!s._isCopy && mapping?.categoryId) {
-                s.category_id = mapping.categoryId;
-              }
-
-              // Filter by raw upstream category ID (Xtream sends raw IDs)
-              if (categoryId && String(s.category_id) !== categoryId) continue;
+              const targetCatId = resolveTargetCategoryId(s, mapping);
+              if (shouldSkipStreamForCategory(s, mapping, catMap, categoryId)) continue;
 
               if (mapping) {
                 const baseName = computeDisplayName(mapping, playlist.qualityLabelFormat, globalFormat);
@@ -1516,7 +1511,7 @@ export function createProxyRouter() {
 
 
               if (s.category_id && /^\d+_/.test(String(s.category_id))) {
-                s.category_id = String(s.category_id).split('_').slice(1).join('_');
+                s.category_id = decodeStreamId(String(s.category_id));
               }
               if (s.cover) s.cover = proxyImageUrl(s.cover, imgBase);
 
@@ -1548,7 +1543,7 @@ export function createProxyRouter() {
               break;
             }
             // Use integer stream ID directly (no underscore prefix)
-            const liveResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
+            const liveResults = await Promise.all(playlist.sourceIds.map((sid: string) => limit(async () => {
              const sDoc = sourcesMap.get(sid);
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
@@ -1567,7 +1562,7 @@ export function createProxyRouter() {
             }
             // Use integer stream ID directly (no underscore prefix)
             const epgLimit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-            const epgResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
+            const epgResults = await Promise.all(playlist.sourceIds.map((sid: string) => limit(async () => {
              const sDoc = sourcesMap.get(sid);
              if (!sDoc) return null;
              const cl = new XtreamClient(sDoc as any);
@@ -1595,7 +1590,7 @@ export function createProxyRouter() {
             break;
           }
           // Use integer stream ID directly (no underscore prefix)
-          const tableResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
+          const tableResults = await Promise.all(playlist.sourceIds.map((sid: string) => limit(async () => {
             const sDoc = sourcesMap.get(sid);
             if (!sDoc) return null;
             const cl = new XtreamClient(sDoc as any);

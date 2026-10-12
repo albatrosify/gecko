@@ -67,7 +67,6 @@ npm run test     # vitest run
 
 **Nebenprojekte:**
 - `player/` — eigenständige Expo-/React-Native-App (IPTV-Player-Client; `player/src/screens/*`, `player/src/api/xtream.ts`, `AuthContext`).
-- `companion/` — leerer Expo-Router-Scaffold, kein aktiver Code.
 
 **Design-Dokumente** (`docs/superpowers/` — vor Feature-Arbeit lesen, sonst übersieht man getroffene Entscheidungen):
 - `specs/2026-04-05-custom-categories-design.md` — Custom Categories & Symlinks (Verlinken/Kopieren in Custom- und Upstream-Kategorien via `customCategoryItems`).

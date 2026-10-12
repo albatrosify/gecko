@@ -1,4 +1,5 @@
 import { getCached } from './cache.ts';
+import { decodeStreamId } from './utils.ts';
 
 /**
  * In-memory title cache for upstream streams (Live, VOD/Movies, and Series Episodes).
@@ -125,7 +126,7 @@ export function getStreamTitle(
   type: 'live' | 'movie' | 'series',
   streamId: string
 ): string | null {
-  const cleanId = streamId.includes('_') ? streamId.split('_').slice(1).join('_') : streamId;
+  const cleanId = decodeStreamId(streamId);
 
   // 1. Direct O(1) in-memory lookup by sourceId
   for (const sid of sourceIds) {

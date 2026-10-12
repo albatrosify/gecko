@@ -4,7 +4,6 @@ import cors from "cors";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import { fileURLToPath } from "url";
 import { connectDb } from "./server/db.ts";
 import { createAuthRouter } from "./server/auth.ts";
 import { log, LOG_PATH } from "./server/logger.ts";
@@ -29,9 +28,6 @@ import { dvrRecorder } from "./server/dvr/recorder.ts";
 import { createLlmRouter } from "./server/routes/llm.ts";
 import { createTrafficRouter } from "./server/routes/traffic.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Ensure log file exists on start
 function initLogFile() {
