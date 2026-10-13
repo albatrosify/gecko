@@ -544,6 +544,8 @@ export function SystemLogViewer() {
             <button
               onClick={() => setSearchQuery('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+              aria-label="Clear search"
+              title="Clear search"
             >
               <X size={12} />
             </button>
