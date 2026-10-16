@@ -234,7 +234,9 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
 
         <form onSubmit={handleSubmit} className="space-y-4 text-left">
           <div>
+            <label htmlFor="login-email" className="sr-only">Email</label>
             <input
+              id="login-email"
               type="email"
               placeholder="Email"
               value={email}
@@ -244,7 +246,9 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
             />
           </div>
           <div>
+            <label htmlFor="login-password" className="sr-only">Password</label>
             <input
+              id="login-password"
               type="password"
               placeholder="Password"
               value={password}
@@ -256,12 +260,13 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           </div>
 
           {error && (
-            <p className="text-red-500 text-sm text-center">{error}</p>
+            <p role="alert" className="text-red-500 text-sm text-center">{error}</p>
           )}
 
           <button
             type="submit"
             disabled={loading}
+            aria-busy={loading}
             className="w-full flex items-center justify-center gap-3 p-4 bg-zinc-100 text-zinc-950 rounded-2xl font-bold hover:bg-emerald-500 hover:text-zinc-100 transition-all disabled:opacity-50"
           >
             {loading ? (
