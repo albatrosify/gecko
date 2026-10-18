@@ -19,6 +19,31 @@ schneller als normalisierte Zeilen — auf beiden Achsen:
 schreiben, billig zu *fragen*. Der `JSON.parse` eines 22-MB-Blobs (59 ms) ist
 günstiger als 51 k Einzel-`JSON.parse` + Objekt-Konstruktion (182 ms).
 
+## Node vs. Bun (gemessen, `scripts/bench-data-layer.ts`, 50 k synthetisch)
+
+| Vorgang | Node (`better-sqlite3`) | Bun (`bun:sqlite`) |
+|---|---|---|
+| Erst-Load | 316–428 ms | 319–342 ms |
+| Re-Sync ohne Änderung | 259–291 ms | 288–353 ms |
+| Re-Sync, Delta | 317–390 ms | 374–431 ms |
+| **kalter Read (materialisieren)** | **165–181 ms** | **53–67 ms** |
+| Suche (FTS5 `MATCH`) | 0.068 ms | 0.079–0.191 ms |
+
+**Bun ist auf dem Lesepfad ~3× schneller, beim Schreiben ~15 % langsamer.** Der Grund:
+Die Zeilen-Beschaffung aus SQLite ist auf Bun *langsamer*, aber die JS-Arbeit
+(50 k `JSON.parse` + Objekt-Aufbau) ist auf JavaScriptCore *deutlich* schneller —
+und die dominiert die Gesamtoperation.
+
+⚠️ **Frühere Fehleinschätzung:** „Bun ist beim Row-Materialisieren langsamer" stammte
+aus einem engeren Mikro-Benchmark (rohe Zeilen **ohne** JS-Transform: Node 33 ms vs.
+Bun 46 ms). Über die vollständige Operation kehrt sich das um. Immer die
+End-to-End-Operation messen, nicht den Teilaspekt.
+
+**Folge für die Bewertung:** Der eine Nachteil des Redesigns (kalter Read +90 ms
+gegenüber dem Blob) ist ein **Node-Artefakt**. Auf Bun ist der kalte Read
+(53–67 ms) sogar **schneller** als der alte Blob-Pfad (92 ms). Zusätzlich fällt der
+Read-Stall von über die 100-ms-Warnschwelle (Node loggt `WARN`) auf darunter (Bun).
+
 ## Konsequenz für das Design
 
 - Normalisierung gewinnt bei **Query-förmigem** Zugriff: Suche, Kategorie-Filter,

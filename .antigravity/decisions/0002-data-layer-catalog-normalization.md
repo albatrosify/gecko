@@ -98,9 +98,10 @@ entscheidende**: nur er entfernt O(Katalog)-Arbeit vollständig aus dem
 Request-Pfad.
 
 **Zwischenstand:** Der Schreibpfad ist jetzt klar besser (0 Bytes statt ~40 MB pro
-Sync). Der Lesepfad ist beim kalten Massen-Lesen ~90 ms langsamer als der Blob —
-unkritisch gegenüber dem 18-s-Puffer, aber der Grund, Schritt 5 (Artefakte)
-weiterhin als nächsten Schritt zu führen.
+Sync). Der Lesepfad ist beim kalten Massen-Lesen **unter Node** ~90 ms langsamer als
+der Blob — unkritisch gegenüber dem 18-s-Puffer. **Unter Bun ist er mit 53–67 ms
+sogar schneller als der Blob (92 ms)**; der Nachteil ist also ein Node-Artefakt
+(siehe `memory/2026-10-18-normalization-is-a-query-optimization.md`).
 
 ## Konsequenzen
 
@@ -117,7 +118,9 @@ Positiv:
 
 Negativ / Risiko:
 - **+18 % Storage** durch Index + FTS.
-- **Kalter Read +90 ms** (182 vs. 92 ms) pro Mirror-Ablauf und Quelle/Typ.
+- **Kalter Read unter Node +90 ms** (182 vs. 92 ms) pro Mirror-Ablauf und
+  Quelle/Typ — **unter Bun stattdessen 53–67 ms, also ~35 ms schneller als der
+  Blob.** Der Nachteil ist ein Node-Artefakt.
 - **2-Zeichen-Suchen bleiben ein Scan** (~6.9 ms).
 - **CPU-Restkosten im Sync** (~331 ms bei 51 k: Staging + Diff + ggf. FTS-Rebuild).
   Rein CPU, keine Schreiblast — beseitigt erst ein Off-Loop-Writer oder Go.
