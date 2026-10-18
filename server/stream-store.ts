@@ -1,4 +1,5 @@
 import { getSqlite } from './db.ts';
+import { measureSync } from './event-loop-monitor.ts';
 
 /**
  * Normalised upstream catalog store (ADR 0002).
@@ -434,19 +435,23 @@ function mirrorKey(sourceId: string, type: StreamType): string {
 
 /** Materialises a partition as upstream-shaped objects. */
 function materializePartition(sourceId: string, type: StreamType): Record<string, unknown>[] {
-  const rows = getSqlite()
-    .prepare(
-      `SELECT sourceId, type, streamId, name, categoryId, icon, epgChannelId, containerExtension, extra
-       FROM streams WHERE sourceId = ? AND type = ?`,
-    )
-    .all(sourceId, type) as (Omit<StreamRow, 'extra'> & { extra: string | null })[];
+  // Building 51k objects plus parsing each row's `extra` measures ~180 ms, so it
+  // is worth attributing: it is the most expensive thing the read path does.
+  return measureSync(`streams:materialize:${type}`, () => {
+    const rows = getSqlite()
+      .prepare(
+        `SELECT sourceId, type, streamId, name, categoryId, icon, epgChannelId, containerExtension, extra
+         FROM streams WHERE sourceId = ? AND type = ?`,
+      )
+      .all(sourceId, type) as (Omit<StreamRow, 'extra'> & { extra: string | null })[];
 
-  return rows.map((row) =>
-    toUpstreamStream({
-      ...row,
-      extra: row.extra ? (JSON.parse(row.extra) as Record<string, unknown>) : null,
-    }),
-  );
+    return rows.map((row) =>
+      toUpstreamStream({
+        ...row,
+        extra: row.extra ? (JSON.parse(row.extra) as Record<string, unknown>) : null,
+      }),
+    );
+  });
 }
 
 /**

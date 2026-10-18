@@ -7,6 +7,7 @@ import type { Request, Response } from "express";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { proxyXmlIcons } from "./utils.ts";
+import { measureSync } from "./event-loop-monitor.ts";
 import type { Playlist } from "../src/types.ts";
 
 const gunzipAsync = promisify(zlib.gunzip);
@@ -259,7 +260,7 @@ async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void>
   if (!xmlParts.length) {
     finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n<tv></tv>';
   } else if (xmlParts.length === 1) {
-    finalXml = proxyXmlIcons(xmlParts[0], imgBase);
+    finalXml = measureSync('epg:proxy-icons', () => proxyXmlIcons(xmlParts[0], imgBase));
   } else {
     const extractInnerTv = (xml: string): string => {
       const startTag = xml.indexOf('<tv');
@@ -281,11 +282,11 @@ async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void>
       await yieldLoop();
     }
     mergedChunks.push('\n</tv>');
-    finalXml = mergedChunks.join('');
+    finalXml = measureSync('epg:assemble', () => mergedChunks.join(''));
   }
 
   await yieldLoop();
-  const compressed = await gzipAsync(Buffer.from(finalXml, 'utf-8'));
+  const compressed = await gzipAsync(measureSync('epg:to-buffer', () => Buffer.from(finalXml, 'utf-8')));
   const tempPath = `${cachePath}.tmp.${Date.now()}`;
   await fs.promises.writeFile(tempPath, compressed);
   await fs.promises.rename(tempPath, cachePath);

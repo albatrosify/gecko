@@ -2,6 +2,7 @@ import cron from "node-cron";
 import cronstrue from "cronstrue";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
+import { measureSync } from "./event-loop-monitor.ts";
 import { XtreamClient } from "./xtream.ts";
 import { setCache } from "./cache.ts";
 import { parseXtreamExpDate, parseSourceStreamId } from "./utils.ts";
@@ -391,7 +392,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     // serialised, stored or parsed any more.
     await yieldToEventLoop();
 
-    const { changes } = replaceSourceStreamsWithDiff(sourceId, type, upstreamStreams);
+    const { changes } = measureSync('sync:catalog-write', () =>
+      replaceSourceStreamsWithDiff(sourceId, type, upstreamStreams));
     // Serve subsequent reads from the just-written partition.
     primeSourceStreams(sourceId, type, upstreamStreams);
     if (changes.added.length || changes.removed.length || changes.renamed.length) {
