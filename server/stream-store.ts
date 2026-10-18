@@ -134,27 +134,40 @@ export interface ReplaceResult {
 }
 
 /**
- * Temp table holding the previous contents of the partition while it is being
- * replaced, so the diff can be computed in SQL instead of in JS. Temp tables are
- * per-connection, and this function is fully synchronous, so concurrent
- * callers (the startup cache warm-up uses `Promise.all`) cannot interleave.
+ * Temp tables used to compute a sync diff (and to upsert only the delta) without
+ * holding 185 k objects in JS. Temp tables are per-connection, and these
+ * functions are fully synchronous, so concurrent callers (the startup cache
+ * warm-up uses `Promise.all`) cannot interleave.
  */
 const PREV_TABLE = '_prev_streams';
+const NEW_TABLE = '_new_streams';
 
 const EMPTY_DIFF: StreamDiff = { added: [], removed: [], renamed: [] };
 
 /**
- * Replaces the whole catalog partition for `(sourceId, type)` in a single
- * transaction and reports what changed.
+ * Serialises `extra` with sorted keys, so an unchanged provider payload compares
+ * equal between syncs and does not cause a spurious row update.
+ */
+function serializeExtra(extra: Record<string, unknown> | null): string | null {
+  if (!extra) return null;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(extra).sort()) sorted[key] = extra[key];
+  return JSON.stringify(sorted);
+}
+
+/**
+ * Reconciles the catalog partition for `(sourceId, type)` with the freshly
+ * fetched upstream list and reports what changed.
  *
- * delete → bulk insert → one full-text index rebuild → SQL diff. `INSERT OR
- * REPLACE` keeps upstream duplicates from aborting a sync. The FTS index is
- * rebuilt once at the end rather than maintained per row — triggers measured
- * 2.25 s for 51 k rows versus 0.49 s for load + rebuild.
+ * Crucially this writes **only the delta**: rows are added and updated through a
+ * single upsert whose `DO UPDATE` is guarded by a column comparison, so a sync
+ * where nothing changed writes no rows to `streams` and skips the FTS rebuild
+ * entirely. That matters because the stall this design targets is dominated by
+ * bytes written per sync, not by query cost.
  *
- * The diff replaces the old JSON snapshot mechanism (ADR 0002): nothing has to
- * be serialised, stored or parsed to know what changed, and a first sync
- * legitimately reports no changes.
+ * Steps: snapshot the previous contents → stage the new list in a temp table →
+ * compute the changelog diff in SQL → upsert the delta → delete vanished rows →
+ * rebuild the search index only if something actually changed.
  */
 export function replaceSourceStreamsWithDiff(
   sourceId: string,
@@ -171,6 +184,10 @@ export function replaceSourceStreamsWithDiff(
   }
 
   sqlite.exec(`CREATE TEMP TABLE IF NOT EXISTS ${PREV_TABLE} (streamId TEXT PRIMARY KEY, name TEXT)`);
+  sqlite.exec(`CREATE TEMP TABLE IF NOT EXISTS ${NEW_TABLE} (
+    streamId TEXT PRIMARY KEY, name TEXT, categoryId TEXT, icon TEXT,
+    epgChannelId TEXT, containerExtension TEXT, extra TEXT
+  )`);
 
   const clearPrev = sqlite.prepare(`DELETE FROM ${PREV_TABLE}`);
   const fillPrev = sqlite.prepare(
@@ -178,64 +195,102 @@ export function replaceSourceStreamsWithDiff(
      SELECT streamId, name FROM streams WHERE sourceId = ? AND type = ?`,
   );
   const countPrev = sqlite.prepare(`SELECT COUNT(*) AS c FROM ${PREV_TABLE}`);
-  const del = sqlite.prepare('DELETE FROM streams WHERE sourceId = ? AND type = ?');
-  const ins = sqlite.prepare(`
-    INSERT OR REPLACE INTO streams
+
+  const clearNew = sqlite.prepare(`DELETE FROM ${NEW_TABLE}`);
+  const countNew = sqlite.prepare(`SELECT COUNT(*) AS c FROM ${NEW_TABLE}`);
+  const insNew = sqlite.prepare(
+    `INSERT OR REPLACE INTO ${NEW_TABLE}
+       (streamId, name, categoryId, icon, epgChannelId, containerExtension, extra)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  // `WHERE 1` keeps the SELECT unambiguous for SQLite's upsert parser.
+  const upsert = sqlite.prepare(`
+    INSERT INTO streams
       (sourceId, type, streamId, name, categoryId, icon, epgChannelId, containerExtension, extra, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    SELECT ?, ?, n.streamId, n.name, n.categoryId, n.icon, n.epgChannelId, n.containerExtension, n.extra, ?
+    FROM ${NEW_TABLE} n
+    WHERE 1
+    ON CONFLICT(sourceId, type, streamId) DO UPDATE SET
+      name = excluded.name,
+      categoryId = excluded.categoryId,
+      icon = excluded.icon,
+      epgChannelId = excluded.epgChannelId,
+      containerExtension = excluded.containerExtension,
+      extra = excluded.extra,
+      updatedAt = excluded.updatedAt
+    WHERE IFNULL(streams.name, '') <> IFNULL(excluded.name, '')
+       OR IFNULL(streams.categoryId, '') <> IFNULL(excluded.categoryId, '')
+       OR IFNULL(streams.icon, '') <> IFNULL(excluded.icon, '')
+       OR IFNULL(streams.epgChannelId, '') <> IFNULL(excluded.epgChannelId, '')
+       OR IFNULL(streams.containerExtension, '') <> IFNULL(excluded.containerExtension, '')
+       OR IFNULL(streams.extra, '') <> IFNULL(excluded.extra, '')
   `);
+
+  const delRemoved = sqlite.prepare(
+    `DELETE FROM streams WHERE sourceId = ? AND type = ?
+     AND streamId NOT IN (SELECT streamId FROM ${NEW_TABLE})`,
+  );
+
   const rebuild = sqlite.prepare("INSERT INTO streams_fts(streams_fts) VALUES('rebuild')");
 
+  // The changelog diff is computed against the *previous* snapshot rather than
+  // the post-write table, because by then the added rows are already present.
   const selectAdded = sqlite.prepare(
-    `SELECT streamId AS id, name FROM streams
-     WHERE sourceId = ? AND type = ? AND streamId NOT IN (SELECT streamId FROM ${PREV_TABLE})`,
+    `SELECT streamId AS id, name FROM ${NEW_TABLE}
+     WHERE streamId NOT IN (SELECT streamId FROM ${PREV_TABLE})`,
   );
   const selectRemoved = sqlite.prepare(
     `SELECT streamId AS id, name FROM ${PREV_TABLE}
-     WHERE streamId NOT IN (SELECT streamId FROM streams WHERE sourceId = ? AND type = ?)`,
+     WHERE streamId NOT IN (SELECT streamId FROM ${NEW_TABLE})`,
   );
   const selectRenamed = sqlite.prepare(
     `SELECT n.streamId AS id, o.name AS oldName, n.name AS newName
-     FROM streams n JOIN ${PREV_TABLE} o ON o.streamId = n.streamId
-     WHERE n.sourceId = ? AND n.type = ? AND IFNULL(n.name, '') <> IFNULL(o.name, '')`,
+     FROM ${NEW_TABLE} n JOIN ${PREV_TABLE} o ON o.streamId = n.streamId
+     WHERE IFNULL(n.name, '') <> IFNULL(o.name, '')`,
   );
 
   let changes: StreamDiff = EMPTY_DIFF;
+  let stored = 0;
 
   const write = sqlite.transaction((batch: StreamRow[]) => {
     clearPrev.run();
     fillPrev.run(sourceId, type);
     const hadPrevious = Number((countPrev.get() as { c: number }).c) > 0;
 
-    del.run(sourceId, type);
+    clearNew.run();
     for (const row of batch) {
-      ins.run(
-        row.sourceId,
-        row.type,
+      insNew.run(
         row.streamId,
         row.name,
         row.categoryId,
         row.icon,
         row.epgChannelId,
         row.containerExtension,
-        row.extra ? JSON.stringify(row.extra) : null,
-        updatedAt,
+        serializeExtra(row.extra),
       );
     }
-    rebuild.run();
+    stored = Number((countNew.get() as { c: number }).c);
+
+    const written =
+      upsert.run(sourceId, type, updatedAt).changes + delRemoved.run(sourceId, type).changes;
+
+    // Rebuilding the index is the single most expensive step, so skip it when the
+    // catalog did not actually change.
+    if (written > 0) rebuild.run();
 
     // A first sync has no baseline, so "everything is new" is not a changelog.
     if (hadPrevious) {
       changes = {
-        added: selectAdded.all(sourceId, type) as StreamChange[],
-        removed: selectRemoved.all(sourceId, type) as StreamChange[],
-        renamed: selectRenamed.all(sourceId, type) as StreamRename[],
+        added: selectAdded.all() as StreamChange[],
+        removed: selectRemoved.all() as StreamChange[],
+        renamed: selectRenamed.all() as StreamRename[],
       };
     }
   });
   write(rows);
 
-  return { stored: rows.length, changes };
+  return { stored, changes };
 }
 
 /**

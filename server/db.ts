@@ -19,6 +19,8 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
 
   sqlite = new Database(dbPath);
   sqlite.pragma('journal_mode = WAL');
+  // Sync staging tables are only ever transient; keep them out of the disk path.
+  sqlite.pragma('temp_store = MEMORY');
   
   db = drizzle(sqlite, { schema });
   

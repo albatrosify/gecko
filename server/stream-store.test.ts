@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { connectDb } from './db.ts';
+import { connectDb, getSqlite } from './db.ts';
 import {
   normalizeStream,
   toUpstreamStream,
@@ -127,7 +127,8 @@ describe('stream-store — replace and count', () => {
       { stream_id: '1', name: 'Alpha Duplicate' },
     ]);
 
-    expect(stored).toBe(2);
+    // `stored` counts distinct rows actually staged, not the raw input length.
+    expect(stored).toBe(1);
     expect(countSourceStreams(SOURCE, 'live')).toBe(1);
   });
 
@@ -322,5 +323,76 @@ describe('stream-store — sync diff', () => {
 
     expect(searchStreams('Old Channel')).toHaveLength(0);
     expect(searchStreams('New Channel')).toHaveLength(1);
+  });
+});
+
+describe('stream-store — incremental writes', () => {
+  beforeEach(async () => {
+    process.env.SQLITE_PATH = ':memory:';
+    await connectDb();
+  });
+
+  const updatedAtOf = (streamId: string): number =>
+    (getSqlite()
+      .prepare('SELECT updatedAt FROM streams WHERE sourceId = ? AND type = ? AND streamId = ?')
+      .get(SOURCE, 'live', streamId) as { updatedAt: number }).updatedAt;
+
+  it('rewrites nothing when the catalog is unchanged', async () => {
+    const items = [
+      { stream_id: '1', name: 'Alpha', rating: '7', added: '123' },
+      { stream_id: '2', name: 'Beta' },
+    ];
+    replaceSourceStreamsWithDiff(SOURCE, 'live', items);
+    const firstRun = updatedAtOf('1');
+
+    // Ensure a rewrite would be visible: Date.now() must have advanced.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const { changes } = replaceSourceStreamsWithDiff(SOURCE, 'live', items);
+
+    expect(updatedAtOf('1')).toBe(firstRun);
+    expect(updatedAtOf('2')).toBe(firstRun);
+    expect(changes).toEqual({ added: [], removed: [], renamed: [] });
+  });
+
+  it('updates only the rows whose values differ', async () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta' },
+    ]);
+    const firstRun = updatedAtOf('1');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta Renamed' },
+    ]);
+
+    expect(updatedAtOf('1')).toBe(firstRun);
+    expect(updatedAtOf('2')).toBeGreaterThan(firstRun);
+  });
+
+  it('updates a row when a non-name field changes', async () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'Alpha', rating: '7' }]);
+    const firstRun = updatedAtOf('1');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'Alpha', rating: '9' }]);
+
+    expect(updatedAtOf('1')).toBeGreaterThan(firstRun);
+    expect(getStreamRow(SOURCE, 'live', '1')!.extra).toEqual({ rating: '9' });
+  });
+
+  it('does not treat a reordered payload as a change', async () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha', rating: '7', added: '123' },
+    ]);
+    const firstRun = updatedAtOf('1');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha', added: '123', rating: '7' },
+    ]);
+
+    expect(updatedAtOf('1')).toBe(firstRun);
   });
 });

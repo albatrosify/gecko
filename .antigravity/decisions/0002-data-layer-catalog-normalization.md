@@ -58,9 +58,19 @@ Lesepfade angebunden. Die Messungen haben das Design mehrfach korrigiert:
    Kalter Read des 51-k-Katalogs: Blob lesen + parsen **92 ms** (33 + 59) vs.
    Materialisieren aus `streams` **182 ms** (51 k Objekt-Builds + 51 k
    `JSON.parse` auf `extra`). Der Warmer-Mirror-Treffer ist in beiden Fällen ~0.
-6. **Normalisierte Zeilen sind auch beim Schreiben teurer** als ein Blob:
-   469 ms (Tabelle + FTS-Rebuild) vs. 285 ms (22-MB-Blob 221 ms + Snapshot 28 ms
-   + Changelog 3 Pässe 36 ms) — pro-Zeilen-Overhead statt eines einzelnen Writes.
+6. **Voller Replace ist beim Schreiben teurer** als ein Blob (469 ms vs. 285 ms) —
+   aber **inkrementelles Schreiben dreht das um.** Es werden nur Deltas
+   geschrieben; gemessen am echten Katalog (51.462 Items):
+
+   | Vorgang | Zeit | auf Platte geschrieben |
+   |---|---|---|
+   | Erst-Sync (alles neu) | 540 ms | 30.8 MB |
+   | **Re-Sync, keine Änderung** | 331 ms | **0 Bytes** |
+   | **Re-Sync, Delta (3 Zeilen)** | 485 ms | **4 KB** |
+
+   Vorher schrieb **jeder** Sync ~40 MB. Der verbleibende CPU-Aufwand
+   (Staging + Diff in einer Temp-Tabelle) ist unter dem 18-s-Jitter-Buffer
+   unkritisch.
 7. **Storage wächst:** 47.93 MB vs. 40.61 MB = **+18 %**, fast vollständig der
    Trigram-Index (7.1 MB).
 
@@ -72,14 +82,18 @@ bei **ganzheitlichem** Zugriff. Deshalb ist **Schritt 5 (Serving-Artefakte) der
 entscheidende**: nur er entfernt O(Katalog)-Arbeit vollständig aus dem
 Request-Pfad.
 
-**Zwischenstand: nicht mergen ohne Schritt 5.** Der aktuelle Stand ist eine
-Grundlage — Suche und Changelog sind messbar besser, Sync-Schreiblast (+184 ms)
-und kalter Read (+90 ms) sind messbar schlechter.
+**Zwischenstand:** Der Schreibpfad ist jetzt klar besser (0 Bytes statt ~40 MB pro
+Sync). Der Lesepfad ist beim kalten Massen-Lesen ~90 ms langsamer als der Blob —
+unkritisch gegenüber dem 18-s-Puffer, aber der Grund, Schritt 5 (Artefakte)
+weiterhin als nächsten Schritt zu führen.
 
 ## Konsequenzen
 
 Positiv:
 - **Suche ~20–65× schneller** (7.5–15 ms → 0.12–0.43 ms), indexgestützt.
+- **Sync schreibt nur noch Deltas: 0 Bytes ohne Änderung, 4 KB bei 3 geänderten
+  Zeilen** (vorher ~40 MB pro Sync). Genau der Hebel gegen die vermutete
+  Disk-I/O-bedingte Blockade.
 - Changelog ist ein SQL-Diff: kein 18-MB-Snapshot-Blob, kein 3-Pass-JSON-Vergleich.
 - Kein `cache`-Blob mehr für Streams: **−36 MB** Alt-Daten, −221 ms Blob-Write pro Sync.
 - Indexgestützte Kategorie-/Typ-Filter, Punkt-Lookups, Grundlage für Artefakte.
@@ -88,11 +102,10 @@ Positiv:
 
 Negativ / Risiko:
 - **+18 % Storage** durch Index + FTS.
-- **Sync-Schreiblast +184 ms** (469 vs. 285 ms) bei vollem Replace.
 - **Kalter Read +90 ms** (182 vs. 92 ms) pro Mirror-Ablauf und Quelle/Typ.
 - **2-Zeichen-Suchen bleiben ein Scan** (~6.9 ms).
-- **Restblocking bleibt** (469 ms / 51 k) — beseitigt erst ein Off-Loop-Writer
-  oder Go.
+- **CPU-Restkosten im Sync** (~331 ms bei 51 k: Staging + Diff + ggf. FTS-Rebuild).
+  Rein CPU, keine Schreiblast — beseitigt erst ein Off-Loop-Writer oder Go.
 - Der in `memory/2026-10-04` bewusst verschobene Pipeline-Refactor in
   `proxy.ts` wird angefasst.
 
@@ -107,10 +120,10 @@ Verworfen:
 
 1. **Serving-Artefakte materialisieren (Schritt 5).** Der einzige Schritt, der
    O(Katalog)-Arbeit pro Request wirklich entfernt (`player_api.php`-JSON und
-   `get.php`-M3U pro Katalog-/Config-Version vorrendern). Vorher ist der
-   Umbau netto kein Gewinn.
-2. **Inkrementelles Schreiben** statt vollem Replace: nur das Delta upserten und
-   den FTS-Rebuild überspringen, wenn nichts geändert wurde → Sync wieder unter
-   den alten 285 ms.
+   `get.php`-M3U pro Katalog-/Config-Version vorrendern) und damit auch den
+   kalten Read von 182 ms auf ~0 bringt.
+2. **Payload-Hash als Fast-Path:** Wenn der Provider dieselben Daten liefert,
+   Staging + Diff komplett überspringen (Hash statt 51 k Temp-Inserts) → No-Change
+   von 331 ms auf ~70 ms.
 3. Versionierte Migrationen (Schritt 6).
-4. Off-Loop-Writer evaluieren, falls das Restblocking stört.
+4. Off-Loop-Writer evaluieren, falls das CPU-Restblocking stört.
