@@ -2,6 +2,7 @@ pub mod auth;
 pub mod backup;
 pub mod custom_categories;
 pub mod dvr;
+pub mod epgs;
 pub mod mappings;
 pub mod playlists;
 pub mod sources;
@@ -25,6 +26,9 @@ pub fn create_api_router() -> Router<AppState> {
         // Sources
         .route("/sources", get(sources::list_sources).post(sources::create_source))
         .route("/sources/{id}", get(sources::get_source).put(sources::update_source).delete(sources::delete_source))
+        // EPGs
+        .route("/epgs", get(epgs::list_epgs).post(epgs::create_epg))
+        .route("/epgs/{id}", delete(epgs::delete_epg))
         // Playlists
         .route("/playlists", get(playlists::list_playlists).post(playlists::create_playlist))
         .route("/playlists/{id}", get(playlists::get_playlist).put(playlists::update_playlist).delete(playlists::delete_playlist))

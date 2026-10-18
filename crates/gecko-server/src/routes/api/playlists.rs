@@ -11,6 +11,7 @@ use gecko_core::repo;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreatePlaylistPayload {
     pub name: String,
     pub username: String,
@@ -19,8 +20,20 @@ pub struct CreatePlaylistPayload {
     pub source_ids: Vec<String>,
     #[serde(default)]
     pub direct_streams: bool,
-    #[serde(default)]
-    pub extra: Option<PlaylistExtra>,
+    #[serde(flatten, default)]
+    pub extra: PlaylistExtra,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePlaylistPayload {
+    pub name: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    pub direct_streams: Option<bool>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 pub async fn list_playlists(
@@ -50,7 +63,7 @@ pub async fn create_playlist(
         password: payload.password,
         source_ids: payload.source_ids,
         direct_streams: payload.direct_streams,
-        extra: payload.extra.unwrap_or_default(),
+        extra: payload.extra,
     };
 
     let playlist_clone = playlist.clone();
@@ -87,7 +100,7 @@ pub async fn get_playlist(
 pub async fn update_playlist(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(payload): Json<CreatePlaylistPayload>,
+    Json(payload): Json<UpdatePlaylistPayload>,
 ) -> Response {
     let existing = match repo::playlists::get_playlist_by_id(&state.db.pool, &id) {
         Ok(Some(p)) => p,
@@ -101,15 +114,38 @@ pub async fn update_playlist(
         }
     };
 
+    if let Some(ref new_username) = payload.username {
+        if new_username != &existing.username {
+            if let Ok(Some(_)) = repo::playlists::get_playlist_by_username(&state.db.pool, new_username) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Playlist username already in use" })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // Merge extra fields
+    let mut extra_val = serde_json::to_value(&existing.extra).unwrap_or_else(|_| serde_json::json!({}));
+    if let serde_json::Value::Object(ref mut map) = extra_val {
+        for (k, v) in payload.extra {
+            if k != "id" && k != "userId" && k != "name" && k != "username" && k != "password" && k != "sourceIds" && k != "directStreams" {
+                map.insert(k, v);
+            }
+        }
+    }
+    let merged_extra: PlaylistExtra = serde_json::from_value(extra_val).unwrap_or(existing.extra);
+
     let updated = Playlist {
         id: id.clone(),
         user_id: existing.user_id,
-        name: payload.name,
-        username: payload.username,
-        password: payload.password,
-        source_ids: payload.source_ids,
-        direct_streams: payload.direct_streams,
-        extra: payload.extra.unwrap_or_default(),
+        name: payload.name.unwrap_or(existing.name),
+        username: payload.username.unwrap_or(existing.username),
+        password: payload.password.unwrap_or(existing.password),
+        source_ids: payload.source_ids.unwrap_or(existing.source_ids),
+        direct_streams: payload.direct_streams.unwrap_or(existing.direct_streams),
+        extra: merged_extra,
     };
 
     let updated_clone = updated.clone();

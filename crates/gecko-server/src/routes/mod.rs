@@ -10,6 +10,7 @@ use axum::{routing::get, Router};
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
+        .route("/health", get(api::system::handle_health))
         .route("/player_api.php", get(player_api::handle_player_api).post(player_api::handle_player_api))
         .route("/get.php", get(m3u::handle_m3u))
         .route("/xmltv.php", get(xmltv::handle_xmltv))

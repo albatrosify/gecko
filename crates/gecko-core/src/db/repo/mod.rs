@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod custom_categories;
+pub mod epgs;
 pub mod mappings;
 pub mod playlists;
 pub mod recordings;
@@ -11,6 +12,7 @@ pub mod users;
 
 pub use cache::*;
 pub use custom_categories::*;
+pub use epgs::*;
 pub use mappings::*;
 pub use playlists::*;
 pub use recordings::*;

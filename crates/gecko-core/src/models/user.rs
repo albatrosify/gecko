@@ -31,6 +31,7 @@ impl std::fmt::Display for UserRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: String,
     pub email: String,
@@ -41,6 +42,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UserSummary {
     pub id: String,
     pub email: String,
@@ -60,6 +62,7 @@ impl From<User> for UserSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateUser {
     pub email: String,
     pub password: String,

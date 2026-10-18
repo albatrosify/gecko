@@ -34,6 +34,7 @@ impl std::fmt::Display for StreamType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct RegexRename {
     #[serde(rename = "type", default)]
     pub rename_type: Option<String>,
@@ -42,97 +43,102 @@ pub struct RegexRename {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct DetectedStreamMeta {
     #[serde(default)]
     pub resolution: Option<String>,
-    #[serde(rename = "videoCodec", default)]
+    #[serde(default)]
     pub video_codec: Option<String>,
     #[serde(default)]
     pub hdr: Option<String>,
     #[serde(default)]
     pub fps: Option<f64>,
-    #[serde(rename = "audioCodec", default)]
+    #[serde(default)]
     pub audio_codec: Option<String>,
-    #[serde(rename = "audioChannels", default)]
+    #[serde(default)]
     pub audio_channels: Option<u32>,
-    #[serde(rename = "scannedAt", default)]
+    #[serde(default)]
     pub scanned_at: Option<String>,
-    #[serde(rename = "scanType", default)]
+    #[serde(default)]
     pub scan_type: Option<String>,
-    #[serde(rename = "colorDepth", default)]
+    #[serde(default)]
     pub color_depth: Option<u32>,
-    #[serde(rename = "audioLayout", default)]
+    #[serde(default)]
     pub audio_layout: Option<String>,
-    #[serde(rename = "videoProfile", default)]
+    #[serde(default)]
     pub video_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamMappingExtra {
     #[serde(default)]
     pub order: i32,
-    #[serde(rename = "sourceIdx", default)]
+    #[serde(default)]
     pub source_idx: Option<usize>,
-    #[serde(rename = "categoryId", default)]
+    #[serde(default)]
     pub category_id: Option<String>,
-    #[serde(rename = "originalName", default)]
+    #[serde(default)]
     pub original_name: Option<String>,
-    #[serde(rename = "customName", default)]
+    #[serde(default)]
     pub custom_name: Option<String>,
-    #[serde(rename = "customIcon", default)]
+    #[serde(default)]
     pub custom_icon: Option<String>,
-    #[serde(rename = "epgMapping", default)]
+    #[serde(default)]
     pub epg_mapping: Option<String>,
-    #[serde(rename = "epgIcon", default)]
+    #[serde(default)]
     pub epg_icon: Option<String>,
-    #[serde(rename = "epgSource", default)]
+    #[serde(default)]
     pub epg_source: Option<String>,
     #[serde(default)]
     pub hidden: bool,
-    #[serde(rename = "regexRenames", default)]
+    #[serde(default)]
     pub regex_renames: Option<Vec<RegexRename>>,
-    #[serde(rename = "detectedMeta", default)]
+    #[serde(default)]
     pub detected_meta: Option<DetectedStreamMeta>,
-    #[serde(rename = "useDetectedQuality", default)]
+    #[serde(default)]
     pub use_detected_quality: Option<bool>,
     #[serde(flatten)]
     pub additional: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StreamMapping {
     pub id: String,
     pub playlist_id: String,
     #[serde(rename = "type")]
     pub mapping_type: StreamType,
     pub original_id: String,
-    #[serde(default)]
+    #[serde(flatten, default)]
     pub extra: StreamMappingExtra,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CategoryMappingExtra {
     #[serde(default)]
     pub order: i32,
-    #[serde(rename = "originalName", default)]
+    #[serde(default)]
     pub original_name: Option<String>,
-    #[serde(rename = "customName", default)]
+    #[serde(default)]
     pub custom_name: Option<String>,
     #[serde(default)]
     pub hidden: bool,
-    #[serde(rename = "syncOnDemand", default)]
+    #[serde(default)]
     pub sync_on_demand: Option<bool>,
     #[serde(flatten)]
     pub additional: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CategoryMapping {
     pub id: String,
     pub playlist_id: String,
     #[serde(rename = "type")]
     pub mapping_type: StreamType,
     pub original_id: String,
-    #[serde(default)]
+    #[serde(flatten, default)]
     pub extra: CategoryMappingExtra,
 }
