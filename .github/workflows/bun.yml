@@ -79,6 +79,15 @@ jobs:
       - name: Driver parity under Bun
         run: bun scripts/check-db-driver.ts
 
+      # Same job, second runtime guarantee: a sync must not block the serving
+      # process (ADR 0004). The job key stays `parity` on purpose - renaming it
+      # would change the required check name for branch protection.
+      - name: Sync isolation under Node
+        run: npx tsx scripts/check-sync-isolation.ts
+
+      - name: Sync isolation under Bun
+        run: bun scripts/check-sync-isolation.ts
+
   merge:
     runs-on: ubuntu-latest
     needs: [build, parity]

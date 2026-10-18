@@ -9,7 +9,7 @@ import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, decodeStreamId } from "../utils.ts";
 import { proxyStats, registerStreamController, unregisterStreamController, killStream, getActiveVodConnectionsForSource } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
-import { refreshSource } from "../sync.ts";
+import { requestSourceSync } from "../sync-client.ts";
 import { getCached } from "../cache.ts";
 import { getCachedStreams } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
@@ -915,11 +915,11 @@ export function createProxyRouter() {
     // Dynamic Sync: block until all sources are synced before serving.
     // refreshSource has a 5-min cooldown, so upstream is only hit at most once per 5 minutes.
     if (action === 'get_live_streams' && hasSyncOnDemandLive)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'live').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'live').catch(() => {}))));
     if (action === 'get_vod_streams' && hasSyncOnDemandVod)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'vod').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'vod').catch(() => {}))));
     if (action === 'get_series' && hasSyncOnDemandSeries)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'series').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'series').catch(() => {}))));
 
     try {
       let data;

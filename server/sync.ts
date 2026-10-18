@@ -490,15 +490,29 @@ export function scheduleSourceCron(source: any) {
   }
 }
 
+/**
+ * Stops every scheduled job and rebuilds the schedule from the current sources.
+ * Called on startup and whenever a source changes, so the schedule never has to
+ * be patched per-source from another process.
+ */
+export async function rescheduleCrons(): Promise<void> {
+  for (const job of activeCrons.values()) {
+    try { job.stop(); } catch { /* already stopped */ }
+  }
+  activeCrons.clear();
+
+  const allSources = getDb().select().from(sources).all();
+  for (const source of allSources.filter(s => s.autoSyncEnabled && s.syncCron)) {
+    scheduleSourceCron(source);
+  }
+}
+
 export async function initCronManager() {
   log("Initializing Source Cron Manager...");
   const db = getDb();
   const allSources = db.select().from(sources).all();
-  const activeSources = allSources.filter(s => s.autoSyncEnabled && s.syncCron);
 
-  for (const source of activeSources) {
-    scheduleSourceCron(source);
-  }
+  await rescheduleCrons();
 
   // Warm cold stream caches in the background so the first IPTV client request
   // is served from cache rather than blocking on an upstream fetch.

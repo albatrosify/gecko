@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
-import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
+import { requestSourceSync, notifyCronsChanged } from "../sync-client.ts";
 import { getCached, setCache } from "../cache.ts";
 import { getCachedStreams, primeSourceStreams } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
@@ -86,7 +86,7 @@ export function createSourcesRouter() {
     }).run();
 
     const newSource = { ...(extra || {}), id: newId, userId: req.user!.id, name, type, url: primaryUrl, username, password, autoSyncEnabled, syncCron };
-    scheduleSourceCron(newSource);
+    notifyCronsChanged();
     res.status(201).json(newSource);
   });
 
@@ -164,7 +164,7 @@ export function createSourcesRouter() {
         ? eq(schemaSources.id, sourceId)
         : and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))
     ).get();
-    if (fullSource) scheduleSourceCron({ ...(fullSource.extra as any || {}), ...fullSource });
+    if (fullSource) notifyCronsChanged();
 
     res.json({ success: true });
   });
@@ -186,9 +186,9 @@ export function createSourcesRouter() {
     log(`[Manual Sync] Starting manual total synchronization for source ID ${sid}`);
 
     const results = await Promise.all([
-      refreshSource(sid, 'live', true),
-      refreshSource(sid, 'vod', true),
-      refreshSource(sid, 'series', true)
+      requestSourceSync(sid, 'live', true),
+      requestSourceSync(sid, 'vod', true),
+      requestSourceSync(sid, 'series', true)
     ]);
 
     const errors = results.filter(r => (r as any).error).map(r => `[${(r as any).type || 'sync'}] ${(r as any).error}`);
@@ -353,10 +353,7 @@ export function createSourcesRouter() {
 
     db.delete(schemaSources).where(and(eq(schemaSources.id, sourceId), eq(schemaSources.userId, req.user!.id))).run();
 
-    if (activeCrons.has(sourceId)) {
-      activeCrons.get(sourceId).stop();
-      activeCrons.delete(sourceId);
-    }
+    notifyCronsChanged();
     clearConnectionLogs(sourceId);
     res.json({ success: true });
   });

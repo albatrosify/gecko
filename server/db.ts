@@ -111,6 +111,9 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
   db = opened.db;
 
   applyPragma(sqlite, 'journal_mode = WAL');
+  // Two processes write this file now (the API/streaming process and the sync
+  // worker), so a writer must wait for the other instead of failing with SQLITE_BUSY.
+  applyPragma(sqlite, 'busy_timeout = 5000');
   // Sync staging tables are only ever transient; keep them out of the disk path.
   applyPragma(sqlite, 'temp_store = MEMORY');
   

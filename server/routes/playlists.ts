@@ -3,7 +3,7 @@ import axios from "axios";
 import { requireAuth, requireAuthOrQuery, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
-import { scheduleSourceCron, refreshSource } from "../sync.ts";
+import { requestSourceSync, notifyCronsChanged } from "../sync-client.ts";
 import { duplicateCache, getCached } from "../cache.ts";
 import { searchStreams, getCachedStreams, type StreamType } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
@@ -67,7 +67,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           log(`[Clone] Source cloned successfully: ${newSourceId}`);
 
           if (originalSource.autoSyncEnabled && originalSource.syncCron) {
-            scheduleSourceCron({ id: newSourceId, name: `${originalSource.name} (${sourceUsername})`, autoSyncEnabled: originalSource.autoSyncEnabled, syncCron: originalSource.syncCron, ...extra });
+            notifyCronsChanged();
           }
 
           const oldSid = originalSourceId;
@@ -77,7 +77,7 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           duplicateCache(`${oldSid}_vod_streams`, `${newSid}_vod_streams`);
           duplicateCache(`${oldSid}_series`, `${newSid}_series`);
 
-          refreshSource(newSourceId, 'live', true).catch(err => {
+          requestSourceSync(newSourceId, 'live', true).catch(err => {
             log(`[Clone] Background refresh failed for new source ${newSourceId}: ${err?.message || err}`);
           });
         } else {

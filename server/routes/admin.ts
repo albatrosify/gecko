@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb } from "../db.ts";
 import { log } from "../logger.ts";
-import { activeCrons } from "../sync.ts";
+import { notifyCronsChanged } from "../sync-client.ts";
 import { clearConnectionLogs } from "../connection-monitor.ts";
 import { invalidateSourceStreams, rebuildStreamSearchIndex } from "../stream-store.ts";
 
@@ -85,10 +85,6 @@ export function createAdminRouter() {
       const sourceIds = userSources.map(s => s.id);
 
       for (const sid of sourceIds) {
-        if (activeCrons.has(sid)) {
-          activeCrons.get(sid).stop();
-          activeCrons.delete(sid);
-        }
         clearConnectionLogs(sid);
       }
 
