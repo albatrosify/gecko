@@ -1,0 +1,70 @@
+name: Bun Image
+
+# Publishes the multi-arch image as `:bun` (+ `:bun-<sha>`) so the Bun runtime can
+# be pulled onto a real box and tested before it becomes the release image.
+#
+# Transitional workflow (ADR 0003): it exists only while the Bun Dockerfile lives
+# on a branch that the regular pipelines do not build. `workflow_dispatch` alone
+# would not help here, because GitHub only offers the "Run workflow" button once
+# the file is present on the default branch - hence the push trigger. Once the Bun
+# Dockerfile is merged, `:dev` and the release tags are already Bun and this file
+# can be deleted.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/data-layer
+
+env:
+  REGISTRY_IMAGE: ghcr.io/albatrosify/gecko
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version label
+        id: version
+        run: echo "app_version=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push by digest
+        uses: ./.github/actions/build-by-digest
+        with:
+          platform: ${{ matrix.platform }}
+          app_version: ${{ steps.version.outputs.app_version }}
+          registry_image: ${{ env.REGISTRY_IMAGE }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          digest_artifact_name: digests-${{ strategy.job-index }}
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Merge manifest
+        uses: ./.github/actions/merge-manifest
+        with:
+          registry_image: ${{ env.REGISTRY_IMAGE }}
+          tags: |
+            type=raw,value=bun
+            type=sha,prefix=bun-
+          inspect_tag: bun
+          github_token: ${{ secrets.GITHUB_TOKEN }}
