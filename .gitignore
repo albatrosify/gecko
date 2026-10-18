@@ -11,3 +11,5 @@ antigravity_env/
 !assets/*.mp4
 .env*
 !.env.example
+target/
+

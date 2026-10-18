@@ -1,0 +1,81 @@
+# ==========================================
+# GECKO v2 — Multi-Stage High-Performance Container
+# ==========================================
+
+# ------------------------------------------
+# Stage 1: Build React/Vite Frontend Assets
+# ------------------------------------------
+FROM node:20-bookworm-slim AS frontend-builder
+
+WORKDIR /build
+
+COPY package.json package-lock.json* ./
+RUN npm install --legacy-peer-deps
+
+COPY index.html vite.config.ts tsconfig.json ./
+COPY src/ ./src/
+COPY public/ ./public/
+
+ENV NODE_ENV=production
+RUN npm run build
+
+# ------------------------------------------
+# Stage 2: Compile Rust Workspace Binary
+# ------------------------------------------
+FROM rust:bookworm AS rust-builder
+
+WORKDIR /build
+
+# System dependencies for compiling bundled SQLite and TLS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace configuration and crates
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+
+# Copy built frontend assets for rust-embed
+COPY --from=frontend-builder /build/dist ./dist
+
+# Compile release binary for gecko-server
+RUN cargo build --release -p gecko-server
+
+# ------------------------------------------
+# Stage 3: Minimal Production Runtime
+# ------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+# Install runtime utilities: ffmpeg (for DVR remux & stream repair), ca-certificates, curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user for security
+RUN groupadd -g 1000 gecko && useradd -u 1000 -g gecko -m -s /bin/bash gecko
+
+WORKDIR /app
+RUN mkdir -p /app/data && chown -R gecko:gecko /app
+
+# Copy binary from builder
+COPY --from=rust-builder /build/target/release/gecko /usr/local/bin/gecko
+
+USER gecko
+
+ENV PORT=3000 \
+    SQLITE_PATH=/app/data/gecko.db \
+    APP_URL=http://localhost:3000 \
+    RUST_LOG=info,gecko=debug
+
+EXPOSE 3000
+
+VOLUME ["/app/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/gecko"]

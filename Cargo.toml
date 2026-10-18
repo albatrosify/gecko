@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/gecko-core",
+    "crates/gecko-proxy",
+    "crates/gecko-server",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+authors = ["GECKO Team"]
+
+[workspace.dependencies]
+# Internal workspace crates
+gecko-core = { path = "crates/gecko-core" }
+gecko-proxy = { path = "crates/gecko-proxy" }
+
+# Async runtime & primitives
+tokio = { version = "1.44", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "codec"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+async-trait = "0.1"
+
+# Web framework & HTTP stack (Hyper 1.x / Axum)
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-full", "timeout", "fs"] }
+hyper = { version = "1.6", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
+
+# Data, Serialization & Buffers
+bytes = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+uuid = { version = "1.15", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# XMLTV EPG streaming
+quick-xml = { version = "0.37", features = ["serialize"] }
+flate2 = "1.1"
+
+# Embedded frontend delivery
+rust-embed = { version = "8.6", features = ["axum"] }
+mime_guess = "2.0"
+
+# Observability, diagnostics & error handling
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Security & Credentials
+jsonwebtoken = "9.3"
+bcrypt = "0.17"

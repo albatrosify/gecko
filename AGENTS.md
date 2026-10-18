@@ -21,18 +21,33 @@ Cognitive-Architecture-Kontext (diese Dateien zuerst lesen):
 ## Commands
 
 ```bash
+# Node.js / TypeScript v1 (Referenz)
 npm run dev      # Express + Vite HMR auf Port 3000
 npm run build    # Frontend -> dist/
 npm run start    # Produktion: NODE_ENV=production tsx server.ts
 npm run lint     # tsc --noEmit (Type-Check)
 npm run test     # vitest run
+
+# Rust v2 (Next-Gen Remake)
+cargo check      # Schneller Typ- und Borrow-Check aller Crates
+cargo test       # Unit- und Integrations-Tests im Workspace
+cargo build      # Debug-Kompilierung aller Workspace-Pakete
+cargo run -p gecko-server # Startet den Axum/Rust-Server
 ```
 
 `.env` nötig (Kopie von `.env.example`): `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 
 ## Architektur
 
+### GECKO v2 (Rust Workspace — Edition 2024)
+- `crates/gecko-core` — Datenmodelle, SQLite WAL Persistence Actor (`rusqlite` + `r2d2_sqlite`), Xtream Codes Client, EPG Streaming Parser (`quick-xml`).
+- `crates/gecko-proxy` — Zero-Copy Stream Engine (`bytes::Bytes`), 1-to-many Broadcast Multiplexer (`tokio::sync::broadcast`), Live Jitter Buffer (Leaky-Bucket Pacing), Multi-A DNS Resolver mit Socket IP-Pinning & Redirect-Schleifen-Schutz, DVR Engine.
+- `crates/gecko-server` — Axum Web Server, Xtream/Proxy Router (`player_api.php`, `/live/`, `/movie/`, `/series/`, `/xmltv.php`), REST API, embedded Vite Frontend Delivery (`rust-embed`), Background Tasks (Sync Cron, Proxy Stats, Traffic Flusher).
+- Architektur-Entscheidungsdokument: `.antigravity/decisions/0002-v2-rust-remake-architecture.md`.
+
+### GECKO v1 (TypeScript / Node.js — Domänen-Referenz)
 **Single-Process-Server** (`server.ts`): Express bedient REST-API **und** serviert das Vite-Frontend (dev: Vite-Middleware, prod: `dist/` + SPA-Fallback). Startup: `connectDb()` → `initCronManager()` → `initProxyStatsInterval()` → `initConnectionMonitor()` → `initHostStatsFlusher()` → `initTrafficFlusher()`.
+
 
 **Backend** (`server/`) — Module mit Domänenlogik, `server/routes/` mit HTTP-Routern:
 - `db.ts` — SQLite (`better-sqlite3` + Drizzle), WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`). `generateId()` = `crypto.randomUUID()`.

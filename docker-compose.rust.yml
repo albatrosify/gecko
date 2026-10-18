@@ -1,0 +1,26 @@
+services:
+  gecko:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
+    image: gecko:v2-rust
+    ports:
+      - "3000:3000"
+    environment:
+      - SQLITE_PATH=/app/data/gecko.db
+      - JWT_SECRET=${JWT_SECRET:-dev-super-secret-key-32-chars-minimum!}
+      - PORT=3000
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - RUST_LOG=info,gecko=debug
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - gecko-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  gecko-data:
