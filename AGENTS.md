@@ -35,10 +35,11 @@ npm run test     # vitest run
 **Single-Process-Server** (`server.ts`): Express bedient REST-API **und** serviert das Vite-Frontend (dev: Vite-Middleware, prod: `dist/` + SPA-Fallback). Startup: `connectDb()` → `initCronManager()` → `initProxyStatsInterval()` → `initConnectionMonitor()` → `initHostStatsFlusher()` → `initTrafficFlusher()`.
 
 **Backend** (`server/`) — Module mit Domänenlogik, `server/routes/` mit HTTP-Routern:
-- `db.ts` — SQLite (`better-sqlite3` + Drizzle), WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`). `generateId()` = `crypto.randomUUID()`.
+- `db.ts` — SQLite (`better-sqlite3` + Drizzle), WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`). `generateId()` = `crypto.randomUUID()`. `getSqlite()` = roher `better-sqlite3`-Handle für Bulk-Operationen und Virtual Tables (FTS5).
 - `schema.ts` — Drizzle-Tabellendefinitionen.
 - `auth.ts` — `createAuthRouter()` (register/login/me), `requireAuth` (JWT), `requireAuthOrQuery`.
 - `cache.ts` — Two-Tier-Cache: In-Memory Map (1 min) + SQLite `cache`-Tabelle (12 h).
+- `stream-store.ts` — Normalisierter Upstream-Katalog (ADR 0002). `replaceSourceStreams()` (Bulk-Replace je `(sourceId, type)` in einer Transaktion + einmaliger FTS-Rebuild), `searchStreams()` (FTS5-Trigram `MATCH`, Scan-Fallback unter 3 Zeichen), `countSourceStreams()`, `deleteSourceStreams()`, `getStreamRow()`, `normalizeStream()`/`toUpstreamStream()`.
 - `xtream.ts` — `XtreamClient` für Upstream-Xtream-API.
 - `hosts.ts` — Host-Erkennung, Failover, Benchmarking, Multi-IP-Cluster-Evaluierung, Per-Host-Nutzungs-Statistiken.
 - `dns-resolver.ts` — Multi-A DNS-Resolution, 5-Min-In-Memory-Caching, IP-Latency-Ranking, IP-Pinned HTTP/HTTPS-Agents (TCP-Socket auf Ziel-IP gepinnt unter Beibehaltung von Host-Header & TLS-SNI für Zertifikate & Nginx Virtual Hosts).
@@ -87,6 +88,7 @@ npm run test     # vitest run
 | `customCategories` / `customCategoryItems` | User-definierte Kategorien und Symlinks/Items (Verlinkung in Custom- und Upstream-Kategorien) |
 | `source_sync_meta` | Cooldown/Sync-Metadaten |
 | `cache` | SQLite-Cache |
+| `streams` | Normalisierter Upstream-Katalog (ADR 0002); Composite-PK `(sourceId, type, streamId)`, `extra` für provider-spezifische Felder. Begleit-Virtual-Table `streams_fts` (FTS5, external content, trigram) für die Namenssuche. |
 | `settings` | Globale Settings |
 | `source_changelogs` | Sync-Changelog |
 | `source_connection_logs` / `source_host_logs` | Verbindungs-/Host-Überwachung |

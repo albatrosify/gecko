@@ -63,6 +63,41 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
       CREATE INDEX IF NOT EXISTS idx_traffic_stats_date ON traffic_stats(date);
       CREATE INDEX IF NOT EXISTS idx_traffic_stats_playlistId ON traffic_stats(playlistId);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_stats_date_playlist_type ON traffic_stats(date, playlistId, streamType);
+
+      -- Normalised upstream catalog (ADR 0002). Replaces the JSON blobs that used
+      -- to live in the cache table and the snapshot blobs in source_sync_meta.
+      CREATE TABLE IF NOT EXISTS streams (
+        sourceId TEXT NOT NULL,
+        type TEXT NOT NULL,
+        streamId TEXT NOT NULL,
+        name TEXT,
+        categoryId TEXT,
+        icon TEXT,
+        epgChannelId TEXT,
+        containerExtension TEXT,
+        extra TEXT,
+        updatedAt INTEGER NOT NULL,
+        PRIMARY KEY (sourceId, type, streamId)
+      );
+      -- The composite PRIMARY KEY already serves (sourceId, type) prefix lookups,
+      -- so no separate index is needed for them.
+      CREATE INDEX IF NOT EXISTS idx_streams_source_type_category ON streams(sourceId, type, categoryId);
+
+      -- Name search. The trigram tokenizer makes substring queries index-backed
+      -- (SQLite >= 3.34), which is what the playlist search needs. External
+      -- content keeps the names out of the index (no duplication) and is fast as
+      -- long as queries use MATCH — with LIKE, FTS5 has to re-read every
+      -- candidate from the content table (measured ~14 ms vs ~0.2 ms for MATCH).
+      --
+      -- Deliberately NO triggers: maintaining the index row-by-row during a bulk
+      -- sync measured 2.25 s for 51 k rows versus 0.49 s for load + one rebuild.
+      -- The writer (server/stream-store.ts) rebuilds it after each replace.
+      CREATE VIRTUAL TABLE IF NOT EXISTS streams_fts USING fts5(
+        name,
+        content='streams',
+        content_rowid='rowid',
+        tokenize='trigram'
+      );
     `);
   } catch (err) {
     console.error('Failed to initialize database schema:', err);
@@ -75,6 +110,16 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
 export function getDb(): BetterSQLite3Database<typeof schema> {
   if (!db) throw new Error('Database not connected. Call connectDb() first.');
   return db;
+}
+
+/**
+ * Raw `better-sqlite3` handle. Needed for bulk operations (multi-row inserts in
+ * a single transaction) and for virtual tables that Drizzle cannot model
+ * (e.g. the `streams_fts` full-text index).
+ */
+export function getSqlite(): Database.Database {
+  if (!sqlite) throw new Error('Database not connected. Call connectDb() first.');
+  return sqlite;
 }
 
 export function generateId(): string {
