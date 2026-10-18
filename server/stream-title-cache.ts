@@ -1,4 +1,4 @@
-import { getCached } from './cache.ts';
+import { getCachedStreams } from './stream-store.ts';
 import { decodeStreamId } from './utils.ts';
 
 /**
@@ -143,7 +143,7 @@ export function getStreamTitle(
     const cacheType = type === 'live' ? 'live' : 'vod';
     for (const sid of sourceIds) {
       try {
-        const cached = getCached(`${sid}_streams_${cacheType}`);
+        const cached = getCachedStreams(sid, cacheType);
         if (cached?.data && Array.isArray(cached.data)) {
           rememberStreamTitles(sid, type, cached.data);
           const hit = titleMap.get(`${sid}:${type}:${cleanId}`) || titleMap.get(`${sid}:${type}:${streamId}`);

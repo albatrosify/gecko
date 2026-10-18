@@ -4,6 +4,7 @@ import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource, activeCrons } from "../sync.ts";
 import { getCached, setCache } from "../cache.ts";
+import { getCachedStreams, primeSourceStreams } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { parseXtreamExpDate, isValidHttpUrl } from "../utils.ts";
 import { checkSourceConnection, getConnectionLogs, clearConnectionLogs } from "../connection-monitor.ts";
@@ -466,13 +467,11 @@ export function createSourcesRouter() {
     };
 
     log(`Fetching streams [${type}] for source ${verifiedSource.name} (id: ${verifiedSource.id}, sourceIndex: ${sourceIndex}, forceRefresh: ${forceRefresh})`);
-    const cacheKey = `${verifiedSource.id}_streams_${type}`;
-
     let data;
-    const cached = !forceRefresh ? getCached(cacheKey) : null;
+    const cached = !forceRefresh ? getCachedStreams(verifiedSource.id, type) : null;
     if (cached) {
       log(`  Cache hit for streams [${type}]: ${verifiedSource.id}`);
-      data = { streams: cached.data, cached: true, lastUpdated: cached.lastUpdated };
+      data = { streams: cached.data, cached: true, lastUpdated: (verifiedSourceDoc.extra as any)?.lastUpdated ?? null };
     } else {
       log(`  Cache miss for streams [${type}]: ${verifiedSource.id}. Fetching from ${verifiedSource.url}`);
       const client = new XtreamClient(verifiedSource as any);
@@ -484,7 +483,7 @@ export function createSourcesRouter() {
         else if (type === 'series') streams = await client.getSeries();
 
         log(`  Successfully fetched ${streams?.length || 0} streams`);
-        setCache(cacheKey, streams);
+        primeSourceStreams(verifiedSource.id, type, streams || []);
         data = { streams, cached: false, lastUpdated: new Date().toISOString() };
       } catch (error: any) {
         log(`  ERROR fetching streams [${type}] for ${verifiedSource.id}: ${error.message}`);

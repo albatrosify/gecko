@@ -3,8 +3,14 @@ import cronstrue from "cronstrue";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { XtreamClient } from "./xtream.ts";
-import { getCached, setCache } from "./cache.ts";
+import { setCache } from "./cache.ts";
 import { parseXtreamExpDate, parseSourceStreamId } from "./utils.ts";
+import {
+  replaceSourceStreamsWithDiff,
+  countSourceStreams,
+  hasSourceStreams,
+  primeSourceStreams,
+} from "./stream-store.ts";
 
 /** Number of items to process before yielding to the event loop so live streams are not starved. */
 const SYNC_YIELD_BATCH_SIZE = 5_000;
@@ -79,13 +85,63 @@ export async function setSnapshot(sourceId: string, type: string, snapshot: any)
     .run();
 }
 
-export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any): Promise<{ added: any[]; removed: any[]; renamed: any[] }> {
+/**
+ * Persists a computed changelog and trims the per-source history to the last
+ * 500 entries. Non-throwing: a changelog failure must never break a sync.
+ */
+export function persistChangelog(
+  sourceId: string,
+  type: string,
+  changes: { added: any[]; removed: any[]; renamed: any[] },
+): void {
   try {
-    const db = getDb();
-    let added: any[] = [];
-    let removed: any[] = [];
-    let renamed: any[] = [];
+    const { added, removed, renamed } = changes;
+    if (!added.length && !removed.length && !renamed.length) return;
 
+    const db = getDb();
+    log(`[Changelog] Recorded ${added.length} added, ${removed.length} removed, ${renamed.length} renamed for ${sourceId} (${type})`);
+    db.insert(source_changelogs).values({
+      id: generateId(),
+      sourceId,
+      extra: {
+        type,
+        timestamp: new Date().toISOString(),
+        added: added.slice(0, 500), // Cap payload size
+        removed: removed.slice(0, 500),
+        renamed: renamed.slice(0, 500),
+        totalAdded: added.length,
+        totalRemoved: removed.length,
+        totalRenamed: renamed.length
+      }
+    }).run();
+
+    // Cleanup: keep only last 500 logs per source
+    const logs = db.select({ id: source_changelogs.id, extra: source_changelogs.extra })
+      .from(source_changelogs)
+      .where(eq(source_changelogs.sourceId, sourceId))
+      .all();
+
+    logs.sort((a, b) => {
+      const tA = new Date((a.extra as any).timestamp || 0).getTime();
+      const tB = new Date((b.extra as any).timestamp || 0).getTime();
+      return tB - tA; // sort desc
+    });
+
+    if (logs.length > 500) {
+      const toDelete = logs.slice(500).map(l => l.id);
+      db.delete(source_changelogs).where(inArray(source_changelogs.id, toDelete)).run();
+    }
+  } catch (err: any) {
+    log(`[Changelog] FAILED to record: ${err.message}`);
+  }
+}
+
+export async function recordSourceChanges(sourceId: string, type: string, oldData: any, newData: any): Promise<{ added: any[]; removed: any[]; renamed: any[] }> {
+  let added: any[] = [];
+  let removed: any[] = [];
+  let renamed: any[] = [];
+
+  try {
     if (type === 'categories') {
       const catTypes: ('live' | 'vod' | 'series')[] = ['live', 'vod', 'series'];
       for (const ct of catTypes) {
@@ -98,54 +154,18 @@ export async function recordSourceChanges(sourceId: string, type: string, oldDat
       }
     } else {
       const idField = type === 'series' ? 'series_id' : 'stream_id';
-      const nameField = type === 'series' ? 'name' : 'name'; // Xtream usually uses 'name' for all
-      const changes = await getChangelog(oldData || [], newData || [], idField, nameField);
+      const changes = await getChangelog(oldData || [], newData || [], idField, 'name');
       added = changes.added;
       removed = changes.removed;
       renamed = changes.renamed;
     }
-
-    if (added.length || removed.length || renamed.length) {
-      log(`[Changelog] Recorded ${added.length} added, ${removed.length} removed, ${renamed.length} renamed for ${sourceId} (${type})`);
-      const newId = generateId();
-      db.insert(source_changelogs).values({
-        id: newId,
-        sourceId,
-        extra: {
-          type,
-          timestamp: new Date().toISOString(),
-          added: added.slice(0, 500), // Cap payload size
-          removed: removed.slice(0, 500),
-          renamed: renamed.slice(0, 500),
-          totalAdded: added.length,
-          totalRemoved: removed.length,
-          totalRenamed: renamed.length
-        }
-      }).run();
-
-      // Cleanup: keep only last 500 logs per source
-      const logs = db.select({ id: source_changelogs.id, extra: source_changelogs.extra })
-        .from(source_changelogs)
-        .where(eq(source_changelogs.sourceId, sourceId))
-        .all();
-
-      logs.sort((a, b) => {
-        const tA = new Date((a.extra as any).timestamp || 0).getTime();
-        const tB = new Date((b.extra as any).timestamp || 0).getTime();
-        return tB - tA; // sort desc
-      });
-
-      if (logs.length > 500) {
-        const toDelete = logs.slice(500).map(l => l.id);
-        db.delete(source_changelogs).where(inArray(source_changelogs.id, toDelete)).run();
-      }
-    }
-
-    return { added, removed, renamed };
   } catch (err: any) {
-    log(`[Changelog] FAILED to record: ${err.message}`);
+    log(`[Changelog] FAILED to compute: ${err.message}`);
     return { added: [], removed: [], renamed: [] };
   }
+
+  persistChangelog(sourceId, type, { added, removed, renamed });
+  return { added, removed, renamed };
 }
 
 /** Escape user-controlled text for Telegram HTML parse mode. */
@@ -230,7 +250,7 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     // expired cache) while the meta still looks "recently synced". Skipping here
     // would leave the cache cold and force every playlist load to hit the slow
     // upstream fetch. Fetch whenever the cache is cold.
-    const cacheIsWarm = !!getCached(`${sourceId}_streams_${type}`);
+    const cacheIsWarm = hasSourceStreams(sourceId, type);
     if (lastSyncMeta && lastSyncMeta.extra && new Date((lastSyncMeta.extra as any).timestamp) > fiveMinsAgo && cacheIsWarm) {
       return { success: true, skipped: true };
     }
@@ -297,10 +317,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     }
 
     // 4. Empty Streams Guard:
-    // If source previously had streams cached, and upstream suddenly returns 0, do NOT wipe cache!
-    const cacheKey = `${sourceId}_streams_${type}`;
-    const previousCached = getCached(cacheKey);
-    const prevCount = Array.isArray(previousCached?.data) ? previousCached.data.length : 0;
+    // If source previously had streams stored, and upstream suddenly returns 0, do NOT wipe it!
+    const prevCount = countSourceStreams(sourceId, type);
     if (upstreamStreams.length === 0 && prevCount > 0) {
       log(`[Sync] WARNING: Upstream returned 0 ${type} streams for ${source.name}, but previous cache had ${prevCount}. Preserving existing cache to prevent accidental wipeout.`);
       return {
@@ -367,23 +385,19 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
 
     log(`[Sync] Completed for ${source.name} (${type}). Fetched ${upstreamStreams.length}, updated ${updatedCount} name(s).`);
 
-    // Update disk cache for the UI
-    setCache(cacheKey, upstreamStreams);
-
-    // Yield to event loop before computing changelog / snapshot on large sets
+    // Write the normalised catalog and derive the changelog from it (ADR 0002).
+    // This replaces both the JSON blob write (`cache`) and the snapshot blob: the
+    // diff is computed in SQL inside the same transaction, so nothing has to be
+    // serialised, stored or parsed any more.
     await yieldToEventLoop();
 
-    // Record changelog using snapshot (TTL-independent)
-    const idField = type === 'series' ? 'series_id' : 'stream_id';
-    const oldSnapshot = await getSnapshot(sourceId, type);
-    if (oldSnapshot) {
-      const changes = await recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
+    const { changes } = replaceSourceStreamsWithDiff(sourceId, type, upstreamStreams);
+    // Serve subsequent reads from the just-written partition.
+    primeSourceStreams(sourceId, type, upstreamStreams);
+    if (changes.added.length || changes.removed.length || changes.renamed.length) {
+      persistChangelog(sourceId, type, changes);
       await notifyKeywordMatches(source, type, changes);
     }
-
-    await yieldToEventLoop();
-    const newSnapshot = upstreamStreams.map((s: any) => ({ [idField]: s[idField], name: s.name || s.title }));
-    await setSnapshot(sourceId, type, newSnapshot);
 
     // Periodically (or on force) update categories too
     let categoryWarning: string | null = null;
@@ -491,7 +505,7 @@ export async function initCronManager() {
       const warmTasks = allSources.flatMap(source => {
         const sid = source.id;
         return (['live', 'vod', 'series'] as const)
-          .filter(type => !getCached(`${sid}_streams_${type}`))
+          .filter(type => !hasSourceStreams(sid, type))
           .map(type => {
             log(`[Startup] Warming cold cache: ${source.name} (${type})`);
             return refreshSource(sid, type, false).catch(() => {});

@@ -1,108 +1,100 @@
 # 0002. Daten-Layer: Katalog normalisieren, Serving-Artefakte materialisieren
 
 Datum: 2026-10-18
-Status: proposed
+Status: proposed (Grundlagen umgesetzt, Schritt 5 offen)
 
 ## Kontext
 
 Gemessene Ausgangslage (`data/gecko.db`, 40.61 MB):
 
 - Der Katalog liegt als JSON-Blobs in `cache`: **4 Zeilen = 89.5 %** der DB
-  (VOD 22.0 MB / 51.462 Items, Series 13.4 MB / 12.972, Live 0.9 MB). Reale
-  relationale Daten: **< 1 MB** (1 User, 1 Source, 1 Playlist, 0 Mappings).
-- Der Katalog existiert **doppelt**: Blob (`cache`, 36.33 MB) **und** Snapshot
-  (`source_sync_meta`, 4.06 MB) — zusätzlich wird er pro Request in JS-Objekte
+  (VOD 22.0 MB / 51.462 Items, Series 13.4 MB, Live 0.9 MB). Reale relationale
+  Daten: **< 1 MB**.
+- Der Katalog existierte **doppelt**: Blob (`cache`, 36.33 MB) **und** Snapshot
+  (`source_sync_meta`, 4.06 MB) — zusätzlich wurde er pro Request in JS-Objekte
   materialisiert.
-- Der 16-Sekunden-Stall vom 2026-10-18 entstand durch `JSON.stringify` von
-  185 k Items + 18 MB SQLite-Write in `sync.ts`
+- Der 16-Sekunden-Stall vom 2026-10-18 entstand im Sync
   (siehe `memory/2026-10-18-sync-event-loop-yielding-and-dns-enrichment.md`).
 - 220 synchrone DB-Aufrufe (`better-sqlite3`) blockieren den Event-Loop, auf dem
   auch der Live-Multiplexer läuft.
 
-Benchmark gegen den echten VOD-Katalog (51.462 Items):
-
-| Pfad | Zeit |
-|---|---|
-| `JSON.parse` 22 MB Blob (heute) | 59.3 ms |
-| Read + Order 51 k Rows (SQLite) | 33.3 ms |
-| JS-Linear-Scan der Suche (heute) | 7.5–15 ms |
-| FTS5 trigram via `MATCH` | **0.12–0.43 ms** |
-| FTS5 trigram via `LIKE` | 13 ms ⚠️ |
-
-Schlussfolgerung: Der **Store ist nicht der Hebel.** Pro Request wird
-O(Katalog) Arbeit auf dem Loop verrichtet (33 ms in *jedem* Store). Der Gewinn
-liegt im Zugriffsmuster und in der Indexierung.
-
 ## Entscheidung
 
 1. **Eine Engine, eine Datei.** SQLite bleibt (normalisiert + WAL + FTS5).
-   Kein Postgres, keine Polyglot-Persistenz. Postgres erst, wenn Gecko
-   mandantenfähig (hosted SaaS) oder mehrfach instanziiert wird — es löst das
-   Zugriffsmuster nicht.
-2. **Katalog normalisieren**: Tabelle
-   `streams(sourceId, type, streamId, name, categoryId, icon, epgChannelId, containerExtension, extra, updatedAt)`
-   mit Composite-PK `(sourceId, type, streamId)`. Bulk-Replace je
-   `(sourceId, type)` in **einer** Transaktion. Die PK deckt `(sourceId, type)`
-   als Präfix ab — kein separater Index dafür.
+   Kein Postgres, keine Polyglot-Persistenz.
+2. **Katalog normalisieren**: `streams(sourceId, type, streamId, name, categoryId,
+   icon, epgChannelId, containerExtension, extra, updatedAt)` mit Composite-PK.
+   Bulk-Replace je `(sourceId, type)` in **einer** Transaktion.
 3. **Suche über FTS5** (external content, `tokenize='trigram'`) — per `MATCH`.
-4. **Changelog als SQL-Diff** statt JSON-Snapshot → die
-   `source_sync_meta`-Snapshots entfallen.
-5. **Serving-Artefakte materialisieren**: `player_api.php`-JSON und
-   `get.php`-M3U sind reine Funktionen von (Katalog-Version, Playlist-Config,
-   Mappings) → einmal pro Version rendern, als gzip-Bytes ausliefern.
-   Version-Key = Hash(Katalog-Version + Playlist-Config + Mapping-Version).
+4. **Changelog als SQL-Diff** statt JSON-Snapshot.
+5. **Serving-Artefakte materialisieren**: `player_api.php`-JSON und `get.php`-M3U
+   sind reine Funktionen von (Katalog-Version, Playlist-Config, Mappings) →
+   einmal pro Version rendern, als gzip-Bytes ausliefern.
+   **← dieser Schritt ist der entscheidende, siehe unten.**
 6. **Versionierte Migrationen** ersetzen das ad-hoc `CREATE TABLE IF NOT EXISTS`.
-7. **Runtime bleibt offen.** Das Design ist portabel: Go + `modernc.org/sqlite`
-   + FTS5 erfüllt es identisch, und Goroutines machen Blocking zum Nicht-Thema.
+7. **Runtime bleibt offen** — das Design ist portabel (Go + `modernc.org/sqlite`).
 
 ## Validierung (Prototyp gegen den echten 51.462-Item-Katalog)
 
-Umgesetzt in `server/stream-store.ts`; 24 Tests. Vier Messungen haben das Design
-**korrigiert**:
+Umgesetzt in `server/stream-store.ts` (31 Tests) und an `sync.ts` sowie alle
+Lesepfade angebunden. Die Messungen haben das Design mehrfach korrigiert:
 
+### Suchpfad
 1. **`LIKE` auf external-content-FTS ist die schlechteste Variante (~13 ms,
-   konstant).** Da `content=` den Text nicht speichert, muss FTS5 jeden Kandidaten
-   aus der Content-Tabelle nachlesen. → **`MATCH` verwenden**: 0.12–0.43 ms,
-   Trefferzahlen identisch zum JS-Scan (38/38, 3/3), case-insensitiv.
+   konstant)** — FTS5 muss jeden Kandidaten aus der Content-Tabelle nachlesen.
+   → **`MATCH`**: 0.12–0.43 ms, Trefferzahlen identisch zum JS-Scan.
 2. **2-Zeichen-Queries kann ein Trigram-Tokenizer nicht indexieren.** `"hd"`
-   liefert per `MATCH` **0** Treffer, obwohl der Katalog 212 hat. → Fallback auf
-   einen Scan der `streams`-Tabelle (~6.9 ms) unterhalb von 3 Zeichen.
+   liefert per `MATCH` 0 Treffer, obwohl der Katalog 212 hat.
+   → Scan-Fallback (~6.9 ms) unter 3 Zeichen.
 3. **Trigger pro Zeile sind der Flaschenhals.** 51 k Rows: mit FTS-Triggern
-   **2.247 ms**, ohne Trigger **324 ms** + ein `'rebuild'` **170 ms** = **494 ms**
-   (4,5×). → **Keine Trigger**; der Writer rebuildet den Index einmal.
-4. **Storage wächst, nicht schrumpft.** Ganzer Katalog (66.523 Rows, 3 Typen):
-   `streams` 37.06 MB + FTS 7.09 MB + Kategorie-Index ≈ **47.93 MB** vs.
-   **40.61 MB** vorher = **+18 %**. Entfernt man den redundanten
-   `idx_streams_source_type`, sinkt der Anteil; ohne FTS wäre es etwa neutral.
-   Kostentreiber ist der Trigram-Index (7.1 MB).
+   **2.247 ms**, ohne Trigger **324 ms** + ein `'rebuild'` **170 ms** = **494 ms**.
+   → **Keine Trigger**.
+4. **Der SQL-Diff ist billig:** `replaceSourceStreamsWithDiff` kostet 469 ms
+   (leer), 555 ms (keine Änderung) bzw. 568 ms (kleines Delta) — die
+   `NOT IN`-/Join-Diffs kosten nur ~96 ms und sind indexgestützt.
 
-Damit: `replaceSourceStreams` (51 k) = **541 ms**, `searchStreams` = **0.12–0.43 ms**.
+### Der entscheidende Befund: Normalisierung ist eine *Query*-Optimierung
+5. **Ein Blob ist für Massen-Lesen SCHNELLER als normalisierte Zeilen.**
+   Kalter Read des 51-k-Katalogs: Blob lesen + parsen **92 ms** (33 + 59) vs.
+   Materialisieren aus `streams` **182 ms** (51 k Objekt-Builds + 51 k
+   `JSON.parse` auf `extra`). Der Warmer-Mirror-Treffer ist in beiden Fällen ~0.
+6. **Normalisierte Zeilen sind auch beim Schreiben teurer** als ein Blob:
+   469 ms (Tabelle + FTS-Rebuild) vs. 285 ms (22-MB-Blob 221 ms + Snapshot 28 ms
+   + Changelog 3 Pässe 36 ms) — pro-Zeilen-Overhead statt eines einzelnen Writes.
+7. **Storage wächst:** 47.93 MB vs. 40.61 MB = **+18 %**, fast vollständig der
+   Trigram-Index (7.1 MB).
 
-**Wichtig — Blocking ist reduziert, nicht beseitigt:** 541 ms (bzw. ~1.8 s bei
-185 k) laufen weiterhin synchron auf dem Event-Loop. Das ist ~9–30× besser als
-der 16-s-Stall, aber kein Nullwert. Ein echter Nullwert braucht einen Off-Loop-
-Writer (Worker-Thread) oder Go — siehe Punkt 7.
+**Konsequenz:** Solange pro Request O(Katalog) Arbeit anfällt, ist es fast
+gleichgültig, woraus sie kommt (Blob 92 ms, Tabelle 182 ms) — beides blockiert
+den Loop. Die Normalisierung gewinnt bei **Query-förmigem** Zugriff (Suche
+20–65×, indexgestützte Kategorie-Filter, Punkt-Lookups, SQL-Diff) und verliert
+bei **ganzheitlichem** Zugriff. Deshalb ist **Schritt 5 (Serving-Artefakte) der
+entscheidende**: nur er entfernt O(Katalog)-Arbeit vollständig aus dem
+Request-Pfad.
+
+**Zwischenstand: nicht mergen ohne Schritt 5.** Der aktuelle Stand ist eine
+Grundlage — Suche und Changelog sind messbar besser, Sync-Schreiblast (+184 ms)
+und kalter Read (+90 ms) sind messbar schlechter.
 
 ## Konsequenzen
 
 Positiv:
-- **Kein `JSON.parse` (59 ms) und keine 51 k JS-Objekte** mehr im Request-Pfad.
-- **Suche ~20–65× schneller** (7.5–15 ms → 0.12–0.43 ms) und indexgestützt.
-- **Sync-Schreiblast −75 %** (Trigger 2.247 ms → 541 ms für 51 k) und keine
-  18-MB-Blob-Writes mehr.
-- Changelog als SQL-Diff statt zweitem 185 k-JSON-Array.
-- Indexgestützte Kategorie-/Typ-Filter statt JS-Filterung.
+- **Suche ~20–65× schneller** (7.5–15 ms → 0.12–0.43 ms), indexgestützt.
+- Changelog ist ein SQL-Diff: kein 18-MB-Snapshot-Blob, kein 3-Pass-JSON-Vergleich.
+- Kein `cache`-Blob mehr für Streams: **−36 MB** Alt-Daten, −221 ms Blob-Write pro Sync.
+- Indexgestützte Kategorie-/Typ-Filter, Punkt-Lookups, Grundlage für Artefakte.
+- Cache/Kaltstart-Semantik unverändert (`getCachedStreams` liefert `null` bei
+  leerer Partition → bestehender Upstream-Fallback greift weiterhin).
 
 Negativ / Risiko:
-- **+18 % Storage** durch Index + FTS. Auf einem 40-MB-Katalog trivial, aber
-  keine Ersparnis.
-- **2-Zeichen-Suchen bleiben ein Scan** (~6.9 ms) — Trigram-Limit.
-- **Restliches Blocking** (541 ms / 51 k) bleibt, solange `better-sqlite3`
-  synchron ist.
-- Größerer Refactor in `sync.ts`, `proxy.ts`, `cache.ts`, `playlists.ts` — der in
-  `memory/2026-10-04` bewusst verschobene Pipeline-Refactor wird angefasst.
-- Migration: nur **Config** muss wandern (< 1 MB); der Katalog ist eine
-  Upstream-Kopie und wird per Re-Sync neu aufgebaut.
+- **+18 % Storage** durch Index + FTS.
+- **Sync-Schreiblast +184 ms** (469 vs. 285 ms) bei vollem Replace.
+- **Kalter Read +90 ms** (182 vs. 92 ms) pro Mirror-Ablauf und Quelle/Typ.
+- **2-Zeichen-Suchen bleiben ein Scan** (~6.9 ms).
+- **Restblocking bleibt** (469 ms / 51 k) — beseitigt erst ein Off-Loop-Writer
+  oder Go.
+- Der in `memory/2026-10-04` bewusst verschobene Pipeline-Refactor in
+  `proxy.ts` wird angefasst.
 
 Verworfen:
 - **DuckDB / LMDB / Redis** — Polyglot-Overhead ohne gemessenen Bedarf.
@@ -113,9 +105,12 @@ Verworfen:
 
 ## Offen (nächste Schritte)
 
-1. `sync.ts` an `replaceSourceStreams` anbinden und den Snapshot-Blob entfernen
-   (Changelog als SQL-Diff) — das adressiert den Ursachenpfad des 16-s-Stalls.
-2. `playlists.ts`-Suche auf `searchStreams` umstellen.
-3. Serving-Artefakte (Punkt 5) materialisieren.
-4. Versionierte Migrationen (Punkt 6).
-5. Off-Loop-Writer evaluieren, falls 541 ms Restblocking stört.
+1. **Serving-Artefakte materialisieren (Schritt 5).** Der einzige Schritt, der
+   O(Katalog)-Arbeit pro Request wirklich entfernt (`player_api.php`-JSON und
+   `get.php`-M3U pro Katalog-/Config-Version vorrendern). Vorher ist der
+   Umbau netto kein Gewinn.
+2. **Inkrementelles Schreiben** statt vollem Replace: nur das Delta upserten und
+   den FTS-Rebuild überspringen, wenn nichts geändert wurde → Sync wieder unter
+   den alten 285 ms.
+3. Versionierte Migrationen (Schritt 6).
+4. Off-Loop-Writer evaluieren, falls das Restblocking stört.

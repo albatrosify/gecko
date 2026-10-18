@@ -4,6 +4,7 @@ import {
   normalizeStream,
   toUpstreamStream,
   replaceSourceStreams,
+  replaceSourceStreamsWithDiff,
   searchStreams,
   countSourceStreams,
   deleteSourceStreams,
@@ -248,5 +249,78 @@ describe('stream-store — search', () => {
     seed();
     deleteSourceStreams('src-2', 'live');
     expect(searchStreams('Sports', { type: 'live' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('stream-store — sync diff', () => {
+  beforeEach(async () => {
+    process.env.SQLITE_PATH = ':memory:';
+    await connectDb();
+  });
+
+  it('reports no changes on a first sync', () => {
+    const { stored, changes } = replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta' },
+    ]);
+
+    expect(stored).toBe(2);
+    expect(changes).toEqual({ added: [], removed: [], renamed: [] });
+  });
+
+  it('reports added, removed and renamed entries', () => {
+    replaceSourceStreams(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta' },
+      { stream_id: '3', name: 'Gamma' },
+    ]);
+
+    const { changes } = replaceSourceStreamsWithDiff(SOURCE, 'live', [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta Renamed' },
+      { stream_id: '4', name: 'Delta' },
+    ]);
+
+    expect(changes.added).toEqual([{ id: '4', name: 'Delta' }]);
+    expect(changes.removed).toEqual([{ id: '3', name: 'Gamma' }]);
+    expect(changes.renamed).toEqual([{ id: '2', oldName: 'Beta', newName: 'Beta Renamed' }]);
+  });
+
+  it('reports nothing when the catalog is unchanged', () => {
+    const items = [
+      { stream_id: '1', name: 'Alpha' },
+      { stream_id: '2', name: 'Beta' },
+    ];
+    replaceSourceStreams(SOURCE, 'live', items);
+
+    const { changes } = replaceSourceStreamsWithDiff(SOURCE, 'live', items);
+    expect(changes).toEqual({ added: [], removed: [], renamed: [] });
+  });
+
+  it('treats a name becoming null as a rename, not a removal', () => {
+    replaceSourceStreams(SOURCE, 'live', [{ stream_id: '1', name: 'Alpha' }]);
+    const { changes } = replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1' }]);
+
+    expect(changes.renamed).toEqual([{ id: '1', oldName: 'Alpha', newName: null }]);
+    expect(changes.removed).toHaveLength(0);
+  });
+
+  it('diffs partitions independently', () => {
+    replaceSourceStreams(SOURCE, 'live', [{ stream_id: '1', name: 'Live One' }]);
+    replaceSourceStreams(SOURCE, 'vod', [{ stream_id: '1', name: 'Vod One' }]);
+
+    const live = replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'Live Renamed' }]);
+    expect(live.changes.renamed).toHaveLength(1);
+
+    const vod = replaceSourceStreamsWithDiff(SOURCE, 'vod', [{ stream_id: '1', name: 'Vod One' }]);
+    expect(vod.changes).toEqual({ added: [], removed: [], renamed: [] });
+  });
+
+  it('keeps the search index consistent with the diff result', () => {
+    replaceSourceStreams(SOURCE, 'live', [{ stream_id: '1', name: 'Old Channel Name' }]);
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'New Channel Name' }]);
+
+    expect(searchStreams('Old Channel')).toHaveLength(0);
+    expect(searchStreams('New Channel')).toHaveLength(1);
   });
 });

@@ -11,6 +11,7 @@ import { proxyStats, registerStreamController, unregisterStreamController, killS
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { refreshSource } from "../sync.ts";
 import { getCached } from "../cache.ts";
+import { getCachedStreams } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
@@ -979,7 +980,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_live`);
+               const streamsCached = getCachedStreams(sid, 'live');
                const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1193,7 +1194,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_vod`);
+               const streamsCached = getCachedStreams(sid, 'vod');
                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1408,7 +1409,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_series`);
+               const streamsCached = getCachedStreams(sid, 'series');
                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1789,7 +1790,7 @@ export function createProxyRouter() {
         if (!sDoc) return [];
         const cl = new XtreamClient(sDoc as any);
         const cacheType = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
-        const streamsCached = getCached(`${sid}_streams_${cacheType}`);
+        const streamsCached = getCachedStreams(sid, cacheType);
         let streams: any[];
         if (streamsCached?.data) {
           streams = streamsCached.data;

@@ -4,6 +4,7 @@ import { getDb } from "../db.ts";
 import { log } from "../logger.ts";
 import { activeCrons } from "../sync.ts";
 import { clearConnectionLogs } from "../connection-monitor.ts";
+import { invalidateSourceStreams, rebuildStreamSearchIndex } from "../stream-store.ts";
 
 export function createAdminRouter() {
   const router = Router();
@@ -73,7 +74,8 @@ export function createAdminRouter() {
         source_connection_logs,
         source_host_logs,
         source_sync_meta,
-        cache: schemaCache
+        cache: schemaCache,
+        streams
       } = await import('../schema.ts');
 
       const userPlaylists = db.select({ id: schemaPlaylists.id }).from(schemaPlaylists).where(eq(schemaPlaylists.userId, userId)).all();
@@ -110,15 +112,24 @@ export function createAdminRouter() {
           const cacheKeys: string[] = [];
           for (const sid of sourceIds) {
             metaKeys.push(`${sid}_live`, `${sid}_vod`, `${sid}_series`);
-            cacheKeys.push(`${sid}_categories`, `${sid}_streams_live`, `${sid}_streams_vod`, `${sid}_streams_series`);
+            cacheKeys.push(`${sid}_categories`, `snapshot_${sid}_categories`);
+            cacheKeys.push(`${sid}_streams_live`, `${sid}_streams_vod`, `${sid}_streams_series`);
             cacheKeys.push(`snapshot_${sid}_live`, `snapshot_${sid}_vod`, `snapshot_${sid}_series`);
           }
           tx.delete(source_sync_meta).where(inArray(source_sync_meta.key, metaKeys)).run();
           tx.delete(schemaCache).where(inArray(schemaCache.key, cacheKeys)).run();
+          // The catalog lives in `streams` now, so it must be deleted explicitly.
+          tx.delete(streams).where(inArray(streams.sourceId, sourceIds)).run();
         }
 
         tx.delete(schemaSources).where(eq(schemaSources.userId, userId)).run();
       });
+
+      // Removing catalog rows leaves stale entries in the FTS index.
+      if (sourceIds.length > 0) {
+        rebuildStreamSearchIndex();
+        for (const sid of sourceIds) invalidateSourceStreams(sid);
+      }
 
       log(`Admin deleted user ${userId} and all associated data`);
       res.json({ success: true });

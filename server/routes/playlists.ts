@@ -5,6 +5,7 @@ import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scheduleSourceCron, refreshSource } from "../sync.ts";
 import { duplicateCache, getCached } from "../cache.ts";
+import { searchStreams, getCachedStreams, type StreamType } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
 import { getBaseUrl, proxySeriesInfoImages, parseSourceStreamId } from "../utils.ts";
@@ -444,50 +445,30 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       }));
       const validSources = sourceIds.map(sid => sourcesMap.get(sid)).filter(Boolean);
 
-      const qLower = q.trim().toLowerCase();
-      const seen = new Set<string>();
-      const results: any[] = [];
+      // Stream names live in the normalised `streams` table with an FTS5 index
+      // (ADR 0002), so searching no longer loads and scans the whole cached
+      // catalog — it is an index lookup instead.
+      const searchSourceIds = validSources.map((doc: any) => doc?.id).filter(Boolean) as string[];
+      const hits = searchStreams(q, { sourceIds: searchSourceIds, limit: 50 });
 
-      outer:
-      for (const sourceDoc of validSources) {
-        const sourceId = sourceDoc.id;
-
-        // Category name lookup — cache stores { liveCats, vodCats, seriesCats }
+      // Category names still come from the cached category lists (small).
+      const catNames = new Map<string, string>();
+      for (const sourceId of searchSourceIds) {
         const catCache = getCached(`${sourceId}_categories`);
-        const catMap = new Map<string, string>();
-        if (catCache?.data) {
-          const { liveCats, vodCats, seriesCats } = catCache.data as any;
-          for (const cat of [...(liveCats || []), ...(vodCats || []), ...(seriesCats || [])]) {
-            catMap.set(String(cat.category_id), cat.category_name || '');
-          }
-        }
-
-        for (const type of ['live', 'vod', 'series'] as const) {
-          const cached = getCached(`${sourceId}_streams_${type}`);
-          if (!cached?.data) continue; // skip types not yet loaded in this session
-
-          for (const stream of cached.data as any[]) {
-            const name: string = stream.name || stream.title || '';
-            if (!name.toLowerCase().includes(qLower)) continue;
-
-            const streamId = String(stream.stream_id ?? stream.series_id);
-            const key = `${type}:${streamId}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            const categoryId = String(stream.category_id || '');
-            results.push({
-              streamId,
-              name,
-              type,
-              categoryId,
-              categoryName: catMap.get(categoryId) || '',
-            });
-
-            if (results.length >= 50) break outer;
-          }
+        if (!catCache?.data) continue;
+        const { liveCats, vodCats, seriesCats } = catCache.data as any;
+        for (const cat of [...(liveCats || []), ...(vodCats || []), ...(seriesCats || [])]) {
+          catNames.set(`${sourceId}:${String(cat.category_id)}`, cat.category_name || '');
         }
       }
+
+      const results = hits.map(hit => ({
+        streamId: hit.streamId,
+        name: hit.name || '',
+        type: hit.type,
+        categoryId: hit.categoryId || '',
+        categoryName: catNames.get(`${hit.sourceId}:${hit.categoryId || ''}`) || '',
+      }));
 
       res.json({ results });
     } catch (err: any) {
@@ -531,9 +512,10 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
       // Find source and streamData across all playlist sources
       let sourceDoc = validSources[0]!;
       let streamData: any = null;
+      const streamType: StreamType | null = (type === 'live' || type === 'vod' || type === 'series') ? type : null;
 
       for (const src of validSources) {
-        const cached = getCached(`${src.id}_streams_${type}`);
+        const cached = streamType ? getCachedStreams(src.id, streamType) : null;
         const found = (cached?.data as any[] | undefined)?.find(
           (s: any) => String(s.stream_id ?? s.series_id) === streamId
         );

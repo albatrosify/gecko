@@ -6,7 +6,7 @@ import { getDb, generateId } from "./db.ts";
 import { sources, source_host_logs } from "./schema.ts";
 import { XtreamClient } from "./xtream.ts";
 import { log } from "./logger.ts";
-import { getCached } from "./cache.ts";
+import { getCachedStreams } from "./stream-store.ts";
 import { eq } from "drizzle-orm";
 import { SourceHost, SourceHostResolvedIp } from "../src/types.ts";
 import { recordVpnBlock } from "./vpn.ts";
@@ -571,7 +571,7 @@ export async function benchmarkSourceHosts(sourceId: string): Promise<any> {
   let benchmarkStreamName: string = extra.benchmarkStreamName || "";
   let is4k = false;
 
-  const cached = getCached(`${sourceId}_streams_live`);
+  const cached = getCachedStreams(sourceId, 'live');
   let streams = cached?.data;
   if (!streams) {
     const primaryClient = new XtreamClient({

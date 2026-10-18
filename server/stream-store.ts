@@ -107,17 +107,60 @@ export function toUpstreamStream(row: StreamRow): Record<string, unknown> {
   return base;
 }
 
+/** A single added/removed entry in a sync diff. */
+export interface StreamChange {
+  id: string;
+  name: string | null;
+}
+
+/** A renamed entry in a sync diff. */
+export interface StreamRename {
+  id: string;
+  oldName: string | null;
+  newName: string | null;
+}
+
+export interface StreamDiff {
+  added: StreamChange[];
+  removed: StreamChange[];
+  renamed: StreamRename[];
+}
+
+export interface ReplaceResult {
+  /** Number of rows stored. */
+  stored: number;
+  /** Differences versus the previous contents of the partition. */
+  changes: StreamDiff;
+}
+
+/**
+ * Temp table holding the previous contents of the partition while it is being
+ * replaced, so the diff can be computed in SQL instead of in JS. Temp tables are
+ * per-connection, and this function is fully synchronous, so concurrent
+ * callers (the startup cache warm-up uses `Promise.all`) cannot interleave.
+ */
+const PREV_TABLE = '_prev_streams';
+
+const EMPTY_DIFF: StreamDiff = { added: [], removed: [], renamed: [] };
+
 /**
  * Replaces the whole catalog partition for `(sourceId, type)` in a single
- * transaction: delete, bulk insert, then one full-text index rebuild.
+ * transaction and reports what changed.
  *
- * `INSERT OR REPLACE` keeps upstream duplicates from aborting a sync. The FTS
- * index is rebuilt once at the end rather than maintained per row — triggers
- * measured 2.25 s for 51 k rows versus 0.49 s for load + rebuild.
+ * delete → bulk insert → one full-text index rebuild → SQL diff. `INSERT OR
+ * REPLACE` keeps upstream duplicates from aborting a sync. The FTS index is
+ * rebuilt once at the end rather than maintained per row — triggers measured
+ * 2.25 s for 51 k rows versus 0.49 s for load + rebuild.
  *
- * @returns the number of rows stored.
+ * The diff replaces the old JSON snapshot mechanism (ADR 0002): nothing has to
+ * be serialised, stored or parsed to know what changed, and a first sync
+ * legitimately reports no changes.
  */
-export function replaceSourceStreams(sourceId: string, type: StreamType, items: unknown[]): number {
+export function replaceSourceStreamsWithDiff(
+  sourceId: string,
+  type: StreamType,
+  items: unknown[],
+): ReplaceResult {
   const sqlite = getSqlite();
   const updatedAt = Date.now();
 
@@ -127,6 +170,14 @@ export function replaceSourceStreams(sourceId: string, type: StreamType, items: 
     if (row) rows.push(row);
   }
 
+  sqlite.exec(`CREATE TEMP TABLE IF NOT EXISTS ${PREV_TABLE} (streamId TEXT PRIMARY KEY, name TEXT)`);
+
+  const clearPrev = sqlite.prepare(`DELETE FROM ${PREV_TABLE}`);
+  const fillPrev = sqlite.prepare(
+    `INSERT OR REPLACE INTO ${PREV_TABLE}(streamId, name)
+     SELECT streamId, name FROM streams WHERE sourceId = ? AND type = ?`,
+  );
+  const countPrev = sqlite.prepare(`SELECT COUNT(*) AS c FROM ${PREV_TABLE}`);
   const del = sqlite.prepare('DELETE FROM streams WHERE sourceId = ? AND type = ?');
   const ins = sqlite.prepare(`
     INSERT OR REPLACE INTO streams
@@ -135,7 +186,27 @@ export function replaceSourceStreams(sourceId: string, type: StreamType, items: 
   `);
   const rebuild = sqlite.prepare("INSERT INTO streams_fts(streams_fts) VALUES('rebuild')");
 
+  const selectAdded = sqlite.prepare(
+    `SELECT streamId AS id, name FROM streams
+     WHERE sourceId = ? AND type = ? AND streamId NOT IN (SELECT streamId FROM ${PREV_TABLE})`,
+  );
+  const selectRemoved = sqlite.prepare(
+    `SELECT streamId AS id, name FROM ${PREV_TABLE}
+     WHERE streamId NOT IN (SELECT streamId FROM streams WHERE sourceId = ? AND type = ?)`,
+  );
+  const selectRenamed = sqlite.prepare(
+    `SELECT n.streamId AS id, o.name AS oldName, n.name AS newName
+     FROM streams n JOIN ${PREV_TABLE} o ON o.streamId = n.streamId
+     WHERE n.sourceId = ? AND n.type = ? AND IFNULL(n.name, '') <> IFNULL(o.name, '')`,
+  );
+
+  let changes: StreamDiff = EMPTY_DIFF;
+
   const write = sqlite.transaction((batch: StreamRow[]) => {
+    clearPrev.run();
+    fillPrev.run(sourceId, type);
+    const hadPrevious = Number((countPrev.get() as { c: number }).c) > 0;
+
     del.run(sourceId, type);
     for (const row of batch) {
       ins.run(
@@ -152,10 +223,28 @@ export function replaceSourceStreams(sourceId: string, type: StreamType, items: 
       );
     }
     rebuild.run();
+
+    // A first sync has no baseline, so "everything is new" is not a changelog.
+    if (hadPrevious) {
+      changes = {
+        added: selectAdded.all(sourceId, type) as StreamChange[],
+        removed: selectRemoved.all(sourceId, type) as StreamChange[],
+        renamed: selectRenamed.all(sourceId, type) as StreamRename[],
+      };
+    }
   });
   write(rows);
 
-  return rows.length;
+  return { stored: rows.length, changes };
+}
+
+/**
+ * Replaces the whole catalog partition for `(sourceId, type)`.
+ *
+ * @returns the number of rows stored.
+ */
+export function replaceSourceStreams(sourceId: string, type: StreamType, items: unknown[]): number {
+  return replaceSourceStreamsWithDiff(sourceId, type, items).stored;
 }
 
 /** Escapes LIKE wildcards so user input is matched literally (used with `ESCAPE '\'`). */
@@ -174,8 +263,11 @@ export function toMatchQuery(term: string): string {
   return `"${term.replace(/"/g, '""')}"`;
 }
 
-/** Rebuilds the whole FTS index from the `streams` content table. */
-function rebuildStreamIndex(): void {
+/**
+ * Rebuilds the whole FTS index from the `streams` content table. Call this after
+ * any write that bypasses `replaceSourceStreamsWithDiff` (e.g. a cascade delete).
+ */
+export function rebuildStreamSearchIndex(): void {
   getSqlite().prepare("INSERT INTO streams_fts(streams_fts) VALUES('rebuild')").run();
 }
 
@@ -251,7 +343,8 @@ export function deleteSourceStreams(sourceId: string, type?: StreamType): number
   const result = type
     ? sqlite.prepare('DELETE FROM streams WHERE sourceId = ? AND type = ?').run(sourceId, type)
     : sqlite.prepare('DELETE FROM streams WHERE sourceId = ?').run(sourceId);
-  rebuildStreamIndex();
+  rebuildStreamSearchIndex();
+  invalidateSourceStreams(sourceId, type);
   return result.changes ?? 0;
 }
 
@@ -266,4 +359,101 @@ export function getStreamRow(sourceId: string, type: StreamType, streamId: strin
     .get(sourceId, type, streamId) as (Omit<StreamRow, 'extra'> & { extra: string | null }) | undefined;
   if (!row) return null;
   return { ...row, extra: row.extra ? (JSON.parse(row.extra) as Record<string, unknown>) : null };
+}
+
+// ---------------------------------------------------------------------------
+// Read access (replaces the JSON blob that used to live in `cache`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Short-lived in-process mirror, matching the TTL the old cache mirror used, so
+ * repeated requests within the same minute do not re-materialise the catalog.
+ * The `streams` table is the durable source of truth.
+ */
+const MIRROR_TTL_MS = 60_000;
+const mirror = new Map<string, { data: unknown[]; expiresAt: number }>();
+
+function mirrorKey(sourceId: string, type: StreamType): string {
+  return `${sourceId}_${type}`;
+}
+
+/** Materialises a partition as upstream-shaped objects. */
+function materializePartition(sourceId: string, type: StreamType): Record<string, unknown>[] {
+  const rows = getSqlite()
+    .prepare(
+      `SELECT sourceId, type, streamId, name, categoryId, icon, epgChannelId, containerExtension, extra
+       FROM streams WHERE sourceId = ? AND type = ?`,
+    )
+    .all(sourceId, type) as (Omit<StreamRow, 'extra'> & { extra: string | null })[];
+
+  return rows.map((row) =>
+    toUpstreamStream({
+      ...row,
+      extra: row.extra ? (JSON.parse(row.extra) as Record<string, unknown>) : null,
+    }),
+  );
+}
+
+/**
+ * Returns a partition as upstream-shaped stream objects (the shape consumers had
+ * before), served from a one-minute mirror and materialised from the table on a
+ * miss. Returns an empty array when the partition has never been synced.
+ */
+export function readSourceStreams(sourceId: string, type: StreamType): any[] {
+  const key = mirrorKey(sourceId, type);
+  const hit = mirror.get(key);
+  if (hit && Date.now() < hit.expiresAt && hit.data.length > 0) return hit.data as any[];
+
+  const data = materializePartition(sourceId, type);
+  if (data.length > 0) {
+    mirror.set(key, { data, expiresAt: Date.now() + MIRROR_TTL_MS });
+  }
+  return data;
+}
+
+/**
+ * Cache-shaped accessor (`{ data }` or null) so existing read sites keep their
+ * `cached?.data ?? fetchFromUpstream()` structure while being backed by the
+ * table instead of the removed JSON blob.
+ */
+export function getCachedStreams(sourceId: string, type: StreamType): { data: any[] } | null {
+  const data = readSourceStreams(sourceId, type);
+  return data.length > 0 ? { data } : null;
+}
+
+/**
+ * Seeds the mirror with freshly synced data. Called by the sync instead of
+ * writing the catalog back out as a JSON blob.
+ */
+export function primeSourceStreams(sourceId: string, type: StreamType, items: unknown[]): void {
+  mirror.set(mirrorKey(sourceId, type), { data: items, expiresAt: Date.now() + MIRROR_TTL_MS });
+}
+
+/** Cheap presence check that never materialises the partition. */
+export function hasSourceStreams(sourceId: string, type: StreamType): boolean {
+  const hit = mirror.get(mirrorKey(sourceId, type));
+  if (hit && Date.now() < hit.expiresAt) return hit.data.length > 0;
+
+  const row = getSqlite()
+    .prepare('SELECT 1 AS present FROM streams WHERE sourceId = ? AND type = ? LIMIT 1')
+    .get(sourceId, type);
+  return row !== undefined;
+}
+
+/**
+ * Drops the in-memory mirror. Pass a source (and optionally a type) to scope it;
+ * call with no arguments on a global cache clear.
+ */
+export function invalidateSourceStreams(sourceId?: string, type?: StreamType): void {
+  if (!sourceId) {
+    mirror.clear();
+    return;
+  }
+  if (!type) {
+    for (const key of Array.from(mirror.keys())) {
+      if (key.startsWith(`${sourceId}_`)) mirror.delete(key);
+    }
+    return;
+  }
+  mirror.delete(mirrorKey(sourceId, type));
 }
