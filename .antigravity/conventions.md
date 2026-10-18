@@ -10,9 +10,9 @@ Self-hosted IPTV-Playlist-Aggregator. User verbinden Xtream-Codes-/M3U-Upstream-
 
 | Bereich | Technologie |
 |---|---|
-| Backend | Express + TypeScript (via `tsx`, ESM) |
+| Backend | Express + TypeScript (ESM). Node über `tsx`, alternativ Bun (`bun server.ts`) — beide Runtimes werden unterstützt |
 | Frontend | React 19 + Vite + Tailwind CSS 4 |
-| DB | SQLite (`better-sqlite3` + Drizzle ORM), WAL-Modus, Auto-Migrate in `db.ts` |
+| DB | SQLite + Drizzle ORM, WAL-Modus, Auto-Migrate in `db.ts`. Treiber ist runtime-abhängig: `bun:sqlite` unter Bun, `better-sqlite3` unter Node |
 | Auth | JWT + bcrypt (lokales E-Mail/Passwort) |
 | Tests | Vitest (`npm run test`) |
 | Deployment | Docker + Docker Compose |

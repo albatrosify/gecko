@@ -58,6 +58,34 @@ APIs (`.all()`, `.get()`, `.run()`) synchron kompatibel sind.
 verifiziert mit `node -e` auf einer `.ts`-Datei). **`tsx` ist damit in Production überflüssig** —
 ohne Bun, ohne Zusatzabhängigkeit. Betrifft `package.json` (`start`/`dev`) und `Dockerfile:CMD`.
 
+## 3b. AUFGELÖST: Bun läuft — mit `bun:sqlite` statt `better-sqlite3`
+
+**Korrektur zum ursprünglichen Befund.** Nicht SQLite war das Problem, sondern nur
+`better-sqlite3` (Issue #4290). `bun:sqlite` (eingebaut, kein natives Modul) kann alles,
+was GECKO braucht — verifiziert mit Bun 1.4.3 / SQLite 3.54:
+
+| Prüfung | Ergebnis |
+|---|---|
+| FTS5 + `tokenize='trigram'` | ✅ |
+| Die exakte Store-SQL (Temp-Tabellen, `ON CONFLICT … DO UPDATE … WHERE`, `'rebuild'`) | ✅ inkl. „0 changes" bei unverändertem Sync |
+| `db.transaction`, `exec('PRAGMA …')` | ✅ |
+| `db.pragma(...)` | ❌ **existiert nicht** → `exec('PRAGMA …')` verwenden |
+| `node:perf_hooks` `monitorEventLoopDelay` | ✅ vorhanden (Event-Loop-Monitor läuft) |
+
+**Umsetzung:** `server/db.ts` wählt den Treiber per `openDriver()` zur Laufzeit
+(`typeof globalThis.Bun !== 'undefined'`), beide hinter einem gemeinsamen
+`SqliteHandle`-Interface. `better-sqlite3` wird jetzt dynamisch importiert, damit es
+unter Bun nie geladen wird. Typen für `bun:sqlite` liegen in `server/bun-sqlite.d.ts`
+(keine `@types/bun`-Abhängigkeit).
+
+**Verifiziert:** `bun server.ts` bootet, `/health` und `/api/version` antworten, und die
+Auto-Migration legt unter Bun WAL + `streams` + `streams_fts` korrekt an. Node-Pfad
+unverändert (222 Tests grün).
+
+**Offen:** Die Test-Suite läuft unter vitest/Node, wo `bun:sqlite` nicht existiert — der
+konditionale Treiber löst das, Tests bleiben auf Node. `package.json`/`Dockerfile`
+verweisen weiterhin auf Node; ein Bun-Image ist nicht gebaut.
+
 ## 4. Fallstrick: Vitest-Timing-Tests unter CPU-Last
 
 Ein paralleler Lauf von `npm run lint` (`tsc --noEmit`) und `npm run test` lastete die CPU so

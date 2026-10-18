@@ -73,7 +73,8 @@ await connectDb();
 const sqlite = getSqlite();
 
 const checkpoint = (): void => {
-  sqlite.pragma('wal_checkpoint(TRUNCATE)');
+  // `exec` rather than `pragma()`: bun:sqlite has no `pragma()` method.
+  sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
 };
 
 /** Runs an operation on a clean WAL and reports elapsed time + bytes written. */

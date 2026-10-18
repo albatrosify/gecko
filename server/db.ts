@@ -1,12 +1,56 @@
-import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-let sqlite: Database.Database;
+/**
+ * Minimal surface shared by `better-sqlite3` and `bun:sqlite`. The two agree on
+ * `prepare()`, `exec()`, `transaction()` and the shape of statement results; the
+ * only divergence used here is `pragma()`, which `bun:sqlite` does not have.
+ */
+interface SqliteHandle {
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): { changes?: number; lastInsertRowid?: number | bigint };
+  };
+  exec(sql: string): void;
+  transaction<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R;
+  close(): void;
+}
+
+/** `bun:sqlite` has no `pragma()`; `exec('PRAGMA …')` works on both. */
+function applyPragma(handle: SqliteHandle, statement: string): void {
+  handle.exec(`PRAGMA ${statement}`);
+}
+
+/** True when running under Bun, where `better-sqlite3` cannot be loaded. */
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+let sqlite: SqliteHandle;
 let db: BetterSQLite3Database<typeof schema>;
+
+/**
+ * Opens the database with the driver available in the current runtime:
+ * `bun:sqlite` under Bun, `better-sqlite3` under Node. The drizzle query surface
+ * is identical either way, so only this module cares which one is in use.
+ */
+async function openDriver(dbPath: string): Promise<{ handle: SqliteHandle; db: BetterSQLite3Database<typeof schema> }> {
+  if (isBun) {
+    const { Database } = await import('bun:sqlite');
+    const { drizzle } = await import('drizzle-orm/bun-sqlite');
+    const handle = new Database(dbPath) as unknown as SqliteHandle;
+    // Drizzle's bun-sqlite driver exposes the same synchronous API as the
+    // better-sqlite3 one, so the type is a cast rather than a second code path.
+    return { handle, db: drizzle(handle as never, { schema }) as unknown as BetterSQLite3Database<typeof schema> };
+  }
+
+  const { default: Database } = await import('better-sqlite3');
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
+  const handle = new Database(dbPath) as unknown as SqliteHandle;
+  return { handle, db: drizzle(handle as never, { schema }) as unknown as BetterSQLite3Database<typeof schema> };
+}
 
 export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>> {
   const dbPath = process.env.SQLITE_PATH || path.join(process.cwd(), 'data', 'gecko.db');
@@ -17,12 +61,13 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  sqlite = new Database(dbPath);
-  sqlite.pragma('journal_mode = WAL');
+  const opened = await openDriver(dbPath);
+  sqlite = opened.handle;
+  db = opened.db;
+
+  applyPragma(sqlite, 'journal_mode = WAL');
   // Sync staging tables are only ever transient; keep them out of the disk path.
-  sqlite.pragma('temp_store = MEMORY');
-  
-  db = drizzle(sqlite, { schema });
+  applyPragma(sqlite, 'temp_store = MEMORY');
   
   // Ensure tables and indexes exist (simple auto-migrate for basic setup)
   try {
@@ -131,7 +176,7 @@ export function getDb(): BetterSQLite3Database<typeof schema> {
  * a single transaction) and for virtual tables that Drizzle cannot model
  * (e.g. the `streams_fts` full-text index).
  */
-export function getSqlite(): Database.Database {
+export function getSqlite(): SqliteHandle {
   if (!sqlite) throw new Error('Database not connected. Call connectDb() first.');
   return sqlite;
 }
