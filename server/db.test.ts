@@ -70,4 +70,33 @@ describe('db — ADR 0002 upgrade cleanup', () => {
     expect(keysOf('cache')).toEqual(['src-1_categories']);
     expect(keysOf('source_sync_meta')).toEqual(['snapshot_src-1_categories', 'src-1_live']);
   });
+
+  it('reclaims free pages on reconnect instead of leaving them in the file', async () => {
+    // Deleting data moves pages onto SQLite's freelist but never shrinks the
+    // file, which is what made a cleaned-up prod DB stay at ~1 GB. connectDb()
+    // should notice and VACUUM.
+    const freeRatio = (): number => {
+      const sqlite = getSqlite();
+      const free = Number((sqlite.prepare('PRAGMA freelist_count').get() as { freelist_count: number }).freelist_count);
+      const total = Number((sqlite.prepare('PRAGMA page_count').get() as { page_count: number }).page_count);
+      return total > 0 ? free / total : 0;
+    };
+
+    const sqlite = getSqlite();
+    sqlite.exec('CREATE TABLE _ballast (id INTEGER PRIMARY KEY, blob TEXT)');
+    const insert = sqlite.prepare('INSERT INTO _ballast (blob) VALUES (?)');
+    const payload = 'x'.repeat(10_000);
+    sqlite.transaction(() => {
+      for (let i = 0; i < 2_000; i++) insert.run(payload);
+    })();
+    sqlite.exec('DELETE FROM _ballast');
+    sqlite.exec('DROP TABLE _ballast');
+
+    // Precondition: enough free pages that the VACUUM threshold is crossed.
+    expect(freeRatio()).toBeGreaterThan(0.2);
+
+    await connectDb();
+
+    expect(freeRatio()).toBeLessThan(0.2);
+  });
 });

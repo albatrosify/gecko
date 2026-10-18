@@ -53,7 +53,7 @@ bun scripts/check-db-driver.ts       # Bun
 **Single-Process-Server** (`server.ts`): Express bedient REST-API **und** serviert das Vite-Frontend (dev: Vite-Middleware, prod: `dist/` + SPA-Fallback). Startup: `connectDb()` → `initCronManager()` → `initProxyStatsInterval()` → `initConnectionMonitor()` → `initHostStatsFlusher()` → `initTrafficFlusher()`.
 
 **Backend** (`server/`) — Module mit Domänenlogik, `server/routes/` mit HTTP-Routern:
-- `db.ts` — SQLite, WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`) inkl. ADR-0002-Upgrade-Cleanup. Treiber runtime-abhängig: `bun:sqlite` unter Bun, `better-sqlite3` unter Node (`openDriver()`, gemeinsames `SqliteHandle`-Interface; `bun:sqlite` hat kein `pragma()`, daher `exec('PRAGMA …')`). `generateId()` = `crypto.randomUUID()`. `getSqlite()` = roher Handle für Bulk-Operationen und Virtual Tables (FTS5).
+- `db.ts` — SQLite, WAL, Auto-Migrate (`CREATE TABLE IF NOT EXISTS`) inkl. ADR-0002-Upgrade-Cleanup, gefolgt von einem **VACUUM** (Freelist-Ratio ≥ 20 %, sonst übersprungen; `GECKO_SKIP_VACUUM=1` schaltet es ab), damit der freigewordene Platz auch an das Dateisystem zurückgeht. Treiber runtime-abhängig: `bun:sqlite` unter Bun, `better-sqlite3` unter Node (`openDriver()`, gemeinsames `SqliteHandle`-Interface; `bun:sqlite` hat kein `pragma()`, daher `exec('PRAGMA …')`). `generateId()` = `crypto.randomUUID()`. `getSqlite()` = roher Handle für Bulk-Operationen und Virtual Tables (FTS5).
 - `schema.ts` — Drizzle-Tabellendefinitionen.
 - `auth.ts` — `createAuthRouter()` (register/login/me), `requireAuth` (JWT), `requireAuthOrQuery`.
 - `cache.ts` — Two-Tier-Cache: In-Memory Map (1 min) + SQLite `cache`-Tabelle (12 h).

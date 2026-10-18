@@ -3,6 +3,7 @@ import * as schema from './schema.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { log } from './logger.ts';
 
 /**
  * Minimal surface shared by `better-sqlite3` and `bun:sqlite`. The two agree on
@@ -23,6 +24,50 @@ interface SqliteHandle {
 /** `bun:sqlite` has no `pragma()`; `exec('PRAGMA …')` works on both. */
 function applyPragma(handle: SqliteHandle, statement: string): void {
   handle.exec(`PRAGMA ${statement}`);
+}
+
+/**
+ * Fraction of free pages above which a VACUUM is worth the one-off cost.
+ */
+const VACUUM_MIN_FREE_RATIO = 0.2;
+
+/**
+ * Reclaims disk space after the ADR 0002 upgrade cleanup.
+ *
+ * SQLite moves deleted rows onto its freelist but never shrinks the file, so an
+ * install that carried ~1 GB of stream blobs keeps a ~1 GB file that is mostly
+ * free pages. VACUUM rebuilds it. Guarded by the freelist ratio, so this is a
+ * one-off on upgrade rather than a cost on every start; set `GECKO_SKIP_VACUUM=1`
+ * to skip it entirely.
+ */
+function reclaimFreeSpace(handle: SqliteHandle): void {
+  if (process.env.GECKO_SKIP_VACUUM === '1') return;
+
+  const readPragmaNumber = (pragma: string): number => {
+    const row = handle.prepare(`PRAGMA ${pragma}`).get() as Record<string, unknown> | null;
+    return row ? Number(Object.values(row)[0] ?? 0) : 0;
+  };
+
+  const freePages = readPragmaNumber('freelist_count');
+  const totalPages = readPragmaNumber('page_count');
+  if (totalPages <= 0 || freePages / totalPages < VACUUM_MIN_FREE_RATIO) return;
+
+  const reclaimableMb = (freePages * readPragmaNumber('page_size')) / 1048576;
+
+  // VACUUM builds a temporary copy of the whole database. With `temp_store =
+  // MEMORY` that copy would live in RAM - fatal for a multi-hundred-MB database
+  // on a small box - so force it to disk for the duration and restore after.
+  applyPragma(handle, 'temp_store = FILE');
+  const started = Date.now();
+  try {
+    handle.exec('VACUUM');
+    log(`[DB] VACUUM reclaimed ~${reclaimableMb.toFixed(0)} MB of free pages in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  } catch (err: unknown) {
+    // A failed VACUUM costs disk space, never correctness - keep going.
+    log(`[DB] VACUUM failed, space not reclaimed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    applyPragma(handle, 'temp_store = MEMORY');
+  }
 }
 
 /** True when running under Bun, where `better-sqlite3` cannot be loaded. */
@@ -162,6 +207,9 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
     console.error('Failed to initialize database schema:', err);
     throw err;
   }
+
+  // The cleanup above frees pages inside the file; only VACUUM returns them.
+  reclaimFreeSpace(sqlite);
 
   return db;
 }

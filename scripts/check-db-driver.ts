@@ -22,7 +22,7 @@ import path from 'path';
 const dbPath = path.join(os.tmpdir(), `gecko-parity-${process.pid}-${Date.now()}.db`);
 process.env.SQLITE_PATH = dbPath;
 
-const { connectDb } = await import('../server/db.ts');
+const { connectDb, getSqlite } = await import('../server/db.ts');
 const { hasSourceStreams, readSourceStreams, countSourceStreams, searchStreams, replaceSourceStreams, getStreamRow } =
   await import('../server/stream-store.ts');
 
@@ -54,6 +54,17 @@ check('searchStreams misses an absent term', searchStreams('Zulu', { type: 'vod'
 check('readSourceStreams materialises rows', readSourceStreams('src-parity', 'vod').length === 2);
 check('getStreamRow returns a row', getStreamRow('src-parity', 'vod', '1')?.name === 'Parity Alpha');
 check('getStreamRow returns null for a miss', getStreamRow('src-parity', 'vod', 'nope') === null);
+
+// --- PRAGMA reads used by the upgrade VACUUM (db.ts) ------------------------
+// bun:sqlite has no `db.pragma()`, so these go through prepare().get() and the
+// result shape has to be identical on both drivers.
+const pragmaNumber = (pragma: string): number => {
+  const row = getSqlite().prepare(`PRAGMA ${pragma}`).get() as Record<string, unknown> | null;
+  return row ? Number(Object.values(row)[0] ?? 0) : 0;
+};
+check('PRAGMA page_count > 0', pragmaNumber('page_count') > 0);
+check('PRAGMA page_size > 0', pragmaNumber('page_size') > 0);
+check('PRAGMA freelist_count is finite', Number.isFinite(pragmaNumber('freelist_count')));
 
 const failures = results.filter((r) => !r.ok);
 for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  [${runtime}] ${r.name}`);

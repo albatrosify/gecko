@@ -32,6 +32,9 @@ Gemessene Ausgangslage (`data/gecko.db`, 40.61 MB):
    einmal pro Version rendern, als gzip-Bytes ausliefern.
    **← dieser Schritt ist der entscheidende, siehe unten.**
 6. **Versionierte Migrationen** ersetzen das ad-hoc `CREATE TABLE IF NOT EXISTS`.
+   Bis dahin räumt `connectDb()` beim Upgrade die alten Blobs/Snapshots weg und
+   **VACUUMt danach** (Freelist-Ratio ≥ 20 %), weil SQLite gelöschte Seiten sonst
+   im File behält — eine bereinigte 1-GB-DB bliebe sonst bei ~1 GB.
 7. **Runtime bleibt offen** — das Design ist portabel (Go + `modernc.org/sqlite`).
 
 ## Validierung (Prototyp gegen den echten 51.462-Item-Katalog)
