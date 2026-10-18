@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod backup;
 pub mod custom_categories;
@@ -11,9 +12,11 @@ pub mod traffic;
 
 use crate::state::AppState;
 use axum::{
+    http::StatusCode,
     middleware,
+    response::{IntoResponse, Response},
     routing::{delete, get, post, put},
-    Router,
+    Json, Router,
 };
 
 pub fn create_api_router() -> Router<AppState> {
@@ -26,12 +29,24 @@ pub fn create_api_router() -> Router<AppState> {
         // Sources
         .route("/sources", get(sources::list_sources).post(sources::create_source))
         .route("/sources/{id}", get(sources::get_source).put(sources::update_source).delete(sources::delete_source))
+        .route("/sources/{id}/refresh", post(sources::refresh_source))
+        .route("/sources/{id}/changelog", get(sources::get_source_changelog))
+        .route("/sources/{id}/connections", get(sources::get_source_connections).delete(sources::clear_source_connections))
+        .route("/sources/{id}/connections/check", post(sources::check_source_connection))
+        .route("/sources/{id}/benchmark", post(sources::benchmark_source))
+        .route("/fetch-upstream", post(sources::fetch_upstream))
+        .route("/fetch-streams", post(sources::fetch_streams))
         // EPGs
         .route("/epgs", get(epgs::list_epgs).post(epgs::create_epg))
         .route("/epgs/{id}", delete(epgs::delete_epg))
+        .route("/epg-channels", get(epgs::get_epg_channels))
         // Playlists
         .route("/playlists", get(playlists::list_playlists).post(playlists::create_playlist))
         .route("/playlists/{id}", get(playlists::get_playlist).put(playlists::update_playlist).delete(playlists::delete_playlist))
+        .route("/playlists/{id}/clone", post(playlists::clone_playlist))
+        .route("/playlists/{id}/sync", post(playlists::sync_playlist))
+        .route("/playlists/{id}/search", get(playlists::search_playlist))
+        .route("/playlists/{id}/series-info", get(playlists::series_info))
         // Stream Mappings
         .route("/mappings", get(mappings::list_mappings).post(mappings::create_mapping))
         .route("/mappings/{id}", put(mappings::update_mapping).delete(mappings::delete_mapping))
@@ -48,6 +63,9 @@ pub fn create_api_router() -> Router<AppState> {
         .route("/custom-category-items", get(custom_categories::list_custom_category_items).post(custom_categories::create_custom_category_item))
         .route("/custom-category-items/{id}", delete(custom_categories::delete_custom_category_item))
         .route("/custom-category-items/batch", post(custom_categories::batch_custom_category_items))
+        // Admin
+        .route("/admin/users", get(admin::list_users))
+        .route("/admin/users/{id}", delete(admin::delete_user))
         // DVR
         .route("/dvr/recordings", get(dvr::list_recordings))
         .route("/dvr/record-channel", post(dvr::record_channel))
@@ -75,4 +93,13 @@ pub fn create_api_router() -> Router<AppState> {
         .route("/version", get(system::handle_version))
         .nest("/auth", public_routes)
         .merge(protected_routes)
+        .fallback(api_fallback)
+}
+
+async fn api_fallback() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": "API route not found" })),
+    )
+        .into_response()
 }

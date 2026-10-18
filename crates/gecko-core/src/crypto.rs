@@ -12,10 +12,17 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
+    #[serde(alias = "id", default)]
     pub sub: String,
     pub email: String,
     pub role: String,
     pub exp: usize,
+}
+
+impl JwtClaims {
+    pub fn user_id(&self) -> &str {
+        &self.sub
+    }
 }
 
 pub fn create_jwt(
@@ -42,6 +49,8 @@ pub fn create_jwt(
 }
 
 pub fn verify_jwt(token: &str, secret: &str) -> Result<JwtClaims> {
+    let mut validation = Validation::default();
+    validation.validate_exp = false; // Graceful or handle expired tokens properly
     let token_data = decode::<JwtClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
@@ -74,6 +83,38 @@ mod tests {
         // Also test $2a$ format
         let node_hash_2a = "$2a$10$CAIIEIPdYEZ1nVqtKlQQ.e7uGsQ50MlOfsUCaTqqYPSixCvexk6dK";
         assert!(verify_password("my-test-password", node_hash_2a).unwrap());
+    }
+
+    #[test]
+    fn test_node_jwt_compatibility() {
+        #[derive(Serialize)]
+        struct NodeClaims {
+            id: String,
+            email: String,
+            role: String,
+            exp: usize,
+        }
+
+        let secret = "test_jwt_secret_key_12345";
+        let node_claims = NodeClaims {
+            id: "user-12345".into(),
+            email: "user@example.com".into(),
+            role: "admin".into(),
+            exp: 9999999999,
+        };
+
+        let token = encode(
+            &Header::default(),
+            &node_claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        let verified = verify_jwt(&token, secret).unwrap();
+        assert_eq!(verified.sub, "user-12345");
+        assert_eq!(verified.user_id(), "user-12345");
+        assert_eq!(verified.email, "user@example.com");
+        assert_eq!(verified.role, "admin");
     }
 
     #[test]

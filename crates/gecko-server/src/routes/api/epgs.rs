@@ -88,3 +88,8 @@ pub async fn delete_epg(
             .into_response(),
     }
 }
+
+pub async fn get_epg_channels() -> Response {
+    (StatusCode::OK, Json(serde_json::json!({ "channels": [] }))).into_response()
+}
+

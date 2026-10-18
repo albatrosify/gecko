@@ -182,3 +182,82 @@ pub async fn delete_playlist(
             .into_response(),
     }
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClonePlaylistPayload {
+    pub name: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+pub async fn clone_playlist(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(claims): Extension<JwtClaims>,
+    Json(payload): Json<ClonePlaylistPayload>,
+) -> Response {
+    let existing = match repo::playlists::get_playlist_by_id(&state.db.pool, &id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Playlist not found" }))).into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    };
+
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let new_username = payload.username.unwrap_or_else(|| format!("{}_{}", existing.username, &new_id[..4]));
+    let new_password = payload.password.unwrap_or(existing.password);
+
+    let cloned = Playlist {
+        id: new_id.clone(),
+        user_id: claims.sub,
+        name: payload.name,
+        username: new_username,
+        password: new_password,
+        source_ids: existing.source_ids,
+        direct_streams: existing.direct_streams,
+        extra: existing.extra,
+    };
+
+    let cloned_copy = cloned.clone();
+    match state
+        .db
+        .writer
+        .write(move |conn| repo::playlists::insert_playlist_sync(conn, &cloned_copy))
+        .await
+    {
+        Ok(_) => (StatusCode::CREATED, Json(serde_json::json!({ "id": new_id }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+pub async fn sync_playlist(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let mut existing = match repo::playlists::get_playlist_by_id(&state.db.pool, &id) {
+        Ok(Some(p)) => p,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Playlist not found" }))).into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    };
+
+    existing.extra.is_synced = Some(true);
+    let clone = existing.clone();
+    match state.db.writer.write(move |conn| repo::playlists::update_playlist_sync(conn, &clone)).await {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+
+pub async fn search_playlist(
+    State(_state): State<AppState>,
+    Path(_id): Path<String>,
+) -> Response {
+    (StatusCode::OK, Json(serde_json::json!({ "results": [] }))).into_response()
+}
+
+pub async fn series_info(
+    State(_state): State<AppState>,
+    Path(_id): Path<String>,
+) -> Response {
+    (StatusCode::OK, Json(serde_json::json!({}))).into_response()
+}

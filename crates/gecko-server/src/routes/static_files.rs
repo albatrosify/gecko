@@ -10,6 +10,14 @@ use rust_embed::RustEmbed;
 pub struct FrontendAssets;
 
 pub async fn handle_static_files(uri: Uri) -> Response {
+    if uri.path().starts_with("/api") {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error": "API route not found" })),
+        )
+            .into_response();
+    }
+
     let path = uri.path().trim_start_matches('/');
     let file_path = if path.is_empty() { "index.html" } else { path };
 
