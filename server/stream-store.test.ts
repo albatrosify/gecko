@@ -396,3 +396,65 @@ describe('stream-store — incremental writes', () => {
     expect(updatedAtOf('1')).toBe(firstRun);
   });
 });
+
+describe('stream-store — incremental FTS maintenance', () => {
+  beforeEach(async () => {
+    process.env.SQLITE_PATH = ':memory:';
+    await connectDb();
+  });
+
+  /** Throws if the external-content index disagrees with the streams table. */
+  const expectIndexConsistent = (): void => {
+    getSqlite().prepare("INSERT INTO streams_fts(streams_fts) VALUES('integrity-check')").run();
+  };
+
+  it('stays consistent through an insert, a rename and a removal', () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [
+      { stream_id: '1', name: 'Alpha Unique' },
+      { stream_id: '2', name: 'Beta Unique' },
+      { stream_id: '3', name: 'Gamma Unique' },
+    ]);
+    expectIndexConsistent();
+
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [
+      { stream_id: '1', name: 'Alpha Renamed' },
+      { stream_id: '3', name: 'Gamma Unique' },
+      { stream_id: '4', name: 'Delta Unique' },
+    ]);
+    expectIndexConsistent();
+
+    expect(searchStreams('Alpha Unique')).toHaveLength(0);
+    expect(searchStreams('Alpha Renamed').map(h => h.streamId)).toEqual(['1']);
+    expect(searchStreams('Beta Unique')).toHaveLength(0);
+    expect(searchStreams('Gamma Unique').map(h => h.streamId)).toEqual(['3']);
+    expect(searchStreams('Delta Unique').map(h => h.streamId)).toEqual(['4']);
+  });
+
+  it('stays consistent when a whole partition is swapped out', () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'Old One' }]);
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '9', name: 'New One' }]);
+    expectIndexConsistent();
+
+    expect(searchStreams('Old One')).toHaveLength(0);
+    expect(searchStreams('New One')).toHaveLength(1);
+  });
+
+  it('does not disturb other partitions', () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'live', [{ stream_id: '1', name: 'Live Unique' }]);
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [{ stream_id: '1', name: 'Vod Unique' }]);
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [{ stream_id: '1', name: 'Vod Renamed' }]);
+    expectIndexConsistent();
+
+    expect(searchStreams('Live Unique')).toHaveLength(1);
+    expect(searchStreams('Vod Unique')).toHaveLength(0);
+    expect(searchStreams('Vod Renamed')).toHaveLength(1);
+  });
+
+  it('removes the entry when a name becomes null', () => {
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [{ stream_id: '1', name: 'Disappearing Name' }]);
+    replaceSourceStreamsWithDiff(SOURCE, 'vod', [{ stream_id: '1' }]);
+    expectIndexConsistent();
+
+    expect(searchStreams('Disappearing Name')).toHaveLength(0);
+  });
+});

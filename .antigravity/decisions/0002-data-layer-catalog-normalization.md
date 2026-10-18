@@ -83,14 +83,22 @@ Lesepfade angebunden. Die Messungen haben das Design mehrfach korrigiert:
 7. **Storage wächst:** 47.93 MB vs. 40.61 MB = **+18 %**, fast vollständig der
    Trigram-Index (7.1 MB).
 
-8. **Der FTS-Rebuild dominiert jeden Sync mit Änderungen.** Inkrementelles
-   Schreiben spart die geänderten Zeilen, aber der Index wird als Ganzes neu
-   aufgebaut, sobald *irgendetwas* anders ist: **3.6 MB** für eine 3-Zeilen-
-   Änderung (gemessen). Nur ein Sync **ohne** Änderung schreibt 0 Bytes.
-   Kosten-Nutzen des Index: 0.06 ms Suche statt ~11 ms Scan — beides weit unter
-   dem 18-s-Puffer. Wer den letzten Rest Schreiblast sparen will, kann den
-   Rebuild durch inkrementelle Index-Pflege (`'delete'`/`insert` je geänderter
-   rowid) ersetzen oder ganz auf FTS verzichten (dann −7.1 MB Storage).
+8. **Der FTS-Rebuild dominierte jeden Sync mit Änderungen — jetzt behoben.**
+   Auf dem echten Prod-Katalog gemessen (595.434 Zeilen, 364 MB): ein `'rebuild'`
+   reindexiert den **gesamten** Katalog und kostete **5–11 s**; er lief bei *jeder*
+   Änderung. Der Prod-Testlauf zeigte entsprechend `sync:catalog-write`-Stalls von
+   2,0 s bis **36,2 s** — deutlich über dem 18-s-Puffer, also sichtbares Buffering.
+
+   **Lösung:** inkrementelle Index-Pflege (`'delete'`/insert je geänderter rowid,
+   per Bulk-`SELECT` statt `VALUES`) — nur das Delta wird angefasst, ein Sync ohne
+   Namensänderung macht **gar keine** Index-Arbeit. Ein voller Rebuild bleibt als
+   Fallback, wenn das Delta den halben Katalog übersteigt (erster Sync).
+   Korrektheit ist über FTS5 `'integrity-check'` in vier Tests abgesichert.
+
+   **Restkosten:** Der Sync bleibt O(Partition) — `fillPrev`, Staging und der
+   Upsert-Scan laufen über alle Zeilen. Gemessen lokal 1,4 s für 200 k Zeilen,
+   auf der Prod-Box ~4,5 s für 184 k. Das liegt unter dem 18-s-Puffer, ist aber
+   der nächste Hebel.
 
 **Konsequenz:** Solange pro Request O(Katalog) Arbeit anfällt, ist es fast
 gleichgültig, woraus sie kommt (Blob 92 ms, Tabelle 182 ms) — beides blockiert
@@ -143,11 +151,12 @@ Verworfen:
    O(Katalog)-Arbeit pro Request wirklich entfernt (`player_api.php`-JSON und
    `get.php`-M3U pro Katalog-/Config-Version vorrendern) und damit auch den
    kalten Read von 182 ms auf ~0 bringt.
-2. **FTS-Rebuild inkrementell machen** (`'delete'`/`insert` je geänderter rowid
-   statt Voll-Rebuild) → 3.6 MB pro geändertem Sync auf ~KB senken. Alternativ
-   FTS streichen (−7.1 MB Storage, Suche dann ~11 ms Scan).
-3. **Payload-Hash als Fast-Path:** liefert der Provider dieselben Daten, Staging +
-   Diff komplett überspringen (Hash statt 51 k Temp-Inserts) → No-Change von
-   251 ms auf ~70 ms.
+2. ~~FTS-Rebuild inkrementell machen~~ — **erledigt** (Finding 8).
+3. **Sync von O(Partition) auf O(Delta) bringen.** Der verbleibende ~4,5-s-Anteil:
+   `fillPrev` kann entfallen (Diff direkt gegen `streams` *vor* dem Write, alle
+   vier Vergleiche lassen sich so umbauen), und das Staging in `_new_streams`
+   könnte gebündelt statt zeilenweise eingefügt werden.
+4. **Payload-Hash als Fast-Path:** liefert der Provider dieselben Daten, Staging +
+   Diff komplett überspringen.
 4. Versionierte Migrationen (Schritt 6).
 5. Off-Loop-Writer evaluieren, falls das CPU-Restblocking stört.
