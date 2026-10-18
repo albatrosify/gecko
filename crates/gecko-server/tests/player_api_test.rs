@@ -311,6 +311,34 @@ async fn test_player_api_authentication_and_dvr_metadata() {
     let stats_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(stats_json["totalPlaylists"].as_i64().unwrap() >= 1);
 
+    // 13. Test REST API: Export backup
+    let req = Request::builder()
+        .uri("/api/backup/export")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let backup_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(backup_json["version"], 2);
+    assert!(!backup_json["playlists"].as_array().unwrap().is_empty());
+    assert!(!backup_json["mappings"].as_array().unwrap().is_empty());
+
+    // 14. Test REST API: Import backup
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/backup/import")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let import_result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(import_result["success"], true);
+
     // Shutdown actor
     db.writer.shutdown().await.unwrap();
 }

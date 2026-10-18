@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod backup;
 pub mod custom_categories;
 pub mod dvr;
 pub mod mappings;
@@ -60,6 +61,9 @@ pub fn create_api_router() -> Router<AppState> {
         .route("/proxy/streams/kill-all", post(system::kill_all_streams))
         .route("/settings", get(system::get_settings).patch(system::update_settings))
         .route("/settings/telegram/test", post(system::test_telegram))
+        // Backup & Migration
+        .route("/backup/export", get(backup::export_backup))
+        .route("/backup/import", post(backup::import_backup))
         .layer(middleware::from_fn(auth::require_auth_middleware));
 
     Router::new()

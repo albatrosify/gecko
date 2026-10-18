@@ -540,5 +540,20 @@ export const traffic = {
   },
 };
 
-const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr, llm, traffic };
+// Backup & Migration
+export const backup = {
+  async export(playlistId?: string): Promise<any> {
+    const q = playlistId ? `?playlistId=${encodeURIComponent(playlistId)}` : '';
+    return request<any>(`/api/backup/export${q}`);
+  },
+  async import(data: any): Promise<{ success: boolean; imported: any }> {
+    return request('/api/backup/import', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+const api = { auth, sources, epgs, playlists, mappings, categoryMappings, customCategories, customCategoryItems, upstream, proxy, admin, system, settings, qualityScan, dvr, llm, traffic, backup };
 export default api;
+

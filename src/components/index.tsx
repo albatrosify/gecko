@@ -96,7 +96,8 @@ import {
   Power,
   Layers,
   Wrench,
-  RotateCcw
+  RotateCcw,
+  Upload
 } from 'lucide-react';
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
@@ -3899,6 +3900,85 @@ function LlmSettingsCard() {
   );
 }
 
+function BackupSettingsCard() {
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      setStatusMsg(null);
+      const data = await api.backup.export();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gecko-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatusMsg({ type: 'success', text: 'Backup downloaded successfully!' });
+    } catch (e: any) {
+      setStatusMsg({ type: 'error', text: e.message || 'Export failed' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setImporting(true);
+      setStatusMsg(null);
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const res = await api.backup.import(json);
+      const count = res.imported?.playlists ?? 0;
+      setStatusMsg({
+        type: 'success',
+        text: `Imported successfully! (${count} playlist(s), ${res.imported?.mappings ?? 0} mappings, ${res.imported?.customCategories ?? 0} custom categories restored)`,
+      });
+    } catch (e: any) {
+      setStatusMsg({ type: 'error', text: e.message || 'Import failed' });
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-zinc-100">Backup & Migration</h3>
+          <p className="text-[11px] text-zinc-500">Export or import playlists, channel renames, sorting & custom categories (v1 & v2 compatible)</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button
+          onClick={handleExport}
+          disabled={exporting}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg transition cursor-pointer"
+        >
+          <Download size={14} />
+          <span>{exporting ? 'Exporting...' : 'Export Backup (JSON)'}</span>
+        </button>
+        <label className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 text-xs font-semibold rounded-lg cursor-pointer transition">
+          <Upload size={14} />
+          <span>{importing ? 'Importing...' : 'Import Backup (JSON)'}</span>
+          <input type="file" accept=".json,application/json" onChange={handleFileChange} className="hidden" />
+        </label>
+      </div>
+      {statusMsg && (
+        <p className={`text-[11px] font-medium ${statusMsg.type === 'success' ? 'text-emerald-400' : 'text-rose-400'}`}>
+          {statusMsg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function Settings({ user }: { user: User }) {
   const [qualityFormat, setQualityFormat] = useState<string>('[{label}]');
   const [qualityFormatSaving, setQualityFormatSaving] = useState(false);
@@ -3978,6 +4058,8 @@ export function Settings({ user }: { user: User }) {
           <TelegramSettingsCard />
 
           <LlmSettingsCard />
+
+          <BackupSettingsCard />
 
           {/* Quality Labels Card */}
           <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">

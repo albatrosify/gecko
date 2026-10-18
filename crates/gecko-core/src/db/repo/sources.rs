@@ -134,6 +134,36 @@ pub fn update_source_sync(conn: &mut rusqlite::Connection, source: &Source) -> R
     Ok(())
 }
 
+pub fn upsert_source_sync(conn: &mut rusqlite::Connection, source: &Source) -> Result<()> {
+    let extra_json = serde_json::to_string(&source.extra)?;
+    conn.execute(
+        "INSERT INTO sources (id, userId, name, type, url, username, password, autoSyncEnabled, syncCron, extra)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(id) DO UPDATE SET 
+            name = excluded.name,
+            type = excluded.type,
+            url = excluded.url,
+            username = excluded.username,
+            password = excluded.password,
+            autoSyncEnabled = excluded.autoSyncEnabled,
+            syncCron = excluded.syncCron,
+            extra = excluded.extra",
+        params![
+            source.id,
+            source.user_id,
+            source.name,
+            source.source_type.as_str(),
+            source.url,
+            source.username,
+            source.password,
+            source.auto_sync_enabled as i32,
+            source.sync_cron,
+            extra_json,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn delete_source_sync(conn: &mut rusqlite::Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM sources WHERE id = ?1", params![id])?;
     Ok(())

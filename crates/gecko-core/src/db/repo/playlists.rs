@@ -141,6 +141,33 @@ pub fn update_playlist_sync(conn: &mut rusqlite::Connection, playlist: &Playlist
     Ok(())
 }
 
+pub fn upsert_playlist_sync(conn: &mut rusqlite::Connection, playlist: &Playlist) -> Result<()> {
+    let source_ids_json = serde_json::to_string(&playlist.source_ids)?;
+    let extra_json = serde_json::to_string(&playlist.extra)?;
+    conn.execute(
+        "INSERT INTO playlists (id, userId, name, username, password, sourceIds, directStreams, extra)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET 
+            name = excluded.name,
+            username = excluded.username,
+            password = excluded.password,
+            sourceIds = excluded.sourceIds,
+            directStreams = excluded.directStreams,
+            extra = excluded.extra",
+        params![
+            playlist.id,
+            playlist.user_id,
+            playlist.name,
+            playlist.username,
+            playlist.password,
+            source_ids_json,
+            playlist.direct_streams as i32,
+            extra_json,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn delete_playlist_sync(conn: &mut rusqlite::Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])?;
     Ok(())

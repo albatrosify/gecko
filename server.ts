@@ -27,6 +27,7 @@ import { createDvrRouter } from "./server/routes/dvr.ts";
 import { dvrRecorder } from "./server/dvr/recorder.ts";
 import { createLlmRouter } from "./server/routes/llm.ts";
 import { createTrafficRouter } from "./server/routes/traffic.ts";
+import { createBackupRouter } from "./server/routes/backup.ts";
 import { createProxyRouter } from "./server/routes/proxy.ts";
 
 // Ensure log file exists on start
@@ -127,6 +128,7 @@ async function startServer() {
     app.use('/api', createLlmRouter());
     app.use('/api/dvr', createDvrRouter());
     app.use('/api/traffic', createTrafficRouter());
+    app.use('/api', createBackupRouter());
 
     // Proxy routes (some are public, some are authenticated by playlist credentials)
     app.use('/', createProxyRouter());
