@@ -65,6 +65,18 @@ mod tests {
     }
 
     #[test]
+    fn test_node_bcrypt_compatibility() {
+        // Real hash produced by Node.js bcryptjs for password 'my-test-password'
+        let node_hash_2b = "$2b$10$CAIIEIPdYEZ1nVqtKlQQ.e7uGsQ50MlOfsUCaTqqYPSixCvexk6dK";
+        assert!(verify_password("my-test-password", node_hash_2b).unwrap());
+        assert!(!verify_password("wrong-password", node_hash_2b).unwrap());
+
+        // Also test $2a$ format
+        let node_hash_2a = "$2a$10$CAIIEIPdYEZ1nVqtKlQQ.e7uGsQ50MlOfsUCaTqqYPSixCvexk6dK";
+        assert!(verify_password("my-test-password", node_hash_2a).unwrap());
+    }
+
+    #[test]
     fn test_jwt_lifecycle() {
         let secret = "test_jwt_secret_key_12345";
         let token = create_jwt("user-1", "admin@gecko.tv", "admin", secret, 3600).unwrap();
