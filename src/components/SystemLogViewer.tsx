@@ -412,6 +412,7 @@ export function SystemLogViewer() {
             onClick={() => fetchLogs(true)}
             disabled={isLoading}
             title="Refresh logs now"
+            aria-label="Refresh logs"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw size={13} className={isLoading ? 'animate-spin text-emerald-400' : ''} />
@@ -423,6 +424,7 @@ export function SystemLogViewer() {
             <select
               value={limit}
               onChange={e => setLimit(parseInt(e.target.value, 10))}
+              aria-label="Select maximum log lines to display"
               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-0.5 text-xs text-zinc-300 focus:outline-none focus:border-zinc-700 cursor-pointer"
             >
               {LIMIT_OPTIONS.map(opt => (
@@ -440,6 +442,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setWrapLines(!wrapLines)}
             title={wrapLines ? 'Disable line wrap (horizontal scroll)' : 'Enable word wrap'}
+            aria-label={wrapLines ? 'Disable word wrap' : 'Enable word wrap'}
             className={`p-1 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-all cursor-pointer ${
               wrapLines
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
@@ -455,6 +458,7 @@ export function SystemLogViewer() {
             onClick={handleCopy}
             disabled={filteredLines.length === 0}
             title="Copy displayed logs to clipboard"
+            aria-label="Copy displayed logs"
             className="p-1 sm:px-2 sm:py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center gap-1 disabled:opacity-40 cursor-pointer"
           >
             {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
@@ -466,6 +470,7 @@ export function SystemLogViewer() {
             onClick={handleDownload}
             disabled={filteredLines.length === 0}
             title="Download logs as .txt"
+            aria-label="Download logs as text file"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-40 cursor-pointer"
           >
             <Download size={13} />
@@ -475,6 +480,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setCleared(true)}
             title="Clear view (temporary)"
+            aria-label="Clear log view"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <Trash2 size={13} />
@@ -484,6 +490,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setIsMaximized(!isMaximized)}
             title={isMaximized ? 'Minimize' : 'Maximize to full window'}
+            aria-label={isMaximized ? 'Minimize view' : 'Maximize view'}
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -538,11 +545,14 @@ export function SystemLogViewer() {
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search logs..."
+            aria-label="Search logs"
             className="w-full pl-8 pr-7 py-1 bg-zinc-900/90 border border-zinc-800 rounded-lg text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
+              title="Clear search query"
+              aria-label="Clear search"
               className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
             >
               <X size={12} />
