@@ -645,6 +645,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-in fade-in duration-200">
           {/* Top-right close button */}
           <button
+            aria-label="Close player"
             onClick={onClose}
             className="absolute top-3 right-3 p-1.5 rounded-full bg-zinc-900/80 hover:bg-red-500 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-lg border border-zinc-800"
             title="Close player (Esc)"
@@ -691,6 +692,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               <span>{copied ? 'Copied' : 'Copy URL'}</span>
             </button>
             <button
+              aria-label="Close player"
               onClick={onClose}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 hover:text-white active:scale-95 text-zinc-300 rounded-lg text-xs font-semibold transition-all cursor-pointer border border-zinc-700/50"
               title="Close player"
@@ -792,6 +794,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           )}
 
           <button
+            aria-label="Close options"
             onClick={onClose}
             className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto"
           >
@@ -871,12 +874,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {/* Bottom Controls */}
       <div className={`absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-between transition-opacity duration-300 pointer-events-auto ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="flex items-center gap-3">
-          <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
+          <button aria-label={isPlaying ? 'Pause' : 'Play'} onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
             {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
           </button>
 
           <div className="flex items-center gap-2 group/vol">
-            <button onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
+            <button aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'} onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
               {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
             <input
@@ -902,6 +905,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
           {(audioTracks.length > 1 || textTracks.length > 0) && (
             <button
+              aria-label="Settings"
               onClick={() => setShowSettings(!showSettings)}
               className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`}
               title="Settings"
@@ -911,11 +915,11 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           )}
 
           {document.pictureInPictureEnabled && (
-            <button onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
+            <button aria-label="Picture in Picture" onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
               <PictureInPicture size={16} />
             </button>
           )}
-          <button onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
+          <button aria-label="Fullscreen" onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
             <Maximize size={16} />
           </button>
         </div>
