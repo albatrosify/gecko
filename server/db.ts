@@ -100,6 +100,18 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
         content_rowid='rowid',
         tokenize='trigram'
       );
+
+      -- Upgrade cleanup (ADR 0002): the catalog moved into the streams table, so the
+      -- old JSON blobs and stream snapshots are dead weight - the better part of the
+      -- database on an install that predates this change. GLOB (not LIKE) so the
+      -- underscores are matched literally. Sync cooldown rows (<id>_<type>) and the
+      -- category snapshot are deliberately preserved.
+      DELETE FROM cache
+       WHERE key GLOB '*_streams_live' OR key GLOB '*_streams_vod' OR key GLOB '*_streams_series';
+      DELETE FROM source_sync_meta
+       WHERE key GLOB 'snapshot_*_live'
+          OR key GLOB 'snapshot_*_vod'
+          OR key GLOB 'snapshot_*_series';
     `);
   } catch (err) {
     console.error('Failed to initialize database schema:', err);

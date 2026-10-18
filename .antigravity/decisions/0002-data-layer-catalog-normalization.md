@@ -62,17 +62,32 @@ Lesepfade angebunden. Die Messungen haben das Design mehrfach korrigiert:
    aber **inkrementelles Schreiben dreht das um.** Es werden nur Deltas
    geschrieben; gemessen am echten Katalog (51.462 Items):
 
-   | Vorgang | Zeit | auf Platte geschrieben |
+   | Vorgang | Zeit | in die WAL geschrieben |
    |---|---|---|
-   | Erst-Sync (alles neu) | 540 ms | 30.8 MB |
-   | **Re-Sync, keine Änderung** | 331 ms | **0 Bytes** |
-   | **Re-Sync, Delta (3 Zeilen)** | 485 ms | **4 KB** |
+   | Erst-Sync (alles neu) | 299 ms | 12.9 MB |
+   | **Re-Sync, keine Änderung** | 251 ms | **0 Bytes** |
+   | **Re-Sync, Delta (3 Zeilen)** | 304 ms | **3.6 MB** |
 
-   Vorher schrieb **jeder** Sync ~40 MB. Der verbleibende CPU-Aufwand
-   (Staging + Diff in einer Temp-Tabelle) ist unter dem 18-s-Jitter-Buffer
-   unkritisch.
+   Vorher schrieb **jeder** Sync ~40 MB. Ohne Änderung schreibt der Sync jetzt
+   gar nichts; bei Änderungen dominiert der **FTS-Rebuild** (3.6 MB) — nicht die
+   geänderten Zeilen (siehe Finding 8).
+
+   ⚠️ Messmethodik: „geschriebene Bytes" **muss** aus der WAL-Datei gemessen
+   werden, nicht aus der DB-Dateigröße. SQLite vergrößert die Datei nur, wenn
+   neue Pages nötig sind — geänderte Zeilen benutzen oft freigewordene Pages und
+   lesen sich dann als 0. Eine frühere Messung („4 KB bei Delta") war dadurch
+   falsch.
 7. **Storage wächst:** 47.93 MB vs. 40.61 MB = **+18 %**, fast vollständig der
    Trigram-Index (7.1 MB).
+
+8. **Der FTS-Rebuild dominiert jeden Sync mit Änderungen.** Inkrementelles
+   Schreiben spart die geänderten Zeilen, aber der Index wird als Ganzes neu
+   aufgebaut, sobald *irgendetwas* anders ist: **3.6 MB** für eine 3-Zeilen-
+   Änderung (gemessen). Nur ein Sync **ohne** Änderung schreibt 0 Bytes.
+   Kosten-Nutzen des Index: 0.06 ms Suche statt ~11 ms Scan — beides weit unter
+   dem 18-s-Puffer. Wer den letzten Rest Schreiblast sparen will, kann den
+   Rebuild durch inkrementelle Index-Pflege (`'delete'`/`insert` je geänderter
+   rowid) ersetzen oder ganz auf FTS verzichten (dann −7.1 MB Storage).
 
 **Konsequenz:** Solange pro Request O(Katalog) Arbeit anfällt, ist es fast
 gleichgültig, woraus sie kommt (Blob 92 ms, Tabelle 182 ms) — beides blockiert
@@ -122,8 +137,11 @@ Verworfen:
    O(Katalog)-Arbeit pro Request wirklich entfernt (`player_api.php`-JSON und
    `get.php`-M3U pro Katalog-/Config-Version vorrendern) und damit auch den
    kalten Read von 182 ms auf ~0 bringt.
-2. **Payload-Hash als Fast-Path:** Wenn der Provider dieselben Daten liefert,
-   Staging + Diff komplett überspringen (Hash statt 51 k Temp-Inserts) → No-Change
-   von 331 ms auf ~70 ms.
-3. Versionierte Migrationen (Schritt 6).
-4. Off-Loop-Writer evaluieren, falls das CPU-Restblocking stört.
+2. **FTS-Rebuild inkrementell machen** (`'delete'`/`insert` je geänderter rowid
+   statt Voll-Rebuild) → 3.6 MB pro geändertem Sync auf ~KB senken. Alternativ
+   FTS streichen (−7.1 MB Storage, Suche dann ~11 ms Scan).
+3. **Payload-Hash als Fast-Path:** liefert der Provider dieselben Daten, Staging +
+   Diff komplett überspringen (Hash statt 51 k Temp-Inserts) → No-Change von
+   251 ms auf ~70 ms.
+4. Versionierte Migrationen (Schritt 6).
+5. Off-Loop-Writer evaluieren, falls das CPU-Restblocking stört.

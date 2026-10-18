@@ -31,6 +31,14 @@ günstiger als 51 k Einzel-`JSON.parse` + Objekt-Konstruktion (182 ms).
 
 ## Fallstricke im Prototyp
 
+- **„Geschriebene Bytes" NIE über die DB-Dateigröße messen.** SQLite vergrößert
+  die Datei nur, wenn neue Pages nötig sind; geänderte Zeilen benutzen oft
+  freigewordene Pages und lesen sich dann als 0 Bytes. Eine frühere Messung
+  („4 KB bei 3-Zeilen-Delta") war dadurch **falsch** — korrekt sind 3.6 MB,
+  gemessen aus der **WAL-Datei**. Verlässlich: WAL-Größe direkt nach der
+  Operation (vor `wal_checkpoint`).
+- **Der FTS-Rebuild dominiert jeden Sync mit Änderungen** (~3.6 MB bei 50 k).
+  Nur ein Sync **ohne** Änderung schreibt 0 Bytes.
 - **FTS5 external content + `LIKE` ist eine Falle:** ~13 ms konstant, weil FTS5
   jeden Kandidaten aus der Content-Tabelle nachliest. `MATCH` mit gequoteter
   Phrase: 0.12–0.43 ms bei identischen Treffern.
@@ -44,3 +52,10 @@ günstiger als 51 k Einzel-`JSON.parse` + Objekt-Konstruktion (182 ms).
 - **`sqlite.exec()`-Template-Strings:** Backticks in SQL-**Kommentaren**
   terminieren das Template-Literal und brechen den Build. Keine Backticks in
   Kommentaren innerhalb von `` sqlite.exec(`...`) `` verwenden.
+  (Dieser Fehler wurde in dieser Session **zweimal** gemacht.)
+
+## Reproduzierbar
+
+`scripts/bench-data-layer.ts` (committet) misst alle Zahlen dieser Untersuchung
+auf jeder Maschine: `npx tsx scripts/bench-data-layer.ts` (synthetisch, 50 k)
+bzw. `--items=185000` oder `--source=/app/data/gecko.db`.

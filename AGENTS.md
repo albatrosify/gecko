@@ -28,6 +28,14 @@ npm run lint     # tsc --noEmit (Type-Check)
 npm run test     # vitest run
 ```
 
+Benchmark (messbar auf jeder Maschine, inkl. Prod-Box):
+
+```bash
+npx tsx scripts/bench-data-layer.ts                       # synthetisch, 50 k Items
+npx tsx scripts/bench-data-layer.ts --items=185000
+npx tsx scripts/bench-data-layer.ts --source=/app/data/gecko.db
+```
+
 `.env` nötig (Kopie von `.env.example`): `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 
 ## Architektur
