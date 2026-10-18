@@ -648,6 +648,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             onClick={onClose}
             className="absolute top-3 right-3 p-1.5 rounded-full bg-zinc-900/80 hover:bg-red-500 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-lg border border-zinc-800"
             title="Close player (Esc)"
+            aria-label="Close player"
           >
             <X size={15} />
           </button>
@@ -871,12 +872,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {/* Bottom Controls */}
       <div className={`absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-between transition-opacity duration-300 pointer-events-auto ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="flex items-center gap-3">
-          <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
+          <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors" aria-label={isPlaying ? "Pause" : "Play"}>
             {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
           </button>
 
           <div className="flex items-center gap-2 group/vol">
-            <button onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
+            <button onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors" aria-label={isMuted || volume === 0 ? "Unmute" : "Mute"}>
               {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
             <input
@@ -896,6 +897,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             onClick={(e) => handleOpenExternal(e, 'm3u')}
             className="text-zinc-400 hover:text-orange-400 transition-colors"
             title="Download .m3u to play in VLC / Native Player"
+            aria-label="Download .m3u to play in VLC / Native Player"
           >
             <VlcIcon size={16} />
           </button>
@@ -905,17 +907,18 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               onClick={() => setShowSettings(!showSettings)}
               className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`}
               title="Settings"
+              aria-label="Settings"
             >
               <Settings2 size={16} />
             </button>
           )}
 
           {document.pictureInPictureEnabled && (
-            <button onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
+            <button onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture" aria-label="Picture in Picture">
               <PictureInPicture size={16} />
             </button>
           )}
-          <button onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
+          <button onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen" aria-label="Fullscreen">
             <Maximize size={16} />
           </button>
         </div>
@@ -936,6 +939,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           <button
             onClick={() => setDownloadNotice(null)}
             className="ml-1 p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-300"
+            aria-label="Close download notice"
           >
             <X size={12} />
           </button>
