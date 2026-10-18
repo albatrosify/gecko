@@ -13,6 +13,7 @@ import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { initHostStatsFlusher } from "./server/hosts.ts";
 import { initTrafficFlusher } from "./server/traffic.ts";
+import { initEventLoopMonitor, getEventLoopStats } from "./server/event-loop-monitor.ts";
 
 // Routers
 import { createSystemRouter } from "./server/routes/system.ts";
@@ -110,8 +111,16 @@ async function startServer() {
       next();
     });
 
-    // Health check — used by Docker healthcheck and monitoring
-    app.get("/health", (_req, res) => res.json({ status: "ok" }));
+    // Health check — used by Docker healthcheck and monitoring.
+    // `eventLoop` exposes the main-thread lag picture so stalls are observable
+    // from outside instead of guessed at.
+    app.get("/health", (_req, res) => {
+      const { enabled, thresholds, lag, worstPhase, lastCheckAt, stallReports } = getEventLoopStats();
+      res.json({
+        status: "ok",
+        eventLoop: { enabled, thresholds, lag, worstPhase, lastCheckAt, stallReports },
+      });
+    });
 
     // Register Routers
     const epgsRouter = createEpgsRouter();
@@ -179,6 +188,9 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// Start lag monitoring before anything else, so even startup stalls are measured.
+initEventLoopMonitor();
 
 process.on('uncaughtException', (err) => {
   log('Uncaught Exception: ' + (err instanceof Error ? err.stack || err.message : String(err)));
