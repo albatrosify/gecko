@@ -54,7 +54,7 @@ const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
  * that go silent for longer than this will still interrupt playback, because a buffer
  * cannot cover content that was never delivered.
  */
-const LIVE_BUFFER_DEFAULT_RESERVE_S = 3;
+const LIVE_BUFFER_DEFAULT_RESERVE_S = 18;
 /**
  * Cap on accumulated allowance. Only meant to stop a long stall being repaid as one
  * huge burst — keep it far below the provider's gap length, or tokens bank through

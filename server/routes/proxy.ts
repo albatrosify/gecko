@@ -381,13 +381,17 @@ export function createProxyRouter() {
           candidateIps.push(matchedHost.resolvedIp);
         }
 
-        if (candidateIps.length === 0) {
+        if (candidateIps.length <= 1) {
           const { hostname } = extractHostname(hostUrl);
           if (hostname) {
             try {
               const resolved = await resolveHostIps(hostname);
               if (resolved && resolved.length > 0) {
-                candidateIps.push(...resolved);
+                for (const ip of resolved) {
+                  if (!candidateIps.includes(ip)) {
+                    candidateIps.push(ip);
+                  }
+                }
               }
             } catch {
               // ignore

@@ -6,18 +6,25 @@ import { XtreamClient } from "./xtream.ts";
 import { getCached, setCache } from "./cache.ts";
 import { parseXtreamExpDate, parseSourceStreamId } from "./utils.ts";
 
-// Helper to compare data and generate a changelog
-function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
+/** Number of items to process before yielding to the event loop so live streams are not starved. */
+const SYNC_YIELD_BATCH_SIZE = 5_000;
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+// Helper to compare data and generate a changelog without starving the event loop
+async function getChangelog(oldItems: any[], newItems: any[], idField: string, nameField: string) {
   const added: any[] = [];
   const removed: any[] = [];
   const renamed: any[] = [];
 
   const oldMap = new Map();
+  let count = 0;
   for (const item of (oldItems || [])) {
     oldMap.set(String(item[idField]), item);
+    if (++count % SYNC_YIELD_BATCH_SIZE === 0) await yieldToEventLoop();
   }
 
   const seenIds = new Set();
+  count = 0;
   for (const item of (newItems || [])) {
     const id = String(item[idField]);
     seenIds.add(id);
@@ -27,13 +34,16 @@ function getChangelog(oldItems: any[], newItems: any[], idField: string, nameFie
     } else if (oldItem[nameField] !== item[nameField]) {
       renamed.push({ id, oldName: oldItem[nameField], newName: item[nameField] });
     }
+    if (++count % SYNC_YIELD_BATCH_SIZE === 0) await yieldToEventLoop();
   }
 
+  count = 0;
   for (const item of (oldItems || [])) {
     const id = String(item[idField]);
     if (!seenIds.has(id)) {
       removed.push({ id, name: item[nameField] });
     }
+    if (++count % SYNC_YIELD_BATCH_SIZE === 0) await yieldToEventLoop();
   }
 
   return { added, removed, renamed };
@@ -81,7 +91,7 @@ export async function recordSourceChanges(sourceId: string, type: string, oldDat
       for (const ct of catTypes) {
         const oldList = oldData?.[`${ct}Cats`] || [];
         const newList = newData?.[`${ct}Cats`] || [];
-        const changes = getChangelog(oldList, newList, 'category_id', 'category_name');
+        const changes = await getChangelog(oldList, newList, 'category_id', 'category_name');
         added.push(...changes.added.map(c => ({ ...c, type: ct })));
         removed.push(...changes.removed.map(c => ({ ...c, type: ct })));
         renamed.push(...changes.renamed.map(c => ({ ...c, type: ct })));
@@ -89,7 +99,7 @@ export async function recordSourceChanges(sourceId: string, type: string, oldDat
     } else {
       const idField = type === 'series' ? 'series_id' : 'stream_id';
       const nameField = type === 'series' ? 'name' : 'name'; // Xtream usually uses 'name' for all
-      const changes = getChangelog(oldData || [], newData || [], idField, nameField);
+      const changes = await getChangelog(oldData || [], newData || [], idField, nameField);
       added = changes.added;
       removed = changes.removed;
       renamed = changes.renamed;
@@ -360,6 +370,9 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
     // Update disk cache for the UI
     setCache(cacheKey, upstreamStreams);
 
+    // Yield to event loop before computing changelog / snapshot on large sets
+    await yieldToEventLoop();
+
     // Record changelog using snapshot (TTL-independent)
     const idField = type === 'series' ? 'series_id' : 'stream_id';
     const oldSnapshot = await getSnapshot(sourceId, type);
@@ -367,6 +380,8 @@ export async function refreshSource(sourceId: string, type: 'live' | 'vod' | 'se
       const changes = await recordSourceChanges(sourceId, type, oldSnapshot, upstreamStreams);
       await notifyKeywordMatches(source, type, changes);
     }
+
+    await yieldToEventLoop();
     const newSnapshot = upstreamStreams.map((s: any) => ({ [idField]: s[idField], name: s.name || s.title }));
     await setSnapshot(sourceId, type, newSnapshot);
 

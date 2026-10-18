@@ -290,4 +290,78 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     abortController.abort();
     resolveSpy.mockRestore();
   });
+
+  it('enriches candidateIps from DNS when host has only a single legacy resolvedIp', async () => {
+    const resolveSpy = vi.spyOn(dnsResolver, 'resolveHostIps').mockResolvedValue(['198.51.100.10', '198.51.100.20', '198.51.100.30']);
+
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-single-legacy',
+      userId: 'user-1',
+      name: 'Single Legacy Playlist',
+      username: 'legacyuser',
+      password: 'legacypass',
+      sourceIds: ['src-legacy'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-legacy',
+      userId: 'user-1',
+      name: 'Legacy Single IP Source',
+      type: 'xtream',
+      url: 'http://legacy.nodes.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://legacy.nodes.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            resolvedIp: '198.51.100.10', // Single legacy IP, no resolvedIps array
+          },
+        ],
+      } as any,
+    }).run();
+
+    const fakeStream = new EventEmitter();
+    (fakeStream as any).destroy = vi.fn();
+
+    // Call 1 (198.51.100.10) fails with 500
+    // Call 2 (198.51.100.20) succeeds with 200
+    mockAxios
+      .mockResolvedValueOnce({
+        status: 500,
+        data: { destroy: vi.fn() },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: fakeStream,
+        headers: { 'content-type': 'video/mp2t' },
+        request: { setTimeout: vi.fn() },
+      });
+
+    const abortController = new AbortController();
+    setTimeout(() => {
+      fakeStream.emit('data', Buffer.from('legacy-chunk'));
+    }, 20);
+
+    const res = await fetch(`${baseUrl}/live/legacyuser/legacypass/300.ts`, { signal: abortController.signal });
+    expect(res.status).toBe(200);
+
+    // Verify resolveHostIps was called to enrich the single IP
+    expect(resolveSpy).toHaveBeenCalledWith('legacy.nodes.tv');
+    expect(mockAxios).toHaveBeenCalledTimes(2);
+
+    const channel = streamHub.getChannel('src-legacy', '300');
+    expect(channel).toBeDefined();
+    expect(channel?.upstreamConfig?.candidateIps).toEqual(['198.51.100.10', '198.51.100.20', '198.51.100.30']);
+    expect(channel?.upstreamConfig?.currentIpIndex).toBe(1);
+
+    abortController.abort();
+    resolveSpy.mockRestore();
+  });
 });
