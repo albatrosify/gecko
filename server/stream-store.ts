@@ -497,7 +497,10 @@ export function hasSourceStreams(sourceId: string, type: StreamType): boolean {
   const row = getSqlite()
     .prepare('SELECT 1 AS present FROM streams WHERE sourceId = ? AND type = ? LIMIT 1')
     .get(sourceId, type);
-  return row !== undefined;
+  // Loose comparison on purpose: better-sqlite3 returns `undefined` for "no row",
+  // bun:sqlite returns `null`. `row !== undefined` therefore silently reported
+  // "present" under Bun, which skipped the startup warm-up entirely.
+  return row != null;
 }
 
 /**

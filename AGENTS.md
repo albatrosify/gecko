@@ -39,6 +39,13 @@ bun scripts/bench-data-layer.ts --items=185000
 bun scripts/bench-data-layer.ts --source=/app/data/gecko.db
 ```
 
+Treiber-Parity (muss unter **beiden** Runtimes laufen — die vitest-Suite sieht nur Node):
+
+```bash
+npx tsx scripts/check-db-driver.ts   # Node
+bun scripts/check-db-driver.ts       # Bun
+```
+
 `.env` nötig (Kopie von `.env.example`): `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 
 ## Architektur

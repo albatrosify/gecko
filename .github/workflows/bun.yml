@@ -49,9 +49,39 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           digest_artifact_name: digests-${{ strategy.job-index }}
 
+  # Guards the class of bug that shipped in the first :bun image: better-sqlite3
+  # returns undefined for "no row" while bun:sqlite returns null, so code testing
+  # against undefined inverts under Bun. The vitest suite cannot catch it because
+  # it runs on Node only - hence running the same script under both runtimes.
+  # `merge` depends on this, so a mismatch blocks publishing the image.
+  parity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Driver parity under Node
+        run: npx tsx scripts/check-db-driver.ts
+
+      - name: Driver parity under Bun
+        run: bun scripts/check-db-driver.ts
+
   merge:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, parity]
     permissions:
       contents: read
       packages: write
