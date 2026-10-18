@@ -1,9 +1,11 @@
-name: Dev Build
+name: Rust Build
 
 on:
   push:
     branches:
       - develop
+      - feat/rust-remake
+  workflow_dispatch:
 
 env:
   REGISTRY_IMAGE: ghcr.io/albatrosify/gecko
@@ -30,7 +32,8 @@ jobs:
         uses: ./.github/actions/build-by-digest
         with:
           platform: ${{ matrix.platform }}
-          app_version: dev
+          dockerfile: Dockerfile.rust
+          app_version: rust
           registry_image: ${{ env.REGISTRY_IMAGE }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           digest_artifact_name: digests-${{ strategy.job-index }}
@@ -50,7 +53,7 @@ jobs:
         with:
           registry_image: ${{ env.REGISTRY_IMAGE }}
           tags: |
-            type=raw,value=dev
-            type=sha,prefix=dev-
-          inspect_tag: dev
+            type=raw,value=rust
+            type=sha,prefix=rust-
+          inspect_tag: rust
           github_token: ${{ secrets.GITHUB_TOKEN }}

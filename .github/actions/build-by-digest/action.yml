@@ -20,6 +20,10 @@ inputs:
   digest_artifact_name:
     description: Name of the uploaded digest artifact
     required: true
+  dockerfile:
+    description: Dockerfile path
+    required: false
+    default: Dockerfile
 
 runs:
   using: composite
@@ -50,6 +54,7 @@ runs:
       uses: docker/build-push-action@v7
       with:
         context: .
+        file: ${{ inputs.dockerfile }}
         platforms: ${{ inputs.platform }}
         labels: ${{ steps.meta.outputs.labels }}
         outputs: type=image,"name=${{ inputs.registry_image }}",push-by-digest=true,name-canonical=true,push=true

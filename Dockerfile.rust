@@ -16,6 +16,10 @@ COPY index.html vite.config.ts tsconfig.json ./
 COPY src/ ./src/
 COPY public/ ./public/
 
+ARG VITE_APP_VERSION=unknown
+ARG VITE_APP_COMMIT_HASH=unknown
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+ENV VITE_APP_COMMIT_HASH=$VITE_APP_COMMIT_HASH
 ENV NODE_ENV=production
 RUN npm run build
 
