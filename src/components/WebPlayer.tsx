@@ -644,11 +644,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {playbackError && (
         <div className="absolute inset-0 bg-zinc-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30 animate-in fade-in duration-200">
           {/* Top-right close button */}
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 p-1.5 rounded-full bg-zinc-900/80 hover:bg-red-500 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-lg border border-zinc-800"
-            title="Close player (Esc)"
-          >
+          <button aria-label="Close player" onClick={onClose} className="absolute top-3 right-3 p-1.5 rounded-full bg-zinc-900/80 hover:bg-red-500 text-zinc-400 hover:text-white transition-all cursor-pointer shadow-lg border border-zinc-800" title="Close player (Esc)">
             <X size={15} />
           </button>
 
@@ -719,19 +715,11 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         <span className="text-white text-xs font-bold truncate pr-3 drop-shadow-md select-none">{title}</span>
         <div className="flex items-center gap-2 relative">
           <div className="flex items-center rounded-lg bg-orange-500/20 border border-orange-500/30 overflow-hidden pointer-events-auto">
-            <button
-              onClick={(e) => handleOpenExternal(e, 'm3u')}
-              className="flex items-center gap-1.5 px-2.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 text-[10px] font-bold transition-all"
-              title="Download .m3u to play in VLC / Native Player"
-            >
+            <button aria-label="Download .m3u to play in VLC or Native Player" onClick={(e) => handleOpenExternal(e, 'm3u')} className="flex items-center gap-1.5 px-2.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 text-[10px] font-bold transition-all" title="Download .m3u to play in VLC / Native Player">
               <VlcIcon size={12} />
               <span>Play in Player</span>
             </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowPlayerMenu(!showPlayerMenu); }}
-              className="px-1.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border-l border-orange-500/30 text-[10px] transition-all"
-              title="More player options"
-            >
+            <button aria-label="More player options" aria-expanded={showPlayerMenu} onClick={(e) => { e.stopPropagation(); setShowPlayerMenu(!showPlayerMenu); }} className="px-1.5 py-1 hover:bg-orange-500 text-orange-400 hover:text-zinc-950 border-l border-orange-500/30 text-[10px] transition-all" title="More player options">
               <ChevronDown size={11} />
             </button>
           </div>
@@ -791,10 +779,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             </div>
           )}
 
-          <button
-            onClick={onClose}
-            className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto"
-          >
+          <button aria-label="Close player" onClick={onClose} className="p-1 rounded-full bg-black/50 text-white hover:bg-red-500 transition-colors pointer-events-auto">
             <X size={14} />
           </button>
         </div>
@@ -808,11 +793,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             <span className="truncate text-[11px]">{audioCodecWarning}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={(e) => handleOpenExternal(e, 'm3u')}
-              className="px-2.5 py-1 bg-orange-500 hover:bg-orange-400 text-zinc-950 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-all shadow"
-              title="Download .m3u to play in VLC / Native Player"
-            >
+            <button aria-label="Open in VLC (.m3u)" onClick={(e) => handleOpenExternal(e, 'm3u')} className="px-2.5 py-1 bg-orange-500 hover:bg-orange-400 text-zinc-950 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-all shadow" title="Download .m3u to play in VLC / Native Player">
               <VlcIcon size={11} />
               Open in Player (.m3u)
             </button>
@@ -824,10 +805,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
               {copied ? 'Copied' : 'Copy'}
             </button>
-            <button
-              onClick={() => setAudioCodecWarning(null)}
-              className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors"
-            >
+            <button aria-label="Dismiss audio codec warning" onClick={() => setAudioCodecWarning(null)} className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors">
               <X size={13} />
             </button>
           </div>
@@ -871,12 +849,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {/* Bottom Controls */}
       <div className={`absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-between transition-opacity duration-300 pointer-events-auto ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="flex items-center gap-3">
-          <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
+          <button aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
             {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
           </button>
 
           <div className="flex items-center gap-2 group/vol">
-            <button onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
+            <button aria-label={isMuted || volume === 0 ? "Unmute" : "Mute"} onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
               {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
             <input
@@ -892,30 +870,22 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={(e) => handleOpenExternal(e, 'm3u')}
-            className="text-zinc-400 hover:text-orange-400 transition-colors"
-            title="Download .m3u to play in VLC / Native Player"
-          >
+          <button aria-label="Download .m3u to play in VLC or Native Player" onClick={(e) => handleOpenExternal(e, 'm3u')} className="text-zinc-400 hover:text-orange-400 transition-colors" title="Download .m3u to play in VLC / Native Player">
             <VlcIcon size={16} />
           </button>
 
           {(audioTracks.length > 1 || textTracks.length > 0) && (
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`}
-              title="Settings"
-            >
+            <button aria-label="Settings" aria-expanded={showSettings} onClick={() => setShowSettings(!showSettings)} className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`} title="Settings">
               <Settings2 size={16} />
             </button>
           )}
 
           {document.pictureInPictureEnabled && (
-            <button onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
+            <button aria-label="Picture in Picture" onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
               <PictureInPicture size={16} />
             </button>
           )}
-          <button onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
+          <button aria-label="Fullscreen" onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
             <Maximize size={16} />
           </button>
         </div>
