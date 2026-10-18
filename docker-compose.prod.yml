@@ -43,7 +43,9 @@ services:
       - VITE_APP_COMMIT_HASH=${VITE_APP_COMMIT_HASH:-unknown}
       - GLUETUN_CONTROL_URL=${GLUETUN_CONTROL_URL:-http://127.0.0.1:8000}
       - GLUETUN_API_KEY=${GLUETUN_API_KEY:-}
-      - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=2304}
+      # V8-only flag, ignored by Bun (which sizes its heap from the cgroup limit
+      # below). Kept as a passthrough for the Node fallback image (ADR 0003).
+      - NODE_OPTIONS=${NODE_OPTIONS:-}
       - GECKO_LIVE_BUFFER_SECONDS=${GECKO_LIVE_BUFFER_SECONDS:-18}
     mem_limit: 3072m
     healthcheck:

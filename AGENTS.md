@@ -13,7 +13,7 @@ Cognitive-Architecture-Kontext (diese Dateien zuerst lesen):
 ## Quick Rules
 
 - Think before acting — erst orientieren (diese Datei), planen, dann umsetzen
-- Verify — nach Änderungen `npm run lint` und `npm run test`
+- Verify — nach Änderungen `bun run lint` und `bun run test`
 - Type hints auf allen öffentlichen Funktionen
 - Never commit secrets, nie force-push auf `main`
 - **Pflicht:** Struktur/Endpoints/Tabellen/Routen geändert → diese Datei + `.antigravity/` im selben Zug aktualisieren (Auslöser-Tabelle in `.antigravity/rules.md`). Landkarte aktuell halten ist Teil des Done-Kriteriums.
@@ -21,19 +21,22 @@ Cognitive-Architecture-Kontext (diese Dateien zuerst lesen):
 ## Commands
 
 ```bash
-npm run dev      # Express + Vite HMR auf Port 3000
-npm run build    # Frontend -> dist/
-npm run start    # Produktion: NODE_ENV=production tsx server.ts
-npm run lint     # tsc --noEmit (Type-Check)
-npm run test     # vitest run
+bun run dev      # Bun + Vite HMR auf Port 3000
+bun run build    # Frontend -> dist/
+bun run start    # Produktion: NODE_ENV=production bun server.ts
+bun run lint     # tsc --noEmit (Type-Check)
+bun run test     # vitest run (läuft unter Node — braucht better-sqlite3)
 ```
+
+Node-Fallback (falls Bun nicht verfügbar ist): `npm run dev:node`, `npm run start:node`.
+Details/Alternativen in ADR `0003-runtime-bun-default-node-fallback.md`.
 
 Benchmark (messbar auf jeder Maschine, inkl. Prod-Box):
 
 ```bash
-npx tsx scripts/bench-data-layer.ts                       # synthetisch, 50 k Items
-npx tsx scripts/bench-data-layer.ts --items=185000
-npx tsx scripts/bench-data-layer.ts --source=/app/data/gecko.db
+bun run bench                                             # synthetisch, 50 k Items
+bun scripts/bench-data-layer.ts --items=185000
+bun scripts/bench-data-layer.ts --source=/app/data/gecko.db
 ```
 
 `.env` nötig (Kopie von `.env.example`): `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
