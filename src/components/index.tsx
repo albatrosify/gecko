@@ -739,6 +739,7 @@ export function PlaylistManager() {
                 onClick={() => setShowAddModal(false)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -815,6 +816,7 @@ export function PlaylistManager() {
                 onClick={() => setShowCloneModal(false)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -911,6 +913,7 @@ export function PlaylistManager() {
                 onClick={() => { setShowEditModal(false); setEditingPlaylist(null); }}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -1117,6 +1120,7 @@ export function PlaylistManager() {
                   onClick={() => handleDelete(playlist.id)}
                   className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
                   title="Delete"
+                  aria-label="Delete"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -1854,6 +1858,7 @@ export function SourceManager() {
                       onClick={() => handleDelete(source.id)}
                       className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer"
                       title="Delete Source"
+                      aria-label="Delete Source"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -2181,6 +2186,7 @@ export function SourceManager() {
                 }}
                 className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -2309,6 +2315,7 @@ export function SourceManager() {
                           onClick={() => handleRemoveHost(idx)}
                           className="p-1 hover:bg-zinc-800 rounded text-zinc-500 hover:text-red-400 transition-colors shrink-0 cursor-pointer"
                           title="Remove host"
+                          aria-label="Remove host"
                         >
                           <Trash2 size={13} />
                         </button>
@@ -2575,6 +2582,7 @@ export function SourceManager() {
                 onClick={() => setShowChannelPicker(false)}
                 className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -2722,6 +2730,7 @@ export function SourceManager() {
                 onClick={() => { setShowChangelog(false); setSelectedLogSource(null); setChangelogSearch(''); setExpandedSections({}); }}
                 className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={18} />
               </button>
@@ -2898,6 +2907,7 @@ export function SourceManager() {
                   onClick={() => { setShowConnections(false); setSelectedConnSource(null); setHoveredLog(null); }}
                   className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
                   title="Close"
+                  aria-label="Close"
                 >
                   <X size={16} />
                 </button>
@@ -3205,6 +3215,7 @@ export function EPGManager() {
               onClick={() => handleDelete(epg.id)}
               className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition-colors cursor-pointer shrink-0"
               title="Delete EPG"
+              aria-label="Delete EPG"
             >
               <Trash2 size={16} />
             </button>
@@ -3228,6 +3239,7 @@ export function EPGManager() {
                 onClick={() => setShowAdd(false)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -3688,7 +3700,7 @@ function TelegramSettingsCard() {
                 {keywords.map(kw => (
                   <span key={kw} className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-800/90 border border-zinc-700 rounded-md text-[11px] text-zinc-200">
                     <span>{kw}</span>
-                    <button onClick={() => removeKeyword(kw)} className="text-zinc-400 hover:text-red-400 cursor-pointer" title="Entfernen">
+                    <button onClick={() => removeKeyword(kw)} className="text-zinc-400 hover:text-red-400 cursor-pointer" title="Entfernen" aria-label="Entfernen">
                       <X size={11} />
                     </button>
                   </span>
@@ -5281,6 +5293,7 @@ export function PlaylistEditor() {
                 onClick={() => setShowSourceSelector(false)}
                 className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                 title="Close"
+                aria-label="Close"
               >
                 <X size={16} />
               </button>
@@ -5418,6 +5431,7 @@ export function PlaylistEditor() {
                   onClick={() => setShowAutoMatchModal(false)}
                   className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
                   title="Close"
+                  aria-label="Close"
                 >
                   <X size={16} />
                 </button>
@@ -6040,6 +6054,7 @@ function BatchActionsSection({
                 onClick={() => setRules(rules.filter((_, i) => i !== idx))}
                 className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all shrink-0"
                 title="Remove Rule"
+                aria-label="Remove Rule"
               >
                 <Trash2 size={13} />
               </button>
@@ -6293,6 +6308,7 @@ function AiCleanupModal({ kind, items, onApply, onClose }: AiCleanupModalProps) 
             onClick={onClose}
             className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition cursor-pointer"
             title="Close"
+            aria-label="Close"
           >
             <X size={16} />
           </button>
@@ -6589,7 +6605,7 @@ function CategoryPane({
               )}
             </>
           )}
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors ml-1 cursor-pointer" title="Close" aria-label="Close">
             <X size={14} />
           </button>
         </div>
@@ -6882,6 +6898,7 @@ function SortableCategory({
             }}
             className="p-1 hover:bg-red-500/20 rounded text-red-500 transition-colors"
             title="Delete Custom Category"
+            aria-label="Delete Custom Category"
           >
             <X size={12} />
           </button>
@@ -8115,6 +8132,7 @@ function EditorPane({
             onClick={onClose}
             className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 shrink-0 transition-colors"
             title="Close"
+            aria-label="Close"
           >
             <X size={15} />
           </button>
@@ -8900,6 +8918,7 @@ export function UserManager({ user }: { user: User }) {
                       onClick={() => handleDelete(u.id, u.email)}
                       className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all cursor-pointer"
                       title="Delete User"
+                      aria-label="Delete User"
                     >
                       <Trash2 size={15} />
                     </button>
@@ -9363,6 +9382,7 @@ function DvrPlaybackModal({
               onClick={onClose}
               className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-all cursor-pointer ml-1"
               title="Close"
+              aria-label="Close"
             >
               <X size={16} />
             </button>
