@@ -386,6 +386,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setIsLive(!isLive)}
             title={isLive ? 'Pause live auto-refresh' : 'Resume live auto-refresh'}
+            aria-label={isLive ? 'Pause live auto-refresh' : 'Resume live auto-refresh'}
             className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
               isLive
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
@@ -412,6 +413,7 @@ export function SystemLogViewer() {
             onClick={() => fetchLogs(true)}
             disabled={isLoading}
             title="Refresh logs now"
+            aria-label="Refresh logs now"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw size={13} className={isLoading ? 'animate-spin text-emerald-400' : ''} />
@@ -440,6 +442,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setWrapLines(!wrapLines)}
             title={wrapLines ? 'Disable line wrap (horizontal scroll)' : 'Enable word wrap'}
+            aria-label={wrapLines ? 'Disable line wrap (horizontal scroll)' : 'Enable word wrap'}
             className={`p-1 sm:px-2 sm:py-1 rounded-lg border text-xs flex items-center gap-1 transition-all cursor-pointer ${
               wrapLines
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
@@ -455,6 +458,7 @@ export function SystemLogViewer() {
             onClick={handleCopy}
             disabled={filteredLines.length === 0}
             title="Copy displayed logs to clipboard"
+            aria-label="Copy displayed logs to clipboard"
             className="p-1 sm:px-2 sm:py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center gap-1 disabled:opacity-40 cursor-pointer"
           >
             {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
@@ -466,6 +470,7 @@ export function SystemLogViewer() {
             onClick={handleDownload}
             disabled={filteredLines.length === 0}
             title="Download logs as .txt"
+            aria-label="Download logs as .txt"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors disabled:opacity-40 cursor-pointer"
           >
             <Download size={13} />
@@ -475,6 +480,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setCleared(true)}
             title="Clear view (temporary)"
+            aria-label="Clear view (temporary)"
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <Trash2 size={13} />
@@ -484,6 +490,7 @@ export function SystemLogViewer() {
           <button
             onClick={() => setIsMaximized(!isMaximized)}
             title={isMaximized ? 'Minimize' : 'Maximize to full window'}
+            aria-label={isMaximized ? 'Minimize' : 'Maximize to full window'}
             className="p-1 sm:p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
