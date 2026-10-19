@@ -176,6 +176,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             disabled={refreshing || loading}
             className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
             title="Statistiken aktualisieren"
+            aria-label="Statistiken aktualisieren"
           >
             <RefreshCw size={14} className={refreshing ? "animate-spin text-emerald-500" : ""} />
             <span>Aktualisieren</span>
@@ -187,6 +188,7 @@ export function TrafficView({ user }: TrafficViewProps) {
               disabled={resetting || loading}
               className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
               title="Alle Traffic-Statistiken zurücksetzen"
+              aria-label="Alle Traffic-Statistiken zurücksetzen"
             >
               <Trash2 size={14} />
               <span>Reset</span>
