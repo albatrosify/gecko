@@ -871,12 +871,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {/* Bottom Controls */}
       <div className={`absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-between transition-opacity duration-300 pointer-events-auto ${showControls ? 'opacity-100' : 'opacity-0'}`}>
         <div className="flex items-center gap-3">
-          <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors">
+          <button onClick={togglePlay} aria-label={isPlaying ? "Pause" : "Play"} className="text-white hover:text-emerald-400 transition-colors">
             {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
           </button>
 
           <div className="flex items-center gap-2 group/vol">
-            <button onClick={toggleMute} className="text-white hover:text-emerald-400 transition-colors">
+            <button onClick={toggleMute} aria-label={isMuted || volume === 0 ? "Unmute" : "Mute"} className="text-white hover:text-emerald-400 transition-colors">
               {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
             <input
@@ -905,17 +905,18 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
               onClick={() => setShowSettings(!showSettings)}
               className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`}
               title="Settings"
+              aria-label="Settings"
             >
               <Settings2 size={16} />
             </button>
           )}
 
           {document.pictureInPictureEnabled && (
-            <button onClick={togglePiP} className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
+            <button onClick={togglePiP} aria-label="Picture in Picture" className="text-white hover:text-emerald-400 transition-colors" title="Picture in Picture">
               <PictureInPicture size={16} />
             </button>
           )}
-          <button onClick={toggleFullscreen} className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
+          <button onClick={toggleFullscreen} aria-label="Fullscreen" className="text-white hover:text-emerald-400 transition-colors" title="Fullscreen">
             <Maximize size={16} />
           </button>
         </div>
