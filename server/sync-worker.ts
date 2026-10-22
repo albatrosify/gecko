@@ -1,5 +1,6 @@
 import { connectDb } from './db.ts';
 import { log } from './logger.ts';
+import { initEventLoopMonitor } from './event-loop-monitor.ts';
 import { refreshSource, initCronManager, rescheduleCrons } from './sync.ts';
 
 /**
@@ -42,6 +43,9 @@ async function handle(request: WorkerRequest): Promise<void> {
 
 async function main(): Promise<void> {
   await connectDb();
+  // This process serves no clients, so a long write here is by design harmless:
+  // it gets no critical severity, and only the pathological is reported at all.
+  initEventLoopMonitor({ role: 'background' });
   log(`[SyncWorker] started (pid ${process.pid})`);
   await initCronManager();
 

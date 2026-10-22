@@ -72,3 +72,21 @@ Verworfen:
 - Der CI-Job `parity` führt zusätzlich zu den Treiber-Checks beide Laufzeiten aus.
   (Job-Key bewusst unverändert, damit der Required-Check-Name nicht bricht.)
 - 227 Tests, lint sauber; Produktion während der Entwicklung unberührt.
+
+## Nachtrag: Schweregrade (2026-10-22, nach dem Prod-Deploy)
+
+Im Prod-Log stand bei **jedem** Sync ein `CRITICAL: phase "sync:catalog-write"
+blocked the event loop for 5594.0 ms` — korrekt getaggt, aber irreführend: im
+isolierten Worker bricht das nichts.
+
+Deshalb sind die Schweregrade jetzt rollenabhängig:
+
+| Rolle | WARN | CRITICAL |
+|---|---|---|
+| `serving` (Default) | 100 ms | **5000 ms** — „für den Zuschauer sichtbar" |
+| `background` (Sync-Worker) | 30 s | **keins** (`Infinity`) |
+
+`CRITICAL` bedeutet ab jetzt ausschließlich „das kann Sendungen brechen" und ist
+im Worker nicht erreichbar. Die Schreibdauer geht stattdessen als Telemetrie in
+die Sync-Zeile: `[Sync] Catalog write for X (vod): 185006 rows in 5594 ms`.
+Ergebnis: 0 CRITICAL-Zeilen im Worker, die Zahl bleibt sichtbar.

@@ -63,10 +63,23 @@ export interface EventLoopStats {
 }
 
 const DEFAULT_WARN_MS = 100;
-const DEFAULT_CRITICAL_MS = 1000;
+/** A block this long is expected to be visible to a viewer (buffer exhausted). */
+const DEFAULT_CRITICAL_MS = 5_000;
+/** Background processes serve no clients; only the pathological is worth a line. */
+const BACKGROUND_WARN_MS = 30_000;
 const DEFAULT_RESOLUTION_MS = 10;
 const DEFAULT_REPORT_INTERVAL_MS = 10_000;
 const DEFAULT_THROTTLE_MS = 5_000;
+
+/**
+ * Which kind of process is being monitored.
+ *
+ * `serving` is the process that writes bytes to players - blocking there can
+ * break playback. `background` is an isolated process (the sync worker) whose
+ * blocking is by design harmless: nothing it does is on a viewer's critical
+ * path, so it has no critical severity at all.
+ */
+export type MonitorRole = 'serving' | 'background';
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -81,8 +94,21 @@ function positiveNumber(raw: string | undefined, fallback: number): number {
 /**
  * Resolves the stall thresholds from the environment, falling back to the
  * defaults. `criticalMs` is clamped up to `warnMs` so the two can never invert.
+ *
+ * A `background` role has no critical severity: `CRITICAL` is reserved for
+ * "this is breaking playback", which an isolated process cannot cause.
  */
-export function resolveThresholds(env: NodeJS.ProcessEnv = process.env): StallThresholds {
+export function resolveThresholds(
+  env: NodeJS.ProcessEnv = process.env,
+  role: MonitorRole = 'serving',
+): StallThresholds {
+  if (role === 'background') {
+    return {
+      warnMs: positiveNumber(env.GECKO_EVENTLOOP_WARN_MS, BACKGROUND_WARN_MS),
+      criticalMs: Number.POSITIVE_INFINITY,
+    };
+  }
+
   const warnMs = positiveNumber(env.GECKO_EVENTLOOP_WARN_MS, DEFAULT_WARN_MS);
   const criticalRaw = positiveNumber(env.GECKO_EVENTLOOP_CRITICAL_MS, DEFAULT_CRITICAL_MS);
   return { warnMs, criticalMs: Math.max(criticalRaw, warnMs) };
@@ -163,6 +189,28 @@ function recordPhase(label: string, durationMs: number, now: number = Date.now()
   log(formatStallMessage(label, durationMs, severity));
 }
 
+export interface TimedResult<T> {
+  result: T;
+  durationMs: number;
+}
+
+/**
+ * Like `measureSync`, but also hands back how long the phase took, for callers
+ * that want the number in their own log line rather than relying on an alert.
+ */
+export function measureSyncTimed<T>(label: string, fn: () => T): TimedResult<T> {
+  const start = performance.now();
+  try {
+    const result = fn();
+    const durationMs = performance.now() - start;
+    recordPhase(label, durationMs);
+    return { result, durationMs };
+  } catch (err) {
+    recordPhase(label, performance.now() - start);
+    throw err;
+  }
+}
+
 /**
  * Runs a synchronous function and measures how long it blocked the event loop.
  *
@@ -171,12 +219,7 @@ function recordPhase(label: string, durationMs: number, now: number = Date.now()
  * value is passed through and exceptions are rethrown after measuring.
  */
 export function measureSync<T>(label: string, fn: () => T): T {
-  const start = performance.now();
-  try {
-    return fn();
-  } finally {
-    recordPhase(label, performance.now() - start);
-  }
+  return measureSyncTimed(label, fn).result;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +227,8 @@ export function measureSync<T>(label: string, fn: () => T): T {
 // ---------------------------------------------------------------------------
 
 export interface MonitorOptions {
+  /** Which kind of process this is; decides whether CRITICAL exists at all. */
+  role?: MonitorRole;
   warnMs?: number;
   criticalMs?: number;
   /** Histogram sampling resolution in ms (default 10). */
@@ -220,9 +265,10 @@ function runCheck(): void {
 export function initEventLoopMonitor(options: MonitorOptions = {}): void {
   stopEventLoopMonitor();
 
+  const resolved = resolveThresholds(process.env, options.role);
   thresholds = {
-    warnMs: options.warnMs ?? resolveThresholds().warnMs,
-    criticalMs: options.criticalMs ?? resolveThresholds().criticalMs,
+    warnMs: options.warnMs ?? resolved.warnMs,
+    criticalMs: options.criticalMs ?? resolved.criticalMs,
   };
   reportThrottleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
 
@@ -235,7 +281,10 @@ export function initEventLoopMonitor(options: MonitorOptions = {}): void {
   checkTimer = setInterval(runCheck, options.reportIntervalMs ?? DEFAULT_REPORT_INTERVAL_MS);
   checkTimer.unref?.();
 
-  log(`[EventLoop] Monitoring started (warn ≥ ${thresholds.warnMs} ms, critical ≥ ${thresholds.criticalMs} ms).`);
+  const critical = Number.isFinite(thresholds.criticalMs)
+    ? `critical ≥ ${thresholds.criticalMs} ms`
+    : 'no critical (nothing here can break playback)';
+  log(`[EventLoop] Monitoring started as "${options.role ?? 'serving'}" (warn ≥ ${thresholds.warnMs} ms, ${critical}).`);
 }
 
 /** Stops monitoring and releases the histogram. */

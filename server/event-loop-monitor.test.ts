@@ -14,6 +14,7 @@ import {
   formatStallMessage,
   formatLagMessage,
   measureSync,
+  measureSyncTimed,
   initEventLoopMonitor,
   stopEventLoopMonitor,
   getEventLoopStats,
@@ -33,7 +34,22 @@ function busyWait(ms: number): void {
 
 describe('event-loop-monitor — pure helpers', () => {
   it('resolves default thresholds when the environment is empty', () => {
-    expect(resolveThresholds({})).toEqual({ warnMs: 100, criticalMs: 1000 });
+    // WARN is "a viewer might notice"; CRITICAL is "this is breaking playback".
+    expect(resolveThresholds({})).toEqual({ warnMs: 100, criticalMs: 5000 });
+  });
+
+  it('gives a background process no critical severity at all', () => {
+    // Nothing in an isolated process is on a viewer's critical path, so a long
+    // block there must never be reported as CRITICAL.
+    const thresholds = resolveThresholds({}, 'background');
+    expect(thresholds.warnMs).toBe(30_000);
+    expect(thresholds.criticalMs).toBe(Number.POSITIVE_INFINITY);
+    expect(severityFor(60_000, thresholds)).toBe('warn');
+    expect(severityFor(600_000, thresholds)).toBe('warn');
+  });
+
+  it('still allows explicit thresholds to override the role defaults', () => {
+    expect(resolveThresholds({ GECKO_EVENTLOOP_WARN_MS: '1234' }, 'background').warnMs).toBe(1234);
   });
 
   it('honours environment overrides', () => {
@@ -43,7 +59,7 @@ describe('event-loop-monitor — pure helpers', () => {
 
   it('falls back to defaults for invalid values', () => {
     expect(resolveThresholds({ GECKO_EVENTLOOP_WARN_MS: 'abc', GECKO_EVENTLOOP_CRITICAL_MS: '-5' }))
-      .toEqual({ warnMs: 100, criticalMs: 1000 });
+      .toEqual({ warnMs: 100, criticalMs: 5000 });
   });
 
   it('never lets critical fall below warn', () => {
@@ -143,6 +159,20 @@ describe('event-loop-monitor — measureSync', () => {
     measureSync('phase:critical', () => busyWait(8));
 
     expect(mockedLog.mock.calls[0][0] as string).toContain('CRITICAL');
+  });
+
+  it('measureSyncTimed hands back the duration and still reports the phase', () => {
+    initEventLoopMonitor({ warnMs: 1, criticalMs: 1000, throttleMs: 0 });
+    mockedLog.mockClear();
+
+    const { result, durationMs } = measureSyncTimed('phase:timed', () => {
+      busyWait(6);
+      return 7;
+    });
+
+    expect(result).toBe(7);
+    expect(durationMs).toBeGreaterThanOrEqual(6);
+    expect(mockedLog).toHaveBeenCalledTimes(1);
   });
 
   it('throttles repeated reports of the same phase', () => {
