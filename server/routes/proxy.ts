@@ -32,6 +32,13 @@ import fs from "fs";
 
 const limit = pLimit(5);
 
+/**
+ * How long a player should wait before re-asking when the upstream told us the
+ * account's (often single) connection slot is busy. Short enough to recover fast,
+ * long enough that the retry does not steal the slot from the attempt before it.
+ */
+const SLOT_CONFLICT_RETRY_AFTER_S = 5;
+
 const isForbiddenIP = (ip: string): boolean => {
   const normalizedIP = ip.toLowerCase();
   if (
@@ -256,9 +263,13 @@ export function createProxyRouter() {
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     let lastStatus = 502;
+    // Set when the upstream told us this account's connection slot is taken. Rotating
+    // further would only steal that slot from ourselves (see the 409 branch below).
+    let slotConflict = false;
     for (const sourceId of targetSourceIds) {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
+      slotConflict = false;
 
       // ── Step 2: VOD stream de-duplication & auto-replacement ──────────────────
       // When a user seeks or switches episodes, ExoPlayer / TiviMate sends a new HTTP request
@@ -428,6 +439,15 @@ export function createProxyRouter() {
                 lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
                 recordVpnBlock(sourceId, hostUrl, 511, lastError);
                 log(`[Proxy] ⚠️ Host ${hostUrl} (IP: ${targetIp || 'default'}) BLOCKED by upstream CDN (511 Network Authentication Required) for ${type}/${streamId}. Egress IP appears blacklisted. Recommend rotating VPN. - ${getClientInfo(req)}`);
+              } else if (response.status === 409) {
+                // Panels with max_connections=1 answer 409 ("a newer request of the user
+                // took the slot first") when another request of the same account grabbed
+                // the slot. Every additional IP we try kicks the previous session out and
+                // becomes the new "newer request" — so failover turns into a self-blockade
+                // that can never recover. Stop here and let the client back off instead.
+                lastError = 'upstream refused the session (HTTP 409: another request holds this account\'s connection slot)';
+                log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) answered 409 for ${type}/${streamId} — account connection slot taken by a newer request. Not retrying other IPs. - ${getClientInfo(req)}`);
+                slotConflict = true;
               } else {
                 lastError = `upstream returned ${response.status}`;
                 log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) failed (${response.status}), trying next candidate IP... - ${getClientInfo(req)}`);
@@ -436,6 +456,7 @@ export function createProxyRouter() {
                 try { response.data.destroy(); } catch {}
               }
               destroyAgents();
+              if (slotConflict) break;
               continue;
             }
 
@@ -604,15 +625,23 @@ export function createProxyRouter() {
           }
         }
 
-        if (!hostSucceeded) {
+        if (!hostSucceeded && !slotConflict) {
+          // A 409 is not a host failure — the host answered, it just refused the
+          // session — so do not down-rank it in the failover order.
           recordHostUse(sourceId, hostUrl, false, lastError);
         }
+        if (slotConflict) break;
       }
     }
 
     log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} (status ${lastStatus}) - ${getClientInfo(req)}`);
     if (lastStatus === 511) {
       res.status(511).send(`All upstream sources failed: Upstream CDN blocked connection (HTTP 511 Network Authentication Required). Server egress IP appears blacklisted. Please rotate VPN.`);
+    } else if (slotConflict) {
+      // 409 is not a "retry immediately" status for players, 503 + Retry-After is:
+      // give the account's slot a moment to settle instead of re-asking in a tight loop.
+      res.setHeader('Retry-After', String(SLOT_CONFLICT_RETRY_AFTER_S));
+      res.status(503).send(`Upstream refused the session: another request of this account holds the only connection slot (HTTP 409). Retry in ${SLOT_CONFLICT_RETRY_AFTER_S}s.`);
     } else {
       res.status(lastStatus).send(`All upstream sources failed: ${lastError}`);
     }

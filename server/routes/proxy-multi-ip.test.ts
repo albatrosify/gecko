@@ -223,6 +223,61 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent, 'failing.upstream.tv')).toBe('198.51.100.2');
   });
 
+  it('does not rotate IPs on HTTP 409 (account slot taken) and answers 503 + Retry-After', async () => {
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-slot',
+      userId: 'user-1',
+      name: 'Slot Playlist',
+      username: 'slotuser',
+      password: 'slotpass',
+      sourceIds: ['src-slot'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-slot',
+      userId: 'user-1',
+      name: 'Single Connection Source',
+      type: 'xtream',
+      url: 'http://slot.upstream.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://slot.upstream.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            resolvedIp: '203.0.113.1',
+            ipCount: 2,
+            resolvedIps: [
+              { ip: '203.0.113.1', latencyMs: 20, healthy: true },
+              { ip: '203.0.113.2', latencyMs: 25, healthy: true },
+            ],
+          },
+        ],
+      } as any,
+    }).run();
+
+    mockAxios.mockResolvedValueOnce({
+      status: 409,
+      data: { destroy: vi.fn() },
+    });
+
+    const res = await fetch(`${baseUrl}/live/slotuser/slotpass/102.ts`);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('5');
+    const body = await res.text();
+    expect(body).toContain('409');
+
+    // The second candidate IP must NOT be tried: it would just steal the slot again
+    // ("a newer request of the user took the slot first") and loop forever.
+    expect(mockAxios).toHaveBeenCalledTimes(1);
+  });
+
   it('dynamically resolves candidate IPs via resolveHostIps when not present in source extra', async () => {
     const resolveSpy = vi.spyOn(dnsResolver, 'resolveHostIps').mockResolvedValue(['203.0.113.50', '203.0.113.60']);
 
