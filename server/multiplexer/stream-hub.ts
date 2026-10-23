@@ -33,6 +33,19 @@ const LIVE_BUFFER_RATE_WARMUP_S = 3;
  * Real upstreams (like Tivione) regularly pause for 9.8-10.5 s between bursts.
  */
 const LIVE_BUFFER_RATE_MAX_GAP_S = 12;
+/**
+ * Bounds for the slow drift correction of the pacing rate. The burst-window estimate
+ * has a few percent of variance, and open-loop that makes the buffer random-walk; a
+ * bounded trim pulls the level back without ever under-feeding the player by more.
+ */
+export const LIVE_BUFFER_PACE_TRIM_MIN = 0.95;
+export const LIVE_BUFFER_PACE_TRIM_MAX = 1.05;
+const LIVE_BUFFER_PACE_TRIM_STEP = 0.005;
+/** How often the level is sampled for the drift correction. */
+const LIVE_BUFFER_TRIM_INTERVAL_MS = 10_000;
+/** Fill ratio (relative to the reserve) below which we slow down / above which we speed up. */
+const LIVE_BUFFER_TRIM_LOW_FILL = 0.8;
+const LIVE_BUFFER_TRIM_HIGH_FILL = 1.1;
 // ── Subscriber backpressure limits ────────────────────────────────────────────
 /** Grace period after a subscriber connects before buffer pressure counts against it. */
 const STARTUP_GRACE_MS = 15_000;
@@ -147,6 +160,9 @@ interface ActiveStreamChannel {
    * buffer still holds playable content.
    */
   rateBuckets: Map<number, number>;
+  /** Slow, bounded correction applied to the pacing rate (see nextPaceTrim). */
+  paceTrim?: number;
+  lastTrimAt?: number;
   /** Leaky-bucket allowance that paces downstream delivery. */
   pacingTokens: number;
   lastPumpAt: number;
@@ -183,6 +199,8 @@ export interface ChannelBufferHealth {
   fillPercent: number;
   bufferedSeconds: number;
   reserveSeconds: number;
+  /** Pacing rate the gauge is computed against (bytes/s). */
+  rateBps: number;
   starved: boolean;
   starvedMs?: number;
   lastStarveAt?: number;
@@ -191,6 +209,19 @@ export interface ChannelBufferHealth {
 
 /** Below this share of the reserve the buffer is worth flagging. */
 const LIVE_BUFFER_LOW_PERCENT = 30;
+
+/** Slow, bounded correction of the pacing rate, driven purely by the buffer level. */
+export function nextPaceTrim(current: number | undefined, fillRatio: number): number {
+  const trim = typeof current === 'number' && Number.isFinite(current) ? current : 1;
+  if (!Number.isFinite(fillRatio)) return trim;
+  if (fillRatio < LIVE_BUFFER_TRIM_LOW_FILL) {
+    return Math.max(LIVE_BUFFER_PACE_TRIM_MIN, trim * (1 - LIVE_BUFFER_PACE_TRIM_STEP));
+  }
+  if (fillRatio > LIVE_BUFFER_TRIM_HIGH_FILL) {
+    return Math.min(LIVE_BUFFER_PACE_TRIM_MAX, trim * (1 + LIVE_BUFFER_PACE_TRIM_STEP));
+  }
+  return trim;
+}
 
 /**
  * Pure derivation of the gauge from the channel's counters, kept out of the hub so
@@ -225,6 +256,7 @@ export function computeBufferHealth(input: {
     fillPercent,
     bufferedSeconds: Math.round(bufferedSeconds * 10) / 10,
     reserveSeconds: input.reserveSeconds,
+    rateBps: Math.round(input.rateBps),
     starved: input.starved,
     ...(input.starvedMs !== undefined ? { starvedMs: input.starvedMs } : {}),
     ...(input.lastStarveAt !== undefined ? { lastStarveAt: input.lastStarveAt } : {}),
@@ -341,6 +373,7 @@ class StreamHub {
       bufferedBytes: 0,
       rateBuckets: new Map(),
       pacingTokens: isLivePacingEnabled() ? LIVE_BUFFER_INITIAL_BURST_BYTES : 0,
+      paceTrim: 1,
       lastPumpAt: Date.now(),
     };
 
@@ -619,14 +652,14 @@ class StreamHub {
       : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0);
     const pacing = effectiveRate > 0 && !drainFully;
     const reserveBytes = effectiveRate * liveBufferReserveSeconds();
-    // When buffer holds a comfortable reserve, allow downstream to draw slightly faster (1.08x)
-    // to absorb VBR bitrate peaks and gently burn down excess buffer.
-    // When at or below reserve, pace at 100% of real-time stream rate.
-    // NEVER throttle below 1.0x — a video decoder runs at 1.0x wall-clock speed,
-    // so throttling below 1.0x is guaranteed to deplete the player's internal buffer and stall!
-    const releaseRate = pacing && channel.bufferedBytes > reserveBytes * 1.2
+    // Pace at the stream's own rate. Two deliberate exceptions:
+    //  - above 1.2x reserve, draw 8 % faster to burn excess buffer back down;
+    //  - a slow trim of at most 5 % steers the level back to the reserve (see the
+    //    update below). The trim is bounded on purpose: throttling far below 1.0x
+    //    depletes the player's own buffer and stalls playback.
+    const releaseRate = (pacing && channel.bufferedBytes > reserveBytes * 1.2
       ? effectiveRate * 1.08
-      : effectiveRate;
+      : effectiveRate) * (channel.paceTrim ?? 1);
 
     // Allowance accumulates at the release rate and is capped so a long stall cannot
     // be repaid as one huge burst. Allow burning down the initial startup burst.
@@ -702,6 +735,17 @@ class StreamHub {
           deadSubscribers.push(subId);
         }
       }
+    }
+
+    // The burst-window estimate carries a few percent of variance (measured +-7 % per
+    // minute on Tivione), and open-loop that makes the buffer random-walk: one observed
+    // run fell to 3 s of buffer, where any provider pause reaches the player as a
+    // re-buffer. A slow, bounded trim pulls the level back towards the reserve without
+    // ever under-feeding the player by more than 5 %.
+    if (pacing && now - (channel.lastTrimAt ?? 0) >= LIVE_BUFFER_TRIM_INTERVAL_MS) {
+      const fillRatio = channel.bufferedBytes / Math.max(1, reserveBytes);
+      channel.paceTrim = nextPaceTrim(channel.paceTrim, fillRatio);
+      channel.lastTrimAt = now;
     }
 
     for (const deadId of deadSubscribers) {

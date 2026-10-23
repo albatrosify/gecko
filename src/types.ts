@@ -254,6 +254,8 @@ export interface BufferHealth {
   bufferedSeconds: number;
   /** Depth the pump aims to hold, in seconds (`GECKO_LIVE_BUFFER_SECONDS`). */
   reserveSeconds: number;
+  /** Pacing rate the gauge is computed against, in bytes/s. */
+  rateBps: number;
   starved: boolean;
   /** Length of the dry spell currently in progress. */
   starvedMs?: number;

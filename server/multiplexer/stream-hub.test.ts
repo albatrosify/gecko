@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { streamHub, computeBufferHealth } from './stream-hub.ts';
+import { streamHub, computeBufferHealth, nextPaceTrim, LIVE_BUFFER_PACE_TRIM_MIN, LIVE_BUFFER_PACE_TRIM_MAX } from './stream-hub.ts';
 import { proxyStats, streamControllers, killStream } from '../proxy-stats.ts';
 import { EventEmitter } from 'events';
 
@@ -553,5 +553,42 @@ describe('computeBufferHealth', () => {
     // The number stays honest (150 %) - the UI clamps the bar width, not the data.
     expect(health.fillPercent).toBe(150);
     expect(health.status).toBe('healthy');
+  });
+});
+
+describe('nextPaceTrim', () => {
+  it('leaves the pace alone while the buffer is healthy', () => {
+    expect(nextPaceTrim(1, 0.9)).toBe(1);
+    expect(nextPaceTrim(1, 1.05)).toBe(1);
+    expect(nextPaceTrim(1, 0.8)).toBe(1); // band edge - still no correction
+  });
+
+  it('slows down step by step when the buffer runs low', () => {
+    let trim = 1;
+    for (let i = 0; i < 10; i++) trim = nextPaceTrim(trim, 0.5);
+    expect(trim).toBeCloseTo(0.951, 3);
+    expect(trim).toBeGreaterThan(LIVE_BUFFER_PACE_TRIM_MIN);
+  });
+
+  it('never slows the player below 95 % of the stream rate', () => {
+    let trim = 1;
+    for (let i = 0; i < 500; i++) trim = nextPaceTrim(trim, 0.1);
+    expect(trim).toBe(LIVE_BUFFER_PACE_TRIM_MIN);
+  });
+
+  it('speeds up when the buffer piles up, bounded at 105 %', () => {
+    let trim = 1;
+    for (let i = 0; i < 500; i++) trim = nextPaceTrim(trim, 1.5);
+    expect(trim).toBe(LIVE_BUFFER_PACE_TRIM_MAX);
+  });
+
+  it('recovers towards neutral once the level is back in the band', () => {
+    // A trim that was pulled down stays put while the level is healthy - the band is
+    // wide enough that it does not oscillate around the target.
+    expect(nextPaceTrim(0.95, 0.9)).toBe(0.95);
+  });
+
+  it('ignores a nonsensical fill ratio', () => {
+    expect(nextPaceTrim(1, Number.NaN)).toBe(1);
   });
 });

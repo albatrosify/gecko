@@ -204,9 +204,12 @@ function BufferGauge({ health }: { health?: import('../types').BufferHealth | nu
     : health.status === 'starved'
       ? `hungert seit ${((health.starvedMs ?? 0) / 1000).toFixed(1)} s`
       : `${health.bufferedSeconds.toFixed(1)} / ${health.reserveSeconds} s · ${tone.label}`;
+  const rateMbps = health.rateBps > 0 ? (health.rateBps * 8 / 1_000_000).toFixed(1) : null;
   const title = health.status === 'warming'
     ? 'Puffer wird aufgebaut — die Streamrate wird noch gemessen'
-    : `Puffer: ${health.bufferedSeconds} s von ${health.reserveSeconds} s Reserve (${health.fillPercent} %)\n${lastHiccup}`;
+    : `Puffer: ${health.bufferedSeconds} s von ${health.reserveSeconds} s Reserve (${health.fillPercent} %)` +
+      `${rateMbps ? `\nStreamrate: ${rateMbps} Mbps (Pacing-Basis)` : ''}` +
+      `\n${lastHiccup}`;
 
   return (
     <div className="flex-1 min-w-[140px]" title={title}>
