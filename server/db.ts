@@ -178,6 +178,17 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
       -- so no separate index is needed for them.
       CREATE INDEX IF NOT EXISTS idx_streams_source_type_category ON streams(sourceId, type, categoryId);
 
+      -- Episode titles/stills from get_series_info (see schema.ts). Must outlive a
+      -- restart: clients cache episode IDs and stop re-fetching the series info.
+      CREATE TABLE IF NOT EXISTS episode_meta (
+        sourceId TEXT NOT NULL,
+        episodeId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        icon TEXT,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (sourceId, episodeId)
+      );
+
       -- Name search. The trigram tokenizer makes substring queries index-backed
       -- (SQLite >= 3.34), which is what the playlist search needs. External
       -- content keeps the names out of the index (no duplication) and is fast as
@@ -220,6 +231,11 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
 export function getDb(): BetterSQLite3Database<typeof schema> {
   if (!db) throw new Error('Database not connected. Call connectDb() first.');
   return db;
+}
+
+/** True once `connectDb()` has opened the database (false in unit tests). */
+export function isDbConnected(): boolean {
+  return sqlite != null;
 }
 
 /**

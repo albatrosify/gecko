@@ -545,8 +545,17 @@ export function Dashboard() {
                   <div key={conn.id} className="bg-zinc-950/70 border border-zinc-800/70 rounded-xl p-3 space-y-2">
                     {/* Header: the name gets the full width and wraps instead of truncating */}
                     <div className="flex items-start gap-2.5">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColor}`}>
+                      <div className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${iconColor}`}>
                         <Play size={14} fill="currentColor" />
+                        {conn.streamIcon && (
+                          <img
+                            src={proxyImg(conn.streamIcon)}
+                            alt=""
+                            loading="lazy"
+                            className={`absolute inset-0 w-full h-full bg-zinc-900 ${conn.type === 'live' ? 'object-contain p-0.5' : 'object-cover'}`}
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="font-bold text-xs text-zinc-100 leading-snug break-words" title={conn.streamName || `Stream ${conn.streamId}`}>

@@ -1,4 +1,6 @@
 import { getCachedStreams } from './stream-store.ts';
+import { getSqlite, isDbConnected } from './db.ts';
+import { log } from './logger.ts';
 import { decodeStreamId } from './utils.ts';
 
 /**
@@ -11,9 +13,13 @@ export interface StreamTitleItem {
   id?: string | number;
   name?: string;
   title?: string;
+  stream_icon?: string;
+  cover?: string;
 }
 
 const titleMap = new Map<string, string>();
+/** Icon/poster per stream, same keys as `titleMap` (dashboard thumbnails). */
+const iconMap = new Map<string, string>();
 const MAX_ENTRIES = 100_000;
 
 function trimCacheIfNeeded() {
@@ -24,8 +30,63 @@ function trimCacheIfNeeded() {
       const next = it.next();
       if (next.done) break;
       titleMap.delete(next.value);
+      iconMap.delete(next.value);
     }
   }
+}
+
+function rememberIcon(keys: string[], icon: string | undefined | null): void {
+  const clean = icon?.trim();
+  if (!clean) return;
+  for (const key of keys) iconMap.set(key, clean);
+}
+
+/**
+ * Persists episode rows so a restarted process still knows what `1938143` is.
+ * Best effort: the in-memory cache is authoritative for this process, and unit
+ * tests run without a database at all.
+ */
+function persistEpisodeMeta(sourceId: string, rows: { id: string; title: string; icon: string | null }[]): void {
+  if (rows.length === 0 || !isDbConnected()) return;
+  try {
+    const sqlite = getSqlite();
+    const upsert = sqlite.prepare(
+      `INSERT INTO episode_meta (sourceId, episodeId, title, icon, updatedAt)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(sourceId, episodeId) DO UPDATE SET
+         title = excluded.title, icon = excluded.icon, updatedAt = excluded.updatedAt`
+    );
+    const now = new Date().toISOString();
+    const writeAll = (sqlite as any).transaction(() => {
+      for (const row of rows) upsert.run(sourceId, row.id, row.title, row.icon, now);
+    });
+    writeAll();
+  } catch (err: any) {
+    log(`[Titles] Could not persist ${rows.length} episode title(s) for ${sourceId}: ${err.message}`);
+  }
+}
+
+/**
+ * Looks an episode up in SQLite and warms the in-memory cache from it. Returns the
+ * metadata (or null) so callers can serve both title and icon from one query.
+ */
+function lookupEpisodeMeta(sourceIds: string[], episodeId: string): { title: string; icon: string | null } | null {
+  if (!isDbConnected()) return null;
+  try {
+    const sqlite = getSqlite();
+    for (const sid of sourceIds) {
+      const row = sqlite.prepare('SELECT title, icon FROM episode_meta WHERE sourceId = ? AND episodeId = ?')
+        .get(sid, episodeId) as { title?: string; icon?: string | null } | null | undefined;
+      if (!row?.title) continue;
+      titleMap.set(`${sid}:series:${episodeId}`, row.title);
+      titleMap.set(`series:${episodeId}`, row.title);
+      if (row.icon) rememberIcon([`${sid}:series:${episodeId}`, `series:${episodeId}`], row.icon);
+      return { title: row.title, icon: row.icon ?? null };
+    }
+  } catch {
+    // No database (unit tests, very early startup): the in-memory cache is all we have.
+  }
+  return null;
 }
 
 /**
@@ -79,6 +140,7 @@ export function rememberStreamTitles(
 
     titleMap.set(`${sourceId}:${type}:${id}`, name);
     titleMap.set(`${type}:${id}`, name);
+    rememberIcon([`${sourceId}:${type}:${id}`, `${type}:${id}`], s.stream_icon || s.cover);
   }
 
   trimCacheIfNeeded();
@@ -91,6 +153,7 @@ export function rememberSeriesInfo(sourceId: string, seriesInfo: any): void {
   if (!seriesInfo) return;
 
   const seriesName = (seriesInfo.info?.name || seriesInfo.info?.title || seriesInfo.name || seriesInfo.title)?.trim();
+  const seriesCover = (seriesInfo.info?.cover || seriesInfo.info?.movie_image || '')?.trim();
   const episodes = seriesInfo.episodes;
   if (!episodes) return;
 
@@ -98,6 +161,8 @@ export function rememberSeriesInfo(sourceId: string, seriesInfo: any): void {
   const seasonKeys = typeof episodes === 'object' && !Array.isArray(episodes)
     ? Object.keys(episodes)
     : (Array.isArray(episodes) ? ['0'] : []);
+
+  const persist: { id: string; title: string; icon: string | null }[] = [];
 
   for (const sKey of seasonKeys) {
     const epList = Array.isArray(episodes) ? episodes : episodes[sKey];
@@ -111,9 +176,17 @@ export function rememberSeriesInfo(sourceId: string, seriesInfo: any): void {
 
       titleMap.set(`${sourceId}:series:${id}`, formattedTitle);
       titleMap.set(`series:${id}`, formattedTitle);
+
+      // Episode still first, then the series poster: a card without any image is
+      // the most common case for series, so the fallback matters.
+      const episodeIcon = (ep.info?.movie_image || ep.info?.cover || ep.movie_image || seriesCover || '')?.trim();
+      if (episodeIcon) rememberIcon([`${sourceId}:series:${id}`, `series:${id}`], episodeIcon);
+
+      persist.push({ id, title: formattedTitle, icon: episodeIcon || null });
     }
   }
 
+  persistEpisodeMeta(sourceId, persist);
   trimCacheIfNeeded();
 }
 
@@ -155,6 +228,38 @@ export function getStreamTitle(
     }
   }
 
+  // 4. Series episodes only exist in get_series_info, which the *client* fetched
+  // once - possibly before this process started. Read the persisted copy.
+  if (type === 'series') {
+    return lookupEpisodeMeta(sourceIds, cleanId)?.title ?? null;
+  }
+
+  return null;
+}
+
+/**
+ * Icon/poster for a stream, for the dashboard's "Now Playing" cards.
+ * Returns null when the provider does not carry one.
+ */
+export function getStreamIcon(
+  sourceIds: string[],
+  type: 'live' | 'movie' | 'series',
+  streamId: string
+): string | null {
+  const cleanId = decodeStreamId(streamId);
+
+  for (const sid of sourceIds) {
+    const hit = iconMap.get(`${sid}:${type}:${cleanId}`) || iconMap.get(`${sid}:${type}:${streamId}`);
+    if (hit) return hit;
+  }
+  const genericHit = iconMap.get(`${type}:${cleanId}`) || iconMap.get(`${type}:${streamId}`);
+  if (genericHit) return genericHit;
+
+  if (type === 'series') {
+    const meta = lookupEpisodeMeta(sourceIds, cleanId);
+    if (meta?.icon) return meta.icon;
+  }
+
   return null;
 }
 
@@ -163,4 +268,5 @@ export function getStreamTitle(
  */
 export function clearStreamTitleCache(): void {
   titleMap.clear();
+  iconMap.clear();
 }

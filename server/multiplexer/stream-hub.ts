@@ -139,6 +139,8 @@ interface ActiveStreamChannel {
   sourceId: string;
   streamId: string;
   streamName: string;
+  /** Channel logo / poster for the dashboard card, when the provider has one. */
+  streamIcon?: string;
   type: 'live' | 'movie' | 'series';
   hostUrl: string;
   upstreamResponse: any;
@@ -343,7 +345,8 @@ class StreamHub {
     hostUrl: string,
     upstreamResponse: any,
     headersSent?: Record<string, any>,
-    upstreamConfig?: UpstreamConfig
+    upstreamConfig?: UpstreamConfig,
+    streamIcon?: string
   ): ActiveStreamChannel {
     const channelKey = StreamHub.makeKey(sourceId, streamId);
 
@@ -357,6 +360,7 @@ class StreamHub {
       sourceId,
       streamId,
       streamName,
+      streamIcon,
       type,
       hostUrl,
       upstreamResponse,
@@ -918,6 +922,7 @@ class StreamHub {
       username: sub.username,
       streamId: channel.streamId,
       streamName: channel.streamName,
+      streamIcon: channel.streamIcon,
       playlistName: sub.playlistName,
       type: channel.type,
       ip: sub.ip,

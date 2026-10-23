@@ -11,7 +11,7 @@ import { proxyStats, registerStreamController, unregisterStreamController, killS
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { requestSourceSync } from "../sync-client.ts";
 import { getCached } from "../cache.ts";
-import { getCachedStreams } from "../stream-store.ts";
+import { getCachedStreams, getStreamIcon as getCatalogIcon } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
@@ -26,7 +26,7 @@ export const DVR_CATEGORY_ID = "999999";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
-import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
+import { getStreamTitle, getStreamIcon as getCachedStreamIcon, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
 import { servePlaylistEpg } from "../epg-service.ts";
 import fs from "fs";
 
@@ -38,6 +38,20 @@ const limit = pLimit(5);
  * long enough that the retry does not steal the slot from the attempt before it.
  */
 const SLOT_CONFLICT_RETRY_AFTER_S = 5;
+
+/**
+ * Thumbnail for the dashboard's "Now Playing" card: the catalog icon (channel logo /
+ * movie poster) or, for series, the episode still from the series-info cache.
+ */
+function resolveStreamIcon(sourceIds: string[], type: 'live' | 'movie' | 'series', streamId: string): string | null {
+  if (type === 'series') return getCachedStreamIcon(sourceIds, 'series', streamId);
+  const storeType = type === 'movie' ? 'vod' : 'live';
+  for (const sourceId of sourceIds) {
+    const icon = getCatalogIcon(sourceId, storeType, streamId);
+    if (icon) return icon;
+  }
+  return null;
+}
 
 const isForbiddenIP = (ip: string): boolean => {
   const normalizedIP = ip.toLowerCase();
@@ -248,6 +262,7 @@ export function createProxyRouter() {
     }
 
     const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
+    const streamIcon = resolveStreamIcon(targetSourceIds, type as 'live' | 'movie' | 'series', String(originalId));
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -497,7 +512,8 @@ export function createProxyRouter() {
                   headers: upstreamHeaders,
                   candidateIps: candidateIps.length > 0 ? candidateIps : undefined,
                   currentIpIndex: targetIp && candidateIps.length > 0 ? Math.max(0, candidateIps.indexOf(targetIp)) : 0,
-                }
+                },
+                streamIcon ?? undefined
               );
 
               if (dvrRecordingId) {
@@ -539,6 +555,7 @@ export function createProxyRouter() {
               username,
               streamId,
               streamName,
+              streamIcon: streamIcon ?? undefined,
               playlistName: (playlist as any).name || username,
               type,
               ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',

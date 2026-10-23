@@ -469,6 +469,19 @@ export function countSourceStreams(sourceId: string, type?: StreamType): number 
 }
 
 /**
+ * Icon (channel logo / movie poster) of a single catalog row, or null when the
+ * source was not synced yet or the provider does not carry one. Used for the
+ * thumbnails in the dashboard's "Now Playing" cards.
+ */
+export function getStreamIcon(sourceId: string, type: StreamType, streamId: string): string | null {
+  const row = getSqlite()
+    .prepare('SELECT icon FROM streams WHERE sourceId = ? AND type = ? AND streamId = ?')
+    .get(sourceId, type, streamId) as { icon?: string | null } | null | undefined;
+  const icon = row?.icon?.trim();
+  return icon ? icon : null;
+}
+
+/**
  * Deletes a source's catalog, optionally limited to one type, and rebuilds the
  * full-text index. Returns rows removed.
  */

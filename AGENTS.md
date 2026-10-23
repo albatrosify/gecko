@@ -75,7 +75,7 @@ Der **Sync-Worker** läuft in einem eigenen Prozess (`fork`) und besitzt **alle 
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
 - `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (300 Datenpunkte, 2 s-Interval = 10 min für die Dashboard-Fenster 1m/5m/10m), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
-- `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen & Serien-Episodentitel (Live, VOD, Series) für Now-Playing & DVR.
+- `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen, Serien-Episodentitel **und Icons/Poster** (Live, VOD, Series) für Now-Playing & DVR. Episoden-Metadaten werden zusätzlich in `episode_meta` persistiert: sie existieren nur in der `get_series_info`-Antwort, die der Client **einmal** holt — ohne Persistenz wird nach jedem Restart aus einer laufenden Episode wieder `Stream 1938143`.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 - `epg-service.ts` — EPG Fetching, Disk-Caching (`.xml.gz`), Stale-While-Revalidate, Non-Blocking Streaming für `/xmltv.php`.
 
@@ -111,6 +111,7 @@ Der **Sync-Worker** läuft in einem eigenen Prozess (`fork`) und besitzt **alle 
 | `source_sync_meta` | Cooldown/Sync-Metadaten |
 | `cache` | SQLite-Cache |
 | `streams` | Normalisierter Upstream-Katalog (ADR 0002); Composite-PK `(sourceId, type, streamId)`, `extra` für provider-spezifische Felder. Begleit-Virtual-Table `streams_fts` (FTS5, external content, trigram) für die Namenssuche. |
+| `episode_meta` | Episodentitel + Still/Cover je `(sourceId, episodeId)` aus `get_series_info`; überlebt Restarts (siehe `stream-title-cache.ts`). |
 | `settings` | Globale Settings |
 | `source_changelogs` | Sync-Changelog |
 | `source_connection_logs` / `source_host_logs` | Verbindungs-/Host-Überwachung |

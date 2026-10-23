@@ -69,6 +69,22 @@ export const cache = sqliteTable('cache', {
   expiresAt: integer('expiresAt'),
 });
 
+/**
+ * Title and still of a series *episode*. Episodes only exist inside the upstream's
+ * `get_series_info` response (the catalog holds series-level rows), and clients fetch
+ * that once and then keep playing episode IDs — so without persisting it, every
+ * container restart turns a running episode back into "Stream 1938143".
+ */
+export const episodeMeta = sqliteTable('episode_meta', {
+  sourceId: text('sourceId').notNull(),
+  episodeId: text('episodeId').notNull(),
+  title: text('title').notNull(),
+  icon: text('icon'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.sourceId, t.episodeId] }),
+}));
+
 export const customCategories = sqliteTable('customCategories', {
   id: text('id').primaryKey(),
   playlistId: text('playlistId').notNull(),

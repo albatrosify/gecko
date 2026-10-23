@@ -3,9 +3,11 @@ import {
   rememberStreamTitles,
   rememberSeriesInfo,
   getStreamTitle,
+  getStreamIcon,
   formatEpisodeTitle,
   clearStreamTitleCache,
 } from './stream-title-cache.ts';
+import { connectDb } from './db.ts';
 
 describe('stream-title-cache', () => {
   beforeEach(() => {
@@ -132,5 +134,49 @@ describe('stream-title-cache', () => {
       const ep1 = getStreamTitle(['source-1'], 'series', '2001');
       expect(ep1).toBe('Mini Series S01E01 - Part One');
     });
+  });
+});
+
+describe('episode persistence', () => {
+  beforeEach(async () => {
+    process.env.SQLITE_PATH = ':memory:';
+    await connectDb();
+    clearStreamTitleCache();
+  });
+
+  const darkSeries = {
+    info: { name: 'Dark', cover: 'http://img/dark-cover.jpg' },
+    episodes: {
+      '1': [
+        { id: '111', season: 1, episode_num: 1, title: 'Secrets', info: { movie_image: 'http://img/dark-s1e1.jpg' } },
+        { id: '112', season: 1, episode_num: 2, title: 'Lies' },
+      ],
+    },
+  };
+
+  it('still knows an episode after the in-memory cache was cleared (restart)', () => {
+    rememberSeriesInfo('src-1', darkSeries);
+    // A container restart loses the in-memory cache - the client does not re-fetch
+    // the series info, it just keeps playing the episode id it already has.
+    clearStreamTitleCache();
+
+    expect(getStreamTitle(['src-1'], 'series', '111')).toBe('Dark S01E01 - Secrets');
+    expect(getStreamIcon(['src-1'], 'series', '111')).toBe('http://img/dark-s1e1.jpg');
+  });
+
+  it('falls back to the series cover when an episode has no still', () => {
+    rememberSeriesInfo('src-1', darkSeries);
+    clearStreamTitleCache();
+
+    expect(getStreamTitle(['src-1'], 'series', '112')).toBe('Dark S01E02 - Lies');
+    expect(getStreamIcon(['src-1'], 'series', '112')).toBe('http://img/dark-cover.jpg');
+  });
+
+  it('returns null for an unknown episode instead of guessing', () => {
+    rememberSeriesInfo('src-1', darkSeries);
+    clearStreamTitleCache();
+
+    expect(getStreamTitle(['src-1'], 'series', '999')).toBeNull();
+    expect(getStreamIcon(['src-1'], 'series', '999')).toBeNull();
   });
 });
