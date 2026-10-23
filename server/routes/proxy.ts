@@ -413,6 +413,13 @@ export function createProxyRouter() {
 
         const ipsToTry: (string | undefined)[] = candidateIps.length > 0 ? candidateIps : [undefined];
 
+        // Behind a CDN every A record is an edge of the *same* origin, so a stalled
+        // attempt will stall on the next IP too — each one costing a full handshake
+        // timeout (observed: 2 x 15 s on a dead Cloudflare origin before the failover
+        // even reached a working host).
+        const cdnFronted = matchedHost?.networkType === 'cdn'
+          || /cloudflare|cloudfront|akamai|fastly|bunny|gcore/i.test(String(matchedHost?.cdnProvider || ''));
+
         let hostSucceeded = false;
         for (const targetIp of ipsToTry) {
           const agents = targetIp ? createIpPinnedAgents(targetIp, extractHostname(hostUrl).hostname) : undefined;
@@ -621,6 +628,10 @@ export function createProxyRouter() {
             lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
             lastError = err.message;
             destroyAgents();
+            if (cdnFronted && ipsToTry.length > 1 && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT')) {
+              log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) timed out; host is CDN-fronted, so the remaining ${ipsToTry.length - 1} edge IP(s) share the same origin — moving to the next host. - ${getClientInfo(req)}`);
+              break;
+            }
             log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) error for ${type}/${streamId}: ${err.message}, trying next candidate IP... - ${getClientInfo(req)}`);
           }
         }

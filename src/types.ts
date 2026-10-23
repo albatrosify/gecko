@@ -30,6 +30,12 @@ export interface SourceHost {
   failures: number;               // Failed proxied stream attempts
   lastUsed?: string | null;       // ISO timestamp of last successful use
   lastError?: string | null;      // Last failure reason
+  /**
+   * Decaying health score, 0..1 (1 = every recent attempt worked). Updated on each
+   * flushed use; lets the failover order demote a dead host without banning it forever.
+   */
+  health?: number;
+  lastErrorAt?: string | null;    // ISO timestamp of the last failure (for probation)
   vpnBlocked?: boolean;           // Whether this host is currently blocked by upstream CDN (HTTP 511)
 }
 

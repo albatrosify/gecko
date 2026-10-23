@@ -278,6 +278,57 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     expect(mockAxios).toHaveBeenCalledTimes(1);
   });
 
+  it('skips the remaining edge IPs of a CDN host after a timeout', async () => {
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-cdn',
+      userId: 'user-1',
+      name: 'CDN Playlist',
+      username: 'cdnuser',
+      password: 'cdnpass',
+      sourceIds: ['src-cdn'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-cdn',
+      userId: 'user-1',
+      name: 'Cloudflare Source',
+      type: 'xtream',
+      url: 'http://cdn.upstream.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://cdn.upstream.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            networkType: 'cdn',
+            cdnProvider: 'Cloudflare',
+            resolvedIp: '104.16.0.1',
+            ipCount: 2,
+            resolvedIps: [
+              { ip: '104.16.0.1', latencyMs: 20, healthy: true },
+              { ip: '104.16.0.2', latencyMs: 25, healthy: true },
+            ],
+          },
+        ],
+      } as any,
+    }).run();
+
+    mockAxios.mockRejectedValueOnce({ code: 'ECONNABORTED', message: 'timeout of 15000ms exceeded' });
+
+    const res = await fetch(`${baseUrl}/live/cdnuser/cdnpass/103.ts`);
+    expect(res.status).toBe(504);
+
+    // Both A records are edges of the same origin: retrying the second one only
+    // spends another 15 s handshake timeout.
+    expect(mockAxios).toHaveBeenCalledTimes(1);
+  });
+
   it('dynamically resolves candidate IPs via resolveHostIps when not present in source extra', async () => {
     const resolveSpy = vi.spyOn(dnsResolver, 'resolveHostIps').mockResolvedValue(['203.0.113.50', '203.0.113.60']);
 

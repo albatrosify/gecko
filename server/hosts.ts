@@ -295,8 +295,10 @@ export function normalizeHosts(
           failures: prev.failures ?? 0,
           lastUsed: prev.lastUsed ?? null,
           lastError: prev.lastError ?? null,
+          health: prev.health,
+          lastErrorAt: prev.lastErrorAt ?? null,
         }
-      : { uses: 0, failures: 0, lastUsed: null, lastError: null };
+      : { uses: 0, failures: 0, lastUsed: null, lastError: null, health: undefined, lastErrorAt: null };
 
     const initialNetwork = guessNetworkType(url);
     const networkType = (typeof raw === "object" && raw?.networkType !== undefined)
@@ -378,11 +380,50 @@ export function getOrderedHosts(sourceDoc: any): SourceHost[] {
   return normalizeHosts(hosts, primary, hosts)
     .filter(h => h.enabled !== false)
     .sort((a, b) => {
+      // A host that keeps timing out must not stay in front of a working one: the
+      // order used to be purely manual, so a dead primary burned its full handshake
+      // timeout on every single request before the failover even started.
+      const aDemoted = isHostDemoted(a) ? 1 : 0;
+      const bDemoted = isHostDemoted(b) ? 1 : 0;
+      if (aDemoted !== bDemoted) return aDemoted - bDemoted;
+
       const aPrimary = normalizeUrl(a.url) === primary ? 0 : 1;
       const bPrimary = normalizeUrl(b.url) === primary ? 0 : 1;
       if (aPrimary !== bPrimary) return aPrimary - bPrimary;
       return (a.order ?? 0) - (b.order ?? 0);
     });
+}
+
+/** A host below this health score is tried only after the healthy ones. */
+export const HOST_HEALTH_MIN = 0.6;
+/** Weight of the newest attempt in the health score (EMA). */
+const HOST_HEALTH_ALPHA = 0.2;
+/**
+ * A demoted host that has not failed for this long gets another chance. Without it a
+ * host that recovered could never prove it — it would simply never be tried again.
+ */
+const HOST_HEALTH_PROBATION_MS = 10 * 60_000;
+
+/**
+ * Rolling health of a host after a batch of attempts: 1 means "everything worked",
+ * 0 means "everything failed". Used for failover ordering only, never to disable a
+ * host — a dead primary must stop costing its 15 s timeout on every request, but it
+ * must also be able to win its place back on its own.
+ */
+export function nextHostHealth(current: number | undefined, okCount: number, failCount: number): number {
+  let health = typeof current === 'number' && Number.isFinite(current) ? current : 1;
+  for (let i = 0; i < okCount; i++) health = health * (1 - HOST_HEALTH_ALPHA) + HOST_HEALTH_ALPHA;
+  for (let i = 0; i < failCount; i++) health = health * (1 - HOST_HEALTH_ALPHA);
+  return Math.round(health * 1000) / 1000;
+}
+
+/** True when a host should be tried after the healthy ones. */
+export function isHostDemoted(host: SourceHost, now = Date.now()): boolean {
+  if (host.enabled === false) return true;
+  if (typeof host.health !== 'number' || host.health >= HOST_HEALTH_MIN) return false;
+  const lastErrorAt = host.lastErrorAt ? Date.parse(host.lastErrorAt) : NaN;
+  if (Number.isFinite(lastErrorAt) && now - lastErrorAt > HOST_HEALTH_PROBATION_MS) return false;
+  return true;
 }
 
 /**
@@ -454,8 +495,10 @@ function flushHostStats(): void {
         if (h) {
           h.uses = (h.uses ?? 0) + e.uses;
           h.failures = (h.failures ?? 0) + e.failures;
+          h.health = nextHostHealth(h.health, e.uses, e.failures);
           if (e.lastUsed) h.lastUsed = e.lastUsed;
-          if (e.lastError) h.lastError = e.lastError;
+          h.lastError = e.lastError;
+          if (e.lastError) h.lastErrorAt = new Date().toISOString();
         }
       }
       db.update(sources).set({ extra: { ...extra, hosts } }).where(eq(sources.id, sourceId)).run();
