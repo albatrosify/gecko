@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { streamHub } from './stream-hub.ts';
+import { streamHub, computeBufferHealth } from './stream-hub.ts';
 import { proxyStats, streamControllers, killStream } from '../proxy-stats.ts';
 import { EventEmitter } from 'events';
 
@@ -474,3 +474,84 @@ describe('StreamHub', () => {
 });
 
 
+
+describe('computeBufferHealth', () => {
+  const MBPS_6_8 = 850_000; // bytes per second
+  const RESERVE_S = 18;
+
+  it('reports the fill level relative to the reserve, not the memory cap', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    expect(health.status).toBe('healthy');
+    expect(health.fillPercent).toBe(100);
+    expect(health.bufferedSeconds).toBe(18);
+    expect(health.reserveSeconds).toBe(18);
+    expect(health.starved).toBe(false);
+  });
+
+  it('flags a buffer that has drained below a third of the reserve', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * 4,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    expect(health.fillPercent).toBe(22);
+    expect(health.status).toBe('low');
+  });
+
+  it('reports a dry spell as starved with its duration', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: 0,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: true,
+      starvedMs: 2400,
+    });
+    expect(health.status).toBe('starved');
+    expect(health.starved).toBe(true);
+    expect(health.starvedMs).toBe(2400);
+    expect(health.fillPercent).toBe(0);
+  });
+
+  it('never calls an unmeasured stream starved - that is just the connect phase', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: 0,
+      rateBps: 0,
+      reserveSeconds: RESERVE_S,
+      starved: true,
+    });
+    expect(health.status).toBe('warming');
+    expect(health.bufferedSeconds).toBe(0);
+  });
+
+  it('carries the last hiccup through for the tooltip', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+      lastStarveAt: 1_700_000_000_000,
+      lastStarveMs: 3100,
+    });
+    expect(health.status).toBe('healthy');
+    expect(health.lastStarveAt).toBe(1_700_000_000_000);
+    expect(health.lastStarveMs).toBe(3100);
+  });
+
+  it('caps the reported fill sensibly when the buffer overshoots the reserve', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S * 1.5,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    // The number stays honest (150 %) - the UI clamps the bar width, not the data.
+    expect(health.fillPercent).toBe(150);
+    expect(health.status).toBe('healthy');
+  });
+});

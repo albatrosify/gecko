@@ -177,6 +177,50 @@ function countryToFlag(code: string): string {
     .join('');
 }
 
+/**
+ * Jitter-buffer gauge for the "Now Playing" card.
+ *
+ * The bar is measured against the configured reserve (18 s by default), not the
+ * memory cap — 100 % means "the pump holds exactly the amount of content it aims
+ * to hold". A dip below 30 % is a warning, an empty buffer is a stall the client
+ * actually sees.
+ */
+function BufferGauge({ health }: { health?: import('../types').BufferHealth | null }) {
+  if (!health) return <div className="flex-1" />;
+
+  const palette: Record<string, { bar: string; text: string; label: string }> = {
+    healthy: { bar: 'bg-emerald-500', text: 'text-emerald-400', label: 'stabil' },
+    low: { bar: 'bg-amber-500', text: 'text-amber-400', label: 'knapp' },
+    starved: { bar: 'bg-red-500', text: 'text-red-400', label: 'hungert' },
+    warming: { bar: 'bg-zinc-600', text: 'text-zinc-400', label: 'messe…' },
+  };
+  const tone = palette[health.status] ?? palette.warming;
+  const width = Math.max(2, Math.min(100, health.fillPercent));
+  const lastHiccup = health.lastStarveAt
+    ? `Letzter Aussetzer: ${Math.round(health.lastStarveMs ?? 0)} ms, vor ${Math.max(0, Math.round((Date.now() - health.lastStarveAt) / 1000))} s`
+    : 'Seit Verbindungsaufbau kein Aussetzer';
+  const readout = health.status === 'warming'
+    ? tone.label
+    : health.status === 'starved'
+      ? `hungert seit ${((health.starvedMs ?? 0) / 1000).toFixed(1)} s`
+      : `${health.bufferedSeconds.toFixed(1)} / ${health.reserveSeconds} s · ${tone.label}`;
+  const title = health.status === 'warming'
+    ? 'Puffer wird aufgebaut — die Streamrate wird noch gemessen'
+    : `Puffer: ${health.bufferedSeconds} s von ${health.reserveSeconds} s Reserve (${health.fillPercent} %)\n${lastHiccup}`;
+
+  return (
+    <div className="flex-1 min-w-[140px]" title={title}>
+      <div className="flex items-center justify-between gap-2 text-[9px] mb-1">
+        <span className="text-zinc-500 uppercase font-bold tracking-wider">Puffer</span>
+        <span className={`font-mono ${tone.text}`}>{readout}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${tone.bar}`} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function VpnStatusBar() {
   const [ipInfo, setIpInfo] = useState<{ ip: string; country: string; city: string; org: string } | null>(null);
   const [vpnStatus, setVpnStatus] = useState<import('../types').VpnStatus | null>(null);
@@ -496,22 +540,22 @@ export function Dashboard() {
                   : 'text-purple-500 bg-purple-500/10';
                 return (
                   <div key={conn.id} className="bg-zinc-950/70 border border-zinc-800/70 rounded-xl p-3 space-y-2">
-                    {/* Top row: icon + name + type badge */}
-                    <div className="flex items-start justify-between gap-2.5 flex-wrap sm:flex-nowrap">
-                      <div className="flex items-center gap-2.5 min-w-[130px] flex-1">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColor}`}>
-                          <Play size={14} fill="currentColor" />
+                    {/* Header: the name gets the full width and wraps instead of truncating */}
+                    <div className="flex items-start gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColor}`}>
+                        <Play size={14} fill="currentColor" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-xs text-zinc-100 leading-snug break-words" title={conn.streamName || `Stream ${conn.streamId}`}>
+                          {conn.streamName || `Stream ${conn.streamId}`}
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold text-xs text-zinc-100 truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
-                            {conn.streamName || `Stream ${conn.streamId}`}
-                          </div>
-                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
-                            via <span className="text-zinc-400">{conn.playlistName || conn.username}</span>
-                          </div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5 break-words">
+                          via <span className="text-zinc-400">{conn.playlistName || conn.username}</span>
+                          <span className="text-zinc-600"> · </span>
+                          <span className="font-mono">{conn.ip}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                         {conn.isPlaceholder && (
                           <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
                             🛑 Hinweisanzeige
@@ -527,49 +571,18 @@ export function Dashboard() {
                             👥 {conn.subscriberCount} (1 Upstream)
                           </span>
                         )}
-                        {conn.recordingId ? (
-                          <div className="flex items-center gap-1">
-                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-500 border border-red-500/20">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                              REC
-                            </span>
-                            <button
-                              onClick={() => handleStopRecording(conn.id, conn.recordingId)}
-                              disabled={dvrBusy[conn.id]}
-                              className="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
-                              title="Aufnahme beenden"
-                            >
-                              {dvrBusy[conn.id] ? '...' : 'Stopp'}
-                            </button>
-                          </div>
-                        ) : (
-                          conn.type === 'live' && !conn.isPlaceholder && (
-                            <button
-                              onClick={() => handleStartRecording(conn.id)}
-                              disabled={dvrBusy[conn.id]}
-                              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
-                              title="Live-Stream aufnehmen (Stream-Tee)"
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                              {dvrBusy[conn.id] ? '...' : 'Aufnehmen'}
-                            </button>
-                          )
+                        {conn.recordingId && (
+                          <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-500 border border-red-500/20" title="Aufnahme läuft">
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                            REC
+                          </span>
                         )}
                         <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0 ${typeColor}`}>
                           {conn.type === 'movie' ? 'VOD' : conn.type}
                         </span>
-                        <button
-                          onClick={() => handleKillStream(conn.id)}
-                          disabled={killBusy[conn.id]}
-                          className="flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800/80 hover:bg-red-500 text-zinc-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-zinc-700 hover:border-red-500/30 disabled:opacity-50 shrink-0"
-                          title="Diesen Stream/Proxy-Verbindung sofort beenden (Client bricht ab)"
-                        >
-                          <Power size={9} />
-                          {killBusy[conn.id] ? '...' : 'Trennen'}
-                        </button>
                       </div>
                     </div>
-                    {/* Bottom row: stats */}
+                    {/* Stats */}
                     <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-500">
                       <div className="flex items-center gap-1">
                         <span className="text-zinc-600">⏱</span>
@@ -585,16 +598,49 @@ export function Dashboard() {
                           <span className="font-mono text-zinc-400">{(conn.currentBps / 1_000_000).toFixed(1)} Mbps</span>
                         </div>
                       )}
-                      <div className="flex items-center gap-1">
-                        <span className="text-zinc-600">IP</span>
-                        <span className="font-mono text-zinc-400">{conn.ip}</span>
-                      </div>
                       {conn.proxied && (
                         <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">VPN</span>
                       )}
                       {conn.isPlaceholder && (
                         <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
                       )}
+                    </div>
+                    {/* Buffer health + actions */}
+                    <div className="flex items-end gap-3 pl-10">
+                      <BufferGauge health={conn.buffer} />
+                      <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                        {conn.recordingId ? (
+                          <button
+                            onClick={() => handleStopRecording(conn.id, conn.recordingId)}
+                            disabled={dvrBusy[conn.id]}
+                            className="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
+                            title="Aufnahme beenden"
+                          >
+                            {dvrBusy[conn.id] ? '...' : 'Stopp'}
+                          </button>
+                        ) : (
+                          conn.type === 'live' && !conn.isPlaceholder && (
+                            <button
+                              onClick={() => handleStartRecording(conn.id)}
+                              disabled={dvrBusy[conn.id]}
+                              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
+                              title="Live-Stream aufnehmen (Stream-Tee)"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                              {dvrBusy[conn.id] ? '...' : 'Aufnehmen'}
+                            </button>
+                          )
+                        )}
+                        <button
+                          onClick={() => handleKillStream(conn.id)}
+                          disabled={killBusy[conn.id]}
+                          className="flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800/80 hover:bg-red-500 text-zinc-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-zinc-700 hover:border-red-500/30 disabled:opacity-50 shrink-0"
+                          title="Diesen Stream/Proxy-Verbindung sofort beenden (Client bricht ab)"
+                        >
+                          <Power size={9} />
+                          {killBusy[conn.id] ? '...' : 'Trennen'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

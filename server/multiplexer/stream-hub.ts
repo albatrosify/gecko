@@ -160,11 +160,77 @@ interface ActiveStreamChannel {
   pumpTimer?: NodeJS.Timeout;
   /** Set while the buffer is empty with subscribers attached — i.e. a real stall. */
   starvedSince?: number;
+  /** When the last completed starvation ended, and how long it lasted (dashboard gauge). */
+  lastStarveAt?: number;
+  lastStarveMs?: number;
   /** True once the current upstream silence has been reported, so it logs once. */
   gapWarned?: boolean;
 }
 
 type ChunkCallback = (channelKey: string, chunk: Buffer) => void;
+
+export type BufferStatus = 'healthy' | 'low' | 'starved' | 'warming';
+
+/**
+ * How the jitter buffer looks right now, for the dashboard gauge.
+ *
+ * `fillPercent` is relative to the configured reserve, not to the memory cap: 100 %
+ * means "exactly the amount of content the pump aims to hold", which is the only
+ * figure that means the same thing on a 3 Mbps and a 12 Mbps channel.
+ */
+export interface ChannelBufferHealth {
+  status: BufferStatus;
+  fillPercent: number;
+  bufferedSeconds: number;
+  reserveSeconds: number;
+  starved: boolean;
+  starvedMs?: number;
+  lastStarveAt?: number;
+  lastStarveMs?: number;
+}
+
+/** Below this share of the reserve the buffer is worth flagging. */
+const LIVE_BUFFER_LOW_PERCENT = 30;
+
+/**
+ * Pure derivation of the gauge from the channel's counters, kept out of the hub so
+ * the thresholds stay testable without a live upstream connection.
+ */
+export function computeBufferHealth(input: {
+  bufferedBytes: number;
+  rateBps: number;
+  reserveSeconds: number;
+  starved: boolean;
+  starvedMs?: number;
+  lastStarveAt?: number;
+  lastStarveMs?: number;
+}): ChannelBufferHealth {
+  // Until the rate is measured we cannot translate bytes into seconds, and an empty
+  // buffer during connect is expected - so that is "warming", not "starved".
+  const warming = input.rateBps <= 0 || input.reserveSeconds <= 0;
+  const bufferedSeconds = input.rateBps > 0 ? input.bufferedBytes / input.rateBps : 0;
+  const reserveBytes = input.rateBps * input.reserveSeconds;
+  const fillPercent = reserveBytes > 0
+    ? Math.round((input.bufferedBytes / reserveBytes) * 100)
+    : 0;
+
+  let status: BufferStatus;
+  if (warming) status = 'warming';
+  else if (input.starved) status = 'starved';
+  else if (fillPercent < LIVE_BUFFER_LOW_PERCENT) status = 'low';
+  else status = 'healthy';
+
+  return {
+    status,
+    fillPercent,
+    bufferedSeconds: Math.round(bufferedSeconds * 10) / 10,
+    reserveSeconds: input.reserveSeconds,
+    starved: input.starved,
+    ...(input.starvedMs !== undefined ? { starvedMs: input.starvedMs } : {}),
+    ...(input.lastStarveAt !== undefined ? { lastStarveAt: input.lastStarveAt } : {}),
+    ...(input.lastStarveMs !== undefined ? { lastStarveMs: input.lastStarveMs } : {}),
+  };
+}
 
 class StreamHub {
   private channels = new Map<string, ActiveStreamChannel>(); // channelKey -> ActiveStreamChannel
@@ -188,6 +254,28 @@ class StreamHub {
 
   getChannelByKey(channelKey: string): ActiveStreamChannel | undefined {
     return this.channels.get(channelKey);
+  }
+
+  /**
+   * Jitter-buffer health for the dashboard, or null when there is nothing honest to
+   * report: pacing disabled, unknown channel, or no subscribers (the pump drops the
+   * buffer by design when nobody is watching, so a level would be meaningless).
+   */
+  getBufferHealth(channelKey: string): ChannelBufferHealth | null {
+    if (!isLivePacingEnabled()) return null;
+    const channel = this.channels.get(channelKey);
+    if (!channel || channel.subscribers.size === 0) return null;
+
+    const starvedSince = channel.starvedSince;
+    return computeBufferHealth({
+      bufferedBytes: channel.bufferedBytes,
+      rateBps: this.measureUpstreamRate(channel),
+      reserveSeconds: liveBufferReserveSeconds(),
+      starved: starvedSince !== undefined,
+      ...(starvedSince !== undefined ? { starvedMs: Date.now() - starvedSince } : {}),
+      ...(channel.lastStarveAt !== undefined ? { lastStarveAt: channel.lastStarveAt } : {}),
+      ...(channel.lastStarveMs !== undefined ? { lastStarveMs: channel.lastStarveMs } : {}),
+    });
   }
 
   getActiveChannelsForSource(sourceId: string): StreamChannelSummary[] {
@@ -510,6 +598,8 @@ class StreamHub {
     }
     if (channel.starvedSince !== undefined) {
       const starvedMs = now - channel.starvedSince;
+      channel.lastStarveAt = now;
+      channel.lastStarveMs = starvedMs;
       if (starvedMs >= LIVE_BUFFER_STARVE_LOG_MS) {
         log(`[StreamHub] ⚠️ Downstream starved for ${starvedMs} ms on ${channel.channelKey} — ${channel.subscribers.size} subscriber(s) had no data to play (client re-buffers)`);
       }
