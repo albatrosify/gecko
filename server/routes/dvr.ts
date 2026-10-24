@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import fs from 'fs';
+import path from 'path';
 import { requireAuth, requireAuthOrQuery, type AuthRequest } from '../auth.ts';
 import { dvrRecorder } from '../dvr/recorder.ts';
 import { log } from '../logger.ts';
@@ -145,7 +146,8 @@ export function createDvrRouter() {
 
       const filePath = recording.filePath;
 
-      const safeFilename = `${recording.streamName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${id}.ts`;
+      const ext = (recording.filePath ? path.extname(recording.filePath) : '.ts') || '.ts';
+      const safeFilename = `${recording.streamName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${id}${ext}`;
       res.setHeader('Content-Disposition', `${isDownload ? 'attachment' : 'inline'}; filename="${safeFilename}"`);
 
       serveRecordingFile(req, res, {

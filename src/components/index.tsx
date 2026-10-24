@@ -9336,7 +9336,9 @@ function DvrPlaybackModal({
     if (!video) return;
     setPlaybackError(null);
 
-    if (mpegts.isSupported()) {
+    const isTs = !recording.filePath || recording.filePath.endsWith('.ts');
+
+    if (isTs && mpegts.isSupported()) {
       const player = mpegts.createPlayer({
         type: 'mpegts',
         isLive: false,
@@ -9387,7 +9389,7 @@ function DvrPlaybackModal({
         video.load();
       }
     };
-  }, [streamUrl]);
+  }, [streamUrl, recording.filePath]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -9404,7 +9406,7 @@ function DvrPlaybackModal({
               href={api.dvr.getStreamUrl(recording.id, true)}
               download
               className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Aufnahme als TS-Datei herunterladen"
+              title={`Aufnahme als ${recording.filePath?.endsWith('.mkv') ? 'MKV' : 'TS'}-Datei herunterladen`}
             >
               <Download size={13} />
               Herunterladen

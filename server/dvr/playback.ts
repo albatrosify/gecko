@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import type { Request, Response } from 'express';
 
 /** How long to wait before re-stating a file we already drained. */
@@ -93,13 +94,16 @@ export function serveRecordingFile(req: Request, res: Response, opts: RecordingP
   // no tail; an open-ended one (bytes=A-) gets everything that follows.
   const isBoundedRange = !!rangeHeader && /\d+$/.test(rangeHeader.trim());
 
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = ext === '.mkv' ? 'video/x-matroska' : ext === '.mp4' ? 'video/mp4' : 'video/mp2t';
+
   if (!isGrowing) {
     if (window) {
       res.writeHead(206, {
         'Content-Range': `bytes ${window.start}-${window.end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': window.end - window.start + 1,
-        'Content-Type': 'video/mp2t',
+        'Content-Type': contentType,
       });
       const file = fs.createReadStream(filePath, { start: window.start, end: window.end });
       file.on('data', (chunk: Buffer) => onBytes?.(chunk.length));
@@ -109,7 +113,7 @@ export function serveRecordingFile(req: Request, res: Response, opts: RecordingP
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Accept-Ranges': 'bytes',
-        'Content-Type': 'video/mp2t',
+        'Content-Type': contentType,
       });
       const file = fs.createReadStream(filePath);
       file.on('data', (chunk: Buffer) => onBytes?.(chunk.length));
@@ -121,7 +125,7 @@ export function serveRecordingFile(req: Request, res: Response, opts: RecordingP
 
   const headers: Record<string, string | number> = {
     'Accept-Ranges': 'bytes',
-    'Content-Type': 'video/mp2t',
+    'Content-Type': contentType,
     'Cache-Control': 'no-store',
   };
   if (isBoundedRange && window) {

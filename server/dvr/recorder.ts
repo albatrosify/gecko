@@ -899,12 +899,13 @@ class DvrRecorder {
       if (!row.filePath || !fs.existsSync(row.filePath)) throw new Error(`Recording file not found on disk.`);
 
       const originalFilePath = row.filePath;
-      const repairedTempPath = `${originalFilePath}.repaired.ts`;
+      const repairedFinalPath = originalFilePath.replace(/\.[^.]+$/, '') + '.mkv';
+      const repairedTempPath = `${originalFilePath}.repaired.mkv`;
       const backupPath = `${originalFilePath}.orig.ts`;
 
       log(`[DVR] Starting lossless remux repair for recording ${recordingId} (${row.streamName})...`);
 
-      // Remux lossless stream copy
+      // Remux lossless stream copy into MKV container to rebuild continuous timeline & cues
       await this.remuxLossless(originalFilePath, repairedTempPath);
 
       if (!fs.existsSync(repairedTempPath) || fs.statSync(repairedTempPath).size === 0) {
@@ -921,7 +922,7 @@ class DvrRecorder {
         try { fs.unlinkSync(backupPath); } catch {}
       }
       fs.renameSync(originalFilePath, backupPath);
-      fs.renameSync(repairedTempPath, originalFilePath);
+      fs.renameSync(repairedTempPath, repairedFinalPath);
 
       // Calculate backup expiration (default 3 days)
       const retentionDays = Math.max(1, parseInt(process.env.DVR_BACKUP_RETENTION_DAYS || '3', 10));
@@ -943,6 +944,7 @@ class DvrRecorder {
         .set({
           durationSeconds: newDurationSeconds,
           fileSizeBytes: newSizeBytes,
+          filePath: repairedFinalPath,
           extra: updatedExtra,
         })
         .where(eq(recordings.id, recordingId))
@@ -964,7 +966,7 @@ class DvrRecorder {
         endTime: row.endTime,
         durationSeconds: newDurationSeconds,
         fileSizeBytes: newSizeBytes,
-        filePath: originalFilePath,
+        filePath: repairedFinalPath,
         extra: updatedExtra,
       };
     } finally {
@@ -988,13 +990,14 @@ class DvrRecorder {
 
     log(`[DVR] Reverting recording ${recordingId} (${row.streamName}) to original backup...`);
 
+    const originalFilePath = backupPath.replace(/\.orig\.[a-zA-Z0-9]+$/, '');
     if (fs.existsSync(row.filePath)) {
       try { fs.unlinkSync(row.filePath); } catch {}
     }
-    fs.renameSync(backupPath, row.filePath);
+    fs.renameSync(backupPath, originalFilePath);
 
     const originalDuration = extra.originalDurationSeconds || row.durationSeconds;
-    const originalSize = extra.originalFileSizeBytes || fs.statSync(row.filePath).size;
+    const originalSize = extra.originalFileSizeBytes || fs.statSync(originalFilePath).size;
 
     const updatedExtra = { ...extra };
     delete updatedExtra.backupPath;
@@ -1007,6 +1010,7 @@ class DvrRecorder {
       .set({
         durationSeconds: originalDuration,
         fileSizeBytes: originalSize,
+        filePath: originalFilePath,
         extra: updatedExtra,
       })
       .where(eq(recordings.id, recordingId))
@@ -1028,7 +1032,7 @@ class DvrRecorder {
       endTime: row.endTime,
       durationSeconds: originalDuration,
       fileSizeBytes: originalSize,
-      filePath: row.filePath,
+      filePath: originalFilePath,
       extra: updatedExtra,
     };
   }

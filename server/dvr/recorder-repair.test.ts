@@ -9,6 +9,7 @@ import * as recorderModule from './recorder.ts';
 describe('DVR Recording Repair & Backup Management', () => {
   const testRecId = 'test-repair-1234';
   const testFilePath = path.join(RECORDINGS_DIR, 'test_repair.ts');
+  const testMkvPath = path.join(RECORDINGS_DIR, 'test_repair.mkv');
   const backupFilePath = `${testFilePath}.orig.ts`;
 
   beforeEach(async () => {
@@ -20,11 +21,13 @@ describe('DVR Recording Repair & Backup Management', () => {
 
     // Clean up any test files
     if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath);
+    if (fs.existsSync(testMkvPath)) fs.unlinkSync(testMkvPath);
     if (fs.existsSync(backupFilePath)) fs.unlinkSync(backupFilePath);
   });
 
   afterEach(() => {
     if (fs.existsSync(testFilePath)) try { fs.unlinkSync(testFilePath); } catch {}
+    if (fs.existsSync(testMkvPath)) try { fs.unlinkSync(testMkvPath); } catch {}
     if (fs.existsSync(backupFilePath)) try { fs.unlinkSync(backupFilePath); } catch {}
     vi.restoreAllMocks();
   });
@@ -58,6 +61,7 @@ describe('DVR Recording Repair & Backup Management', () => {
     const result = await dvrRecorder.repairRecording(testRecId);
 
     expect(result.durationSeconds).toBe(12600);
+    expect(result.filePath).toBe(testMkvPath);
     expect(result.extra?.needsRepair).toBe(false);
     expect(result.extra?.backupPath).toBe(backupFilePath);
     expect(result.extra?.backupExpiresAt).toBeDefined();
@@ -68,14 +72,14 @@ describe('DVR Recording Repair & Backup Management', () => {
     expect(fs.existsSync(backupFilePath)).toBe(true);
     expect(fs.readFileSync(backupFilePath).toString()).toBe('ORIGINAL_DISCONTINUOUS_DATA');
 
-    // 2. Active file path now holds the repaired content
-    expect(fs.existsSync(testFilePath)).toBe(true);
-    expect(fs.readFileSync(testFilePath).toString()).toBe('REPAIRED_CLEAN_DATA_MONOTONIC');
+    // 2. Active file path now holds the repaired content in MKV container
+    expect(fs.existsSync(testMkvPath)).toBe(true);
+    expect(fs.readFileSync(testMkvPath).toString()).toBe('REPAIRED_CLEAN_DATA_MONOTONIC');
   });
 
   it('reverts repaired recording back to original backup upon request', async () => {
     const db = getDb();
-    fs.writeFileSync(testFilePath, Buffer.from('REPAIRED_DATA'));
+    fs.writeFileSync(testMkvPath, Buffer.from('REPAIRED_DATA'));
     fs.writeFileSync(backupFilePath, Buffer.from('ORIGINAL_BACKUP_DATA'));
 
     db.insert(recordings).values({
@@ -90,7 +94,7 @@ describe('DVR Recording Repair & Backup Management', () => {
       endTime: '2026-10-11T17:30:00.000Z',
       durationSeconds: 12600,
       fileSizeBytes: 500,
-      filePath: testFilePath,
+      filePath: testMkvPath,
       extra: {
         repairedAt: '2026-10-11T18:00:00.000Z',
         backupPath: backupFilePath,
@@ -104,19 +108,21 @@ describe('DVR Recording Repair & Backup Management', () => {
 
     expect(reverted.durationSeconds).toBe(95400);
     expect(reverted.fileSizeBytes).toBe(1000);
+    expect(reverted.filePath).toBe(testFilePath);
     expect(reverted.extra?.backupPath).toBeUndefined();
     expect(reverted.extra?.backupExpiresAt).toBeUndefined();
 
     // Verify active file restored to original
     expect(fs.existsSync(testFilePath)).toBe(true);
     expect(fs.readFileSync(testFilePath).toString()).toBe('ORIGINAL_BACKUP_DATA');
-    // Verify backup file was moved/consumed
+    // Verify repaired MKV and backup were cleaned up
+    expect(fs.existsSync(testMkvPath)).toBe(false);
     expect(fs.existsSync(backupFilePath)).toBe(false);
   });
 
   it('prunes expired original backup files without touching active recordings', async () => {
     const db = getDb();
-    fs.writeFileSync(testFilePath, Buffer.from('ACTIVE_REPAIRED_CONTENT'));
+    fs.writeFileSync(testMkvPath, Buffer.from('ACTIVE_REPAIRED_CONTENT'));
     fs.writeFileSync(backupFilePath, Buffer.from('EXPIRED_ORIGINAL_BACKUP'));
 
     const expiredDate = new Date(Date.now() - 3600 * 1000).toISOString(); // 1 hour in the past
@@ -133,7 +139,7 @@ describe('DVR Recording Repair & Backup Management', () => {
       endTime: '2026-10-05T17:30:00.000Z',
       durationSeconds: 12600,
       fileSizeBytes: 500,
-      filePath: testFilePath,
+      filePath: testMkvPath,
       extra: {
         repairedAt: '2026-10-05T18:00:00.000Z',
         backupPath: backupFilePath,
@@ -148,8 +154,8 @@ describe('DVR Recording Repair & Backup Management', () => {
     expect(fs.existsSync(backupFilePath)).toBe(false);
 
     // Active repaired recording must remain 100% intact
-    expect(fs.existsSync(testFilePath)).toBe(true);
-    expect(fs.readFileSync(testFilePath).toString()).toBe('ACTIVE_REPAIRED_CONTENT');
+    expect(fs.existsSync(testMkvPath)).toBe(true);
+    expect(fs.readFileSync(testMkvPath).toString()).toBe('ACTIVE_REPAIRED_CONTENT');
 
     // DB metadata must be cleared
     const updated = dvrRecorder.getRecordingById(testRecId);
