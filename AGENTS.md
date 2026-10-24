@@ -56,7 +56,7 @@ npm run test     # vitest run
 - `epg-service.ts` — EPG Fetching, Disk-Caching (`.xml.gz`), Stale-While-Revalidate, Non-Blocking Streaming für `/xmltv.php`.
 
 **Frontend** (`src/`):
-- `main.tsx` — Entry. `App.tsx` — Router + Auth-Gate, Routen unter Sidebar.
+- `main.tsx` — Entry. `App.tsx` — Router + Auth-Gate, responsives Apple HIG-Design (Desktop: anpassbare macOS-Sidebar mit Toggle & Cmd+\, Mobile: iOS Liquid Glass Bottom Tab Bar + Top Navigation Bar + "Mehr"-Sheet).
 - `api.ts` — Typed-Fetch-Wrapper (JWT in `localStorage`, 401 → Reload); Gruppen `auth`, `sources`, `epgs`, `playlists`, `mappings`, `categoryMappings`, `customCategories`, `customCategoryItems`, `upstream`, `proxy`, `admin`, `system`, `settings`, `llm`, `qualityScan`, `dvr`, `traffic`.
 - `types.ts` — Shared Types (Frontend + Backend).
 - `components/index.tsx` — monolithisch (~420 KB): `Dashboard`, `PlaylistManager`, `SourceManager`, `EPGManager`, `Settings`, `PlaylistEditor`, `UserManager`, `DvrManager`.

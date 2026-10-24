@@ -42,6 +42,15 @@ initLogFile();
 async function startServer() {
   log("Starting server...");
   try {
+    // Load local .env file if available and not in container
+    if (typeof (process as any).loadEnvFile === 'function' && fs.existsSync('.env')) {
+      try {
+        (process as any).loadEnvFile('.env');
+      } catch (err: any) {
+        console.warn('Could not load .env file:', err.message);
+      }
+    }
+
     // Environment validation
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET environment variable is not set. The server cannot start without a secret for security reasons. Please check your .env file or Docker environment configuration.');

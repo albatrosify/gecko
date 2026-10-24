@@ -28,6 +28,7 @@ import { recordTraffic } from "../traffic.ts";
 import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
 import { servePlaylistEpg } from "../epg-service.ts";
 import fs from "fs";
+import path from "path";
 
 const limit = pLimit(5);
 
@@ -1322,6 +1323,7 @@ export function createProxyRouter() {
               completedRecordings.forEach((rec, recIdx) => {
                 const addedSec = Math.floor(new Date(rec.startTime).getTime() / 1000).toString();
                 const numericStreamId = dvrRecorder.getNumericId(rec.id);
+                const recExt = (rec.filePath ? path.extname(rec.filePath).replace(/^\./, '') : '') || 'ts';
                 filteredData.push({
                   num: filteredData.length + 1,
                   name: `${rec.streamName} (${new Date(rec.startTime).toLocaleDateString()})`,
@@ -1333,7 +1335,7 @@ export function createProxyRouter() {
                   added: addedSec,
                   category_id: DVR_CATEGORY_ID,
                   category_ids: [parseInt(DVR_CATEGORY_ID, 10)],
-                  container_extension: 'ts',
+                  container_extension: recExt,
                   custom_sid: null,
                   direct_source: '',
                   _catOrder: dvrCatMapping?.order ?? -1,
@@ -1634,6 +1636,7 @@ export function createProxyRouter() {
 
           if (rec) {
             const numericStreamId = dvrRecorder.getNumericId(rec.id);
+            const recExt = (rec.filePath ? path.extname(rec.filePath).replace(/^\./, '') : '') || 'ts';
             data = {
               info: {
                 name: rec.streamName,
@@ -1650,7 +1653,7 @@ export function createProxyRouter() {
                 added: Math.floor(new Date(rec.startTime).getTime() / 1000).toString(),
                 category_id: DVR_CATEGORY_ID,
                 category_ids: [parseInt(DVR_CATEGORY_ID, 10)],
-                container_extension: 'ts',
+                container_extension: recExt,
               },
             };
             break;

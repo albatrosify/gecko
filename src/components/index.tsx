@@ -388,56 +388,56 @@ export function Dashboard() {
   const mbps = (stats.currentBps / 1000000).toFixed(2);
 
   return (
-    <div className="p-6 space-y-5 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">Overview</h2>
-        <p className="text-xs text-zinc-500">Real-time system performance and activity</p>
+        <h2 className="text-2xl font-bold tracking-tight text-white">Systemübersicht</h2>
+        <p className="text-xs text-zinc-400">Echtzeit-Durchsatz, aktive Streams und Systemleistung</p>
       </header>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Playlists', value: stats.totalPlaylists, icon: LayoutList, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-          { label: 'Active Users', value: stats.totalUsers, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
-          { label: 'Active Streams', value: stats.activeStreams, icon: Wifi, color: 'text-purple-500', bg: 'bg-purple-500/10' },
-          { label: 'Current Speed', value: `${mbps} Mbps`, icon: Activity, color: 'text-orange-500', bg: 'bg-orange-500/10' },
+          { label: 'Playlists', value: stats.totalPlaylists, icon: LayoutList, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+          { label: 'Active Users', value: stats.totalUsers, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+          { label: 'Active Streams', value: stats.activeStreams, icon: Wifi, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+          { label: 'Current Speed', value: `${mbps} Mbps`, icon: Activity, color: 'text-orange-400', bg: 'bg-orange-500/10' },
         ].map((card, i) => (
-          <div key={i} className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-zinc-700 transition-all flex flex-col justify-between">
-            <div className="flex justify-between items-center mb-1.5">
+          <div key={i} className="apple-glass-card apple-glass-card-hover p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-2">
               <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">{card.label}</span>
               <div className={`p-1.5 rounded-lg ${card.bg} ${card.color} border border-current/10 shrink-0`}>
                 <card.icon size={15} />
               </div>
             </div>
-            <div className="text-xl font-bold text-zinc-100 tracking-tight">{card.value}</div>
+            <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{card.value}</div>
           </div>
         ))}
         {/* Monatstraffic card */}
-        <Link to="/traffic" className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-emerald-500/50 transition-all flex flex-col justify-between cursor-pointer">
-          <div className="flex justify-between items-center mb-1.5">
+        <Link to="/traffic" className="apple-glass-card apple-glass-card-hover p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between cursor-pointer group">
+          <div className="flex justify-between items-center mb-2">
             <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Monatstraffic</span>
-            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 border border-current/10 shrink-0 group-hover:scale-110 transition-transform">
+            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-current/10 shrink-0 group-hover:scale-110 transition-transform">
               <BarChart3 size={15} />
             </div>
           </div>
           <div>
-            <div className="text-xl font-bold text-zinc-100 tracking-tight">{formatBytes(stats.monthBytes || 0)}</div>
-            <div className="text-[10px] text-zinc-500">
+            <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{formatBytes(stats.monthBytes || 0)}</div>
+            <div className="text-[10px] text-zinc-400">
               {stats.monthlyQuotaBytes ? `${Math.round(((stats.monthBytes || 0) / stats.monthlyQuotaBytes) * 1000) / 10}% von ${formatBytes(stats.monthlyQuotaBytes)}` : 'Details ansehen'}
             </div>
           </div>
         </Link>
         {/* Cache stat card */}
         {stats.cache && (
-          <div className="bg-zinc-900/90 border border-zinc-800/80 p-3.5 rounded-xl group hover:border-zinc-700 transition-all flex flex-col justify-between">
-            <div className="flex justify-between items-center mb-1.5">
+          <div className="apple-glass-card apple-glass-card-hover p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-2">
               <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">Cache</span>
-              <div className="p-1.5 rounded-lg bg-yellow-500/10 text-yellow-500 border border-current/10 shrink-0">
+              <div className="p-1.5 rounded-lg bg-yellow-500/10 text-yellow-400 border border-current/10 shrink-0">
                 <Database size={15} />
               </div>
             </div>
             <div>
-              <div className="text-xl font-bold text-zinc-100 tracking-tight">{stats.cache.size}</div>
-              <div className="text-[10px] text-zinc-500">{stats.cache.entries} entries</div>
+              <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{stats.cache.size}</div>
+              <div className="text-[10px] text-zinc-400">{stats.cache.entries} Einträge</div>
             </div>
           </div>
         )}
@@ -446,23 +446,23 @@ export function Dashboard() {
       <VpnStatusBar />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">
+        <div className="lg:col-span-2 apple-glass-card p-4 sm:p-5 flex flex-col">
           <div className="flex justify-between items-center mb-4">
             <div>
-              <h3 className="text-base font-bold text-zinc-100">Bandwidth Usage</h3>
-              <p className="text-xs text-zinc-500">Real-time throughput · 2s samples</p>
+              <h3 className="text-base font-bold text-white">Bandwidth Usage</h3>
+              <p className="text-xs text-zinc-400">Echtzeit-Durchsatz · 2s Abtastrate</p>
             </div>
             <div className="text-right">
-              <div className="text-xl font-bold text-emerald-500 tabular-nums">{mbps} Mbps</div>
+              <div className="text-xl font-bold text-emerald-400 tabular-nums">{mbps} Mbps</div>
               <div className="text-[9px] text-zinc-500 uppercase font-bold tracking-wider">Current</div>
             </div>
           </div>
           <BandwidthChart history={stats.history || []} currentBps={stats.currentBps || 0} />
         </div>
 
-        <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-5 flex flex-col">
+        <div className="apple-glass-card p-4 sm:p-5 flex flex-col">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-bold text-zinc-100">Now Playing</h3>
+            <h3 className="text-base font-bold text-white">Now Playing</h3>
             <div className="flex items-center gap-2">
               {stats.directStreamsCount > 0 && (
                 <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider" title="Playlists with Direct Streams bypass the proxy and won't appear here">
@@ -473,10 +473,10 @@ export function Dashboard() {
                 <button
                   onClick={handleKillAllStreams}
                   disabled={killAllBusy}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 transition-all disabled:opacity-50"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 transition-all disabled:opacity-50 min-h-[30px] cursor-pointer"
                   title="Alle aktiven Streams/Proxy-Verbindungen beenden"
                 >
-                  <Power size={10} />
+                  <Power size={11} />
                   {killAllBusy ? '...' : 'Alle beenden'}
                 </button>
               )}
@@ -491,11 +491,11 @@ export function Dashboard() {
                   series: 'text-purple-400 bg-purple-500/10',
                 };
                 const typeColor = typeColors[conn.type] || 'text-zinc-400 bg-zinc-500/10';
-                const iconColor = conn.type === 'live' ? 'text-orange-500 bg-orange-500/10'
-                  : conn.type === 'movie' ? 'text-blue-500 bg-blue-500/10'
-                  : 'text-purple-500 bg-purple-500/10';
+                const iconColor = conn.type === 'live' ? 'text-orange-400 bg-orange-500/10'
+                  : conn.type === 'movie' ? 'text-blue-400 bg-blue-500/10'
+                  : 'text-purple-400 bg-purple-500/10';
                 return (
-                  <div key={conn.id} className="bg-zinc-950/70 border border-zinc-800/70 rounded-xl p-3 space-y-2">
+                  <div key={conn.id} className="bg-black/40 border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
                     {/* Top row: icon + name + type badge */}
                     <div className="flex items-start justify-between gap-2.5 flex-wrap sm:flex-nowrap">
                       <div className="flex items-center gap-2.5 min-w-[130px] flex-1">
@@ -503,11 +503,11 @@ export function Dashboard() {
                           <Play size={14} fill="currentColor" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-xs text-zinc-100 truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
+                          <div className="font-bold text-xs text-white truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
                             {conn.streamName || `Stream ${conn.streamId}`}
                           </div>
-                          <div className="text-[11px] text-zinc-500 truncate mt-0.5">
-                            via <span className="text-zinc-400">{conn.playlistName || conn.username}</span>
+                          <div className="text-[11px] text-zinc-400 truncate mt-0.5">
+                            via <span className="text-zinc-300 font-medium">{conn.playlistName || conn.username}</span>
                           </div>
                         </div>
                       </div>
@@ -529,14 +529,14 @@ export function Dashboard() {
                         )}
                         {conn.recordingId ? (
                           <div className="flex items-center gap-1">
-                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-500 border border-red-500/20">
+                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                               REC
                             </span>
                             <button
                               onClick={() => handleStopRecording(conn.id, conn.recordingId)}
                               disabled={dvrBusy[conn.id]}
-                              className="px-1.5 py-0.5 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/30 disabled:opacity-50"
+                              className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/30 disabled:opacity-50 min-h-[30px] cursor-pointer"
                               title="Aufnahme beenden"
                             >
                               {dvrBusy[conn.id] ? '...' : 'Stopp'}
@@ -547,7 +547,7 @@ export function Dashboard() {
                             <button
                               onClick={() => handleStartRecording(conn.id)}
                               disabled={dvrBusy[conn.id]}
-                              className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-red-500/20 disabled:opacity-50"
+                              className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/20 disabled:opacity-50 min-h-[30px] cursor-pointer"
                               title="Live-Stream aufnehmen (Stream-Tee)"
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
@@ -555,55 +555,57 @@ export function Dashboard() {
                             </button>
                           )
                         )}
-                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0 ${typeColor}`}>
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
                           {conn.type === 'movie' ? 'VOD' : conn.type}
                         </span>
                         <button
                           onClick={() => handleKillStream(conn.id)}
                           disabled={killBusy[conn.id]}
-                          className="flex items-center gap-1 px-1.5 py-0.5 bg-zinc-800/80 hover:bg-red-500 text-zinc-400 hover:text-white rounded-md text-[9px] font-bold transition-all border border-zinc-700 hover:border-red-500/30 disabled:opacity-50 shrink-0"
+                          className="flex items-center gap-1 px-2.5 py-1 bg-white/[0.06] hover:bg-red-500 text-zinc-300 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-white/[0.08] hover:border-red-500/30 disabled:opacity-50 shrink-0 min-h-[30px] cursor-pointer"
                           title="Diesen Stream/Proxy-Verbindung sofort beenden (Client bricht ab)"
                         >
-                          <Power size={9} />
+                          <Power size={10} />
                           {killBusy[conn.id] ? '...' : 'Trennen'}
                         </button>
                       </div>
                     </div>
                     {/* Bottom row: stats */}
-                    <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-500">
+                    <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-400">
                       <div className="flex items-center gap-1">
-                        <span className="text-zinc-600">⏱</span>
-                        <span className="font-mono text-zinc-400">{formatElapsedSince(conn.startTime)}</span>
+                        <span className="text-zinc-500">⏱</span>
+                        <span className="font-mono text-zinc-300">{formatElapsedSince(conn.startTime)}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <span className="text-zinc-600">↓</span>
-                        <span className="font-mono text-zinc-400">{formatBytes(conn.bytesRead)}</span>
+                        <span className="text-zinc-500">↓</span>
+                        <span className="font-mono text-zinc-300">{formatBytes(conn.bytesRead)}</span>
                       </div>
                       {conn.currentBps > 0 && (
                         <div className="flex items-center gap-1">
-                          <span className="text-zinc-600">~</span>
-                          <span className="font-mono text-zinc-400">{(conn.currentBps / 1_000_000).toFixed(1)} Mbps</span>
+                          <span className="text-zinc-500">~</span>
+                          <span className="font-mono text-emerald-400 font-semibold">{(conn.currentBps / 1_000_000).toFixed(1)} Mbps</span>
                         </div>
                       )}
                       <div className="flex items-center gap-1">
-                        <span className="text-zinc-600">IP</span>
-                        <span className="font-mono text-zinc-400">{conn.ip}</span>
+                        <span className="text-zinc-500">IP</span>
+                        <span className="font-mono text-zinc-300">{conn.ip}</span>
                       </div>
                       {conn.proxied && (
-                        <span className="text-[9px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">VPN</span>
+                        <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">VPN</span>
                       )}
                       {conn.isPlaceholder && (
-                        <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
+                        <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
                       )}
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <Activity size={24} className="text-zinc-600 mb-2 opacity-40" />
-                <div className="text-zinc-400 text-sm font-medium">Quiet on the wire...</div>
-                <div className="text-[10px] text-zinc-600 uppercase font-semibold tracking-wider mt-0.5">No active streams</div>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center mb-2.5 text-zinc-500">
+                  <Activity size={20} />
+                </div>
+                <div className="text-white text-sm font-semibold">Aktuell keine aktiven Streams</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">Sobald ein IPTV-Client verbindet, erscheint der Stream hier</div>
               </div>
             )}
           </div>
@@ -708,18 +710,18 @@ export function PlaylistManager() {
   };
 
   return (
-    <div className="p-6 space-y-5">
-      <header className="flex justify-between items-end">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-white">Playlists</h2>
-          <p className="text-xs text-zinc-500">Manage and configure your IPTV playlists</p>
+          <p className="text-xs text-zinc-400">Verwalte und konfiguriere deine aggregierten IPTV-Playlists</p>
         </div>
         <button 
           onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
+          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          New Playlist
+          <span>Neue Playlist</span>
         </button>
       </header>
 
@@ -1061,18 +1063,18 @@ export function PlaylistManager() {
             key={playlist.id}
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 space-y-3.5 hover:border-zinc-700 transition-all flex flex-col justify-between group"
+            className="apple-glass-card apple-glass-card-hover p-4 sm:p-5 space-y-3.5 flex flex-col justify-between group"
           >
             <div className="flex justify-between items-start gap-2">
               <div className="min-w-0">
-                <h3 className="text-lg font-bold text-zinc-100 truncate">{playlist.name}</h3>
+                <h3 className="text-lg font-bold text-white truncate">{playlist.name}</h3>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">
                     {playlist.sourceIds.length} {playlist.sourceIds.length === 1 ? 'Source' : 'Sources'}
                   </span>
                   <span className="text-zinc-600">·</span>
                   <span className={`text-[10px] font-semibold ${playlist.enabled ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                    {playlist.enabled ? 'Active' : 'Disabled'}
+                    {playlist.enabled ? 'Aktiv' : 'Deaktiviert'}
                   </span>
                   {playlist.directStreams && (
                     <>
@@ -1084,12 +1086,12 @@ export function PlaylistManager() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 <button 
                   onClick={() => {
                     setCloningPlaylist(playlist);
                     setCloneData({ 
-                      name: `${playlist.name} (Copy)`, 
+                      name: `${playlist.name} (Kopie)`, 
                       username: playlist.username, 
                       password: playlist.password,
                       sourceUsername: '',
@@ -1097,8 +1099,8 @@ export function PlaylistManager() {
                     });
                     setShowCloneModal(true);
                   }}
-                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer"
-                  title="Duplicate Playlist"
+                  className="p-2 hover:bg-white/[0.08] text-zinc-400 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
+                  title="Playlist duplizieren"
                 >
                   <Copy size={15} />
                 </button>
@@ -1108,32 +1110,32 @@ export function PlaylistManager() {
                     setEditData({ name: playlist.name, username: playlist.username, password: playlist.password, epgIds: playlist.epgIds || [], qualityLabelFormat: playlist.qualityLabelFormat ?? '', sourceOverrides: playlist.sourceOverrides || {} });
                     setShowEditModal(true);
                   }}
-                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors cursor-pointer" 
-                  title="Edit Settings"
+                  className="p-2 hover:bg-white/[0.08] text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center" 
+                  title="Einstellungen bearbeiten"
                 >
                   <Edit3 size={15} />
                 </button>
                 <button 
                   onClick={() => handleDelete(playlist.id)}
-                  className="p-1.5 hover:bg-zinc-800 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer"
-                  title="Delete"
+                  className="p-2 hover:bg-red-500/15 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
+                  title="Löschen"
                 >
                   <Trash2 size={15} />
                 </button>
               </div>
             </div>
 
-            <div className="bg-zinc-950/70 rounded-xl p-3 border border-zinc-800/60 space-y-2.5">
+            <div className="bg-black/40 rounded-xl p-3 border border-white/[0.06] space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Credentials</span>
+                <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Zugangsdaten</span>
                 <div className="font-mono text-xs text-zinc-300 flex items-center gap-1.5">
-                  <span className="text-zinc-200 font-semibold">{playlist.username}</span>
+                  <span className="text-white font-semibold">{playlist.username}</span>
                   <span className="text-zinc-600">/</span>
                   <span className="text-zinc-500">••••••••</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-800/50">
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/[0.06]">
                 <button
                   type="button"
                   onClick={() => {
@@ -1142,18 +1144,18 @@ export function PlaylistManager() {
                     setCopiedEndpoint(`${playlist.id}-api`);
                     setTimeout(() => setCopiedEndpoint(null), 2000);
                   }}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer"
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer min-h-[34px]"
                   title="Copy Xtream player_api.php URL"
                 >
                   {copiedEndpoint === `${playlist.id}-api` ? (
                     <>
                       <Check size={13} className="text-emerald-400" />
-                      <span className="text-emerald-400 font-semibold text-[11px]">API Copied!</span>
+                      <span className="text-emerald-400 font-semibold text-[11px]">API kopiert!</span>
                     </>
                   ) : (
                     <>
                       <Copy size={13} className="text-zinc-400" />
-                      <span className="text-[11px]">Copy API</span>
+                      <span className="text-[11px]">API kopieren</span>
                     </>
                   )}
                 </button>
@@ -1166,42 +1168,42 @@ export function PlaylistManager() {
                     setCopiedEndpoint(`${playlist.id}-m3u`);
                     setTimeout(() => setCopiedEndpoint(null), 2000);
                   }}
-                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer"
+                  className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-medium text-zinc-300 hover:text-white transition-all cursor-pointer min-h-[34px]"
                   title="Copy M3U Plus playlist URL"
                 >
                   {copiedEndpoint === `${playlist.id}-m3u` ? (
                     <>
                       <Check size={13} className="text-emerald-400" />
-                      <span className="text-emerald-400 font-semibold text-[11px]">M3U Copied!</span>
+                      <span className="text-emerald-400 font-semibold text-[11px]">M3U kopiert!</span>
                     </>
                   ) : (
                     <>
                       <Copy size={13} className="text-zinc-400" />
-                      <span className="text-[11px]">Copy M3U</span>
+                      <span className="text-[11px]">M3U kopieren</span>
                     </>
                   )}
                 </button>
               </div>
             </div>
 
-            <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between gap-3">
+            <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between gap-3">
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <button
                   type="button"
                   onClick={() => handleToggleDirectStreams(playlist)}
-                  className={`w-8 h-4 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                  className={`w-9 h-5 rounded-full relative transition-colors ${playlist.directStreams ? 'bg-emerald-500' : 'bg-white/20'}`}
                 >
-                  <div className={`w-2.5 h-2.5 bg-white rounded-full absolute top-[3px] transition-all ${playlist.directStreams ? 'left-4.5' : 'left-1'}`} />
+                  <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all shadow-sm ${playlist.directStreams ? 'left-4.5' : 'left-1'}`} />
                 </button>
                 <span className="text-xs text-zinc-400 font-medium">Direct Streams</span>
               </label>
 
               <Link 
                 to={`/playlist/${playlist.id}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-emerald-500 hover:text-zinc-950 text-zinc-200 rounded-xl text-xs font-bold transition-all"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white/[0.08] hover:bg-emerald-500 hover:text-zinc-950 text-white rounded-xl text-xs font-bold transition-all min-h-[34px] shadow-sm active:scale-[0.98]"
               >
-                <Play size={13} />
-                <span>Open Editor</span>
+                <Play size={13} fill="currentColor" />
+                <span>Editor öffnen</span>
               </Link>
             </div>
           </motion.div>
@@ -1739,18 +1741,18 @@ export function SourceManager() {
   };
 
   return (
-    <div className="p-6 space-y-5">
-      <header className="flex justify-between items-end">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Upstream Sources</h2>
-          <p className="text-xs text-zinc-500">Connect your IPTV providers</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">Upstream Quellen</h2>
+          <p className="text-xs text-zinc-400">Verbinde und überwache deine IPTV-Provider und Xtream-Server</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
+          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          Add Source
+          <span>Quelle hinzufügen</span>
         </button>
       </header>
 
@@ -1758,7 +1760,7 @@ export function SourceManager() {
         {sources.map((source) => {
           const expiryInfo = formatExpiryDate(source.expiryDate);
           return (
-            <div key={source.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between gap-3">
+            <div key={source.id} className="apple-glass-card apple-glass-card-hover p-4 sm:p-5 flex flex-col justify-between gap-3.5">
               <div className="space-y-3">
                 <div className="flex justify-between items-start gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -3174,24 +3176,24 @@ export function EPGManager() {
   };
 
   return (
-    <div className="p-6 space-y-5">
-      <header className="flex justify-between items-end">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">EPG Providers</h2>
-          <p className="text-xs text-zinc-500">Manage your XMLTV guides</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">EPG Provider</h2>
+          <p className="text-xs text-zinc-400">Verwalte XMLTV-Programmzeitschriften für deine Kanäle</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 text-zinc-950 font-bold rounded-xl text-sm hover:bg-emerald-400 transition-all shadow-md shadow-emerald-500/15 cursor-pointer"
+          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          Add EPG
+          <span>EPG hinzufügen</span>
         </button>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {epgs.map((epg) => (
-          <div key={epg.id} className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 sm:p-5 flex justify-between items-center gap-3">
+          <div key={epg.id} className="apple-glass-card apple-glass-card-hover p-4 sm:p-5 rounded-2xl flex justify-between items-center gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="p-2 bg-zinc-800/80 rounded-xl text-emerald-400 shrink-0">
                 <Tv size={18} />
@@ -3348,7 +3350,7 @@ function TrafficSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+    <div className="apple-glass-card p-4 sm:p-5 rounded-2xl space-y-3.5">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
@@ -3427,7 +3429,7 @@ function VpnSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+    <div className="apple-glass-card p-4 sm:p-5 rounded-2xl space-y-3.5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-bold text-zinc-100">VPN Connection</h3>
@@ -3584,7 +3586,7 @@ function TelegramSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+    <div className="apple-glass-card p-4 sm:p-5 rounded-2xl space-y-3.5">
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -3779,7 +3781,7 @@ function LlmSettingsCard() {
   };
 
   return (
-    <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+    <div className="apple-glass-card p-4 sm:p-5 rounded-2xl space-y-3.5">
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -3938,21 +3940,21 @@ export function Settings({ user }: { user: User }) {
   };
 
   return (
-    <div className="p-4 sm:p-5 lg:p-6 space-y-4 max-w-[1600px] mx-auto">
+    <div className="p-4 sm:p-5 lg:p-6 space-y-5 max-w-[1600px] mx-auto">
       <header>
-        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">Settings</h2>
-        <p className="text-xs text-zinc-500">Global application configuration, integrations and monitoring</p>
+        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Einstellungen</h2>
+        <p className="text-xs text-zinc-400">Globale Systemkonfiguration, Integrationen und Monitoring</p>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         {/* Left Column: Config & Integrations */}
         <div className="lg:col-span-5 space-y-3.5">
           {/* User Profile & Maintenance Card */}
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="apple-glass-card p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-zinc-100">Account</h3>
-                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono uppercase font-bold bg-zinc-800 text-zinc-300 border border-zinc-700">{user.role}</span>
+                <h3 className="text-sm font-bold text-white">Account</h3>
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono uppercase font-bold bg-white/[0.08] text-zinc-300 border border-white/[0.1]">{user.role}</span>
               </div>
               <p className="text-xs text-zinc-400 font-mono truncate">{user.email}</p>
             </div>
@@ -3960,10 +3962,10 @@ export function Settings({ user }: { user: User }) {
             <button
               onClick={handleClearCache}
               disabled={cacheClearing}
-              className="py-1 px-2.5 border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded-lg font-medium transition-all text-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+              className="py-1.5 px-3 border border-red-500/30 text-red-400 hover:bg-red-500/15 rounded-lg font-medium transition-all text-xs cursor-pointer flex items-center gap-1.5 shrink-0 min-h-[34px]"
               title="Delete all temporary cache files"
             >
-              <Trash2 size={12} />
+              <Trash2 size={13} />
               <span>{cacheClearing ? 'Clearing...' : 'Clear Cache'}</span>
             </button>
             {cacheMessage && (
@@ -3980,7 +3982,7 @@ export function Settings({ user }: { user: User }) {
           <LlmSettingsCard />
 
           {/* Quality Labels Card */}
-          <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-2xl p-4 space-y-3">
+          <div className="apple-glass-card p-4 sm:p-5 space-y-3.5">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-zinc-100">Quality Labels</h3>
@@ -5509,57 +5511,59 @@ export function PlaylistEditor() {
         />
       )}
 
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10 px-4">
-        <div className="flex items-center gap-2">
-          <Link to="/" className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 -ml-2">
+      <div className="apple-glass-topbar sticky top-0 z-20 px-3 sm:px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Link to="/playlists" className="p-2 hover:bg-white/[0.08] rounded-xl text-zinc-300 hover:text-white -ml-1 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer" title="Zurück zu Playlists">
             <ArrowLeft size={18} />
           </Link>
-          <h2 className="text-base font-bold tracking-tight mr-2 truncate max-w-[150px] sm:max-w-xs">{playlist.name}</h2>
+          <h2 className="text-base font-bold tracking-tight mr-1 truncate max-w-[130px] sm:max-w-xs text-white">{playlist.name}</h2>
 
           <button
             onClick={() => setIsCategorySidebarOpen(v => !v)}
             className={clsx(
-              "px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold shrink-0",
+              "px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold shrink-0 min-h-[34px] cursor-pointer",
               isCategorySidebarOpen 
-                ? "bg-zinc-800/90 text-zinc-200 border-zinc-700 hover:bg-zinc-700" 
-                : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800"
+                ? "bg-white/[0.1] text-white border-white/[0.12]" 
+                : "bg-white/[0.04] text-zinc-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08]"
             )}
-            title={isCategorySidebarOpen ? "Hide categories sidebar" : "Show categories sidebar"}
+            title={isCategorySidebarOpen ? "Kategorien-Leiste verbergen" : "Kategorien-Leiste einblenden"}
           >
             <Folder size={13} className={isCategorySidebarOpen ? "text-emerald-400" : "text-zinc-400"} />
-            <span className="hidden sm:inline">Categories</span>
+            <span className="hidden sm:inline">Kategorien</span>
           </button>
 
-          <div className="h-6 w-px bg-zinc-800 mx-1 hidden sm:block" />
+          <div className="h-5 w-px bg-white/[0.1] mx-1 hidden sm:block" />
           
-          <TabButton active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="TV Channels" />
-          <TabButton active={activeTab === 'vod'} onClick={() => setActiveTab('vod')} label="Movies" />
-          <TabButton active={activeTab === 'series'} onClick={() => setActiveTab('series')} label="Series" />
+          <div className="flex items-center p-0.5 rounded-xl bg-white/[0.06] border border-white/[0.08]">
+            <TabButton active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="Live TV" />
+            <TabButton active={activeTab === 'vod'} onClick={() => setActiveTab('vod')} label="Filme" />
+            <TabButton active={activeTab === 'series'} onClick={() => setActiveTab('series')} label="Serien" />
+          </div>
         </div>
         
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-1.5 items-center">
           <button
             onClick={() => setShowGlobalSearch(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
-            title="Search (⌘K)"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 hover:text-white rounded-lg font-semibold transition-all border border-white/[0.08] min-h-[34px] cursor-pointer"
+            title="Suchen (⌘K)"
           >
             <Search size={14} />
-            Search
+            <span className="hidden sm:inline">Suche</span>
           </button>
           <button
             onClick={() => setShowSourceSelector(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-zinc-800 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 hover:text-white transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 hover:text-white rounded-lg font-semibold transition-all border border-white/[0.08] min-h-[34px] cursor-pointer"
           >
             <Database size={14} />
-            Sources ({playlist.sourceIds.length})
+            <span className="hidden sm:inline">Quellen</span> ({playlist.sourceIds.length})
           </button>
           <button 
             onClick={() => loadData(true)}
-            className="p-1.5 bg-zinc-800 text-zinc-400 hover:text-zinc-100 rounded-lg transition-all flex items-center justify-center"
-            title={lastUpdated ? `Last updated: ${new Date(lastUpdated).toLocaleString()}` : 'Refresh'}
+            className="p-2 bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 hover:text-white rounded-lg transition-all flex items-center justify-center border border-white/[0.08] min-h-[34px] min-w-[34px] cursor-pointer"
+            title={lastUpdated ? `Zuletzt aktualisiert: ${new Date(lastUpdated).toLocaleString()}` : 'Aktualisieren'}
           >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {isCached && !loading && <span className="ml-[2px] text-[9px] uppercase font-bold text-zinc-500">Cached</span>}
+            <RefreshCw size={14} className={loading ? 'animate-spin text-emerald-400' : ''} />
+            {isCached && !loading && <span className="ml-[2px] text-[9px] uppercase font-bold text-zinc-500">Cache</span>}
           </button>
         </div>
       </div>
@@ -6941,8 +6945,10 @@ function TabButton({ active, onClick, label }: { active: boolean; onClick: () =>
     <button 
       onClick={onClick}
       className={clsx(
-        "px-4 py-3 text-sm font-bold transition-all border-b-2",
-        active ? "text-emerald-500 border-emerald-500 bg-emerald-500/5" : "text-zinc-500 border-transparent hover:text-zinc-300"
+        "px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer min-h-[30px]",
+        active 
+          ? "bg-white/[0.12] text-white shadow-sm font-bold" 
+          : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]"
       )}
     >
       {label}
@@ -8855,63 +8861,65 @@ export function UserManager({ user }: { user: User }) {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight text-zinc-100">User Management</h2>
-        <p className="text-xs text-zinc-500">Manage system accounts and their associated data</p>
+        <h2 className="text-2xl font-bold tracking-tight text-white">Benutzerverwaltung</h2>
+        <p className="text-xs text-zinc-400">Verwalte Systemkonten und zugeordnete Playlists</p>
       </header>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-zinc-800 bg-zinc-900/50">
-              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500">User Email</th>
-              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Playlists</th>
-              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Role</th>
-              <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800/80">
-            {users.map((u) => (
-              <tr key={u.id} className="group hover:bg-zinc-800/30 transition-all">
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 font-bold text-xs">
-                      {u.email[0].toUpperCase()}
-                    </div>
-                    <span className="font-medium text-xs text-zinc-200">{u.email}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-center">
-                  <span className="px-2.5 py-0.5 bg-zinc-800 rounded-full text-[11px] font-bold text-zinc-400 border border-zinc-700">
-                    {u.playlistCount}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-tighter border ${
-                    u.role === 'admin' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                  }`}>
-                    {u.role}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  {u.id !== user.id && (
-                    <button 
-                      onClick={() => handleDelete(u.id, u.email)}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all cursor-pointer"
-                      title="Delete User"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                  {u.id === user.id && (
-                    <span className="text-[10px] text-zinc-600 uppercase font-black italic">Current User</span>
-                  )}
-                </td>
+      <div className="apple-glass-card rounded-2xl overflow-hidden shadow-xl">
+        <div className="overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-white/[0.08] bg-black/40">
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Benutzer E-Mail</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400 text-center">Playlists</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Rolle</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400 text-right">Aktionen</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-white/[0.06]">
+              {users.map((u) => (
+                <tr key={u.id} className="group hover:bg-white/[0.04] transition-all">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-white/[0.08] border border-white/[0.1] flex items-center justify-center text-white font-semibold text-xs">
+                        {u.email[0].toUpperCase()}
+                      </div>
+                      <span className="font-medium text-xs text-white">{u.email}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="px-2.5 py-0.5 bg-white/[0.06] rounded-full text-[11px] font-bold text-zinc-300 border border-white/[0.08]">
+                      {u.playlistCount}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border ${
+                      u.role === 'admin' ? 'bg-purple-500/15 text-purple-400 border-purple-500/30' : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                    }`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {u.id !== user.id && (
+                      <button 
+                        onClick={() => handleDelete(u.id, u.email)}
+                        className="p-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/15 rounded-lg transition-all cursor-pointer min-h-[32px] min-w-[32px] inline-flex items-center justify-center"
+                        title="Benutzer löschen"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                    {u.id === user.id && (
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Aktueller Benutzer</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -9005,38 +9013,38 @@ export function DvrManager() {
   const totalBytes = recordings.reduce((acc, r) => acc + (r.fileSizeBytes || 0), 0);
 
   return (
-    <div className="p-6 space-y-5 max-w-6xl mx-auto">
-      <header className="flex justify-between items-end gap-3">
+    <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-100">DVR / Aufnahmen</h2>
-          <p className="text-xs text-zinc-500">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">DVR / Aufnahmen</h2>
+          <p className="text-xs text-zinc-400">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
         </div>
         <button
           onClick={() => setShowStartModal(true)}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shrink-0 cursor-pointer"
+          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
           title="Eine Live-Sendung direkt aufnehmen – auch ohne laufenden Player"
         >
           <Plus size={14} />
-          Neue Aufnahme
+          <span>Neue Aufnahme</span>
         </button>
       </header>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Aktive Aufnahmen</div>
-          <div className="text-xl font-bold text-red-500 mt-1 flex items-center gap-2">
+        <div className="apple-glass-card p-4 rounded-2xl">
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Aktive Aufnahmen</div>
+          <div className="text-xl font-bold text-red-400 mt-1 flex items-center gap-2">
             {activeRecordings.length > 0 && <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />}
             {activeRecordings.length}
           </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Gespeicherte Aufnahmen</div>
-          <div className="text-xl font-bold text-zinc-100 mt-1">{completedRecordings.length}</div>
+        <div className="apple-glass-card p-4 rounded-2xl">
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Gespeicherte Aufnahmen</div>
+          <div className="text-xl font-bold text-white mt-1">{completedRecordings.length}</div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl">
-          <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Belegter Speicherplatz</div>
-          <div className="text-xl font-bold text-emerald-500 mt-1">{formatBytes(totalBytes)}</div>
+        <div className="apple-glass-card p-4 rounded-2xl">
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Belegter Speicherplatz</div>
+          <div className="text-xl font-bold text-emerald-400 mt-1">{formatBytes(totalBytes)}</div>
         </div>
       </div>
 
@@ -9278,7 +9286,9 @@ function DvrPlaybackModal({
     if (!video) return;
     setPlaybackError(null);
 
-    if (mpegts.isSupported()) {
+    const isTs = !recording.filePath || recording.filePath.endsWith('.ts');
+
+    if (isTs && mpegts.isSupported()) {
       const player = mpegts.createPlayer({
         type: 'mpegts',
         isLive: false,
@@ -9346,7 +9356,7 @@ function DvrPlaybackModal({
               href={api.dvr.getStreamUrl(recording.id, true)}
               download
               className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Aufnahme als TS-Datei herunterladen"
+              title={`Aufnahme als ${recording.filePath?.endsWith('.mkv') ? 'MKV' : 'TS'}-Datei herunterladen`}
             >
               <Download size={13} />
               Herunterladen

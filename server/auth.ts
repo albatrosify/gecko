@@ -21,9 +21,10 @@ export interface AuthRequest extends Request {
 export function createAuthRouter(): Router {
   const router = Router();
 
+  const isDev = process.env.NODE_ENV !== 'production';
   const authLimiter = createRateLimiter({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 requests per `window`
+    max: isDev ? 100 : 5, // Limit each IP to 5 requests in prod, 100 in dev
     message: 'Too many authentication attempts, please try again later.',
   });
 

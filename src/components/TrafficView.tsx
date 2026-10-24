@@ -157,12 +157,12 @@ export function TrafficView({ user }: TrafficViewProps) {
   }, [stats]);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto text-zinc-100">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto text-[#f5f5f7]">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
-            <Activity className="text-emerald-500" size={24} />
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5 text-white">
+            <Activity className="text-emerald-400" size={24} />
             Traffic & Datenverbrauch
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
@@ -174,10 +174,10 @@ export function TrafficView({ user }: TrafficViewProps) {
           <button
             onClick={() => fetchStats(true)}
             disabled={refreshing || loading}
-            className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
             title="Statistiken aktualisieren"
           >
-            <RefreshCw size={14} className={refreshing ? "animate-spin text-emerald-500" : ""} />
+            <RefreshCw size={14} className={refreshing ? "animate-spin text-emerald-400" : ""} />
             <span>Aktualisieren</span>
           </button>
 
@@ -185,7 +185,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             <button
               onClick={handleResetAll}
               disabled={resetting || loading}
-              className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
               title="Alle Traffic-Statistiken zurücksetzen"
             >
               <Trash2 size={14} />
@@ -196,7 +196,7 @@ export function TrafficView({ user }: TrafficViewProps) {
       </div>
 
       {/* Hero: Monthly Quota Progress (Oracle Free Tier) */}
-      <div className="bg-gradient-to-br from-zinc-900 via-zinc-900/90 to-zinc-950 border border-zinc-800/90 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+      <div className="apple-glass-card p-5 sm:p-6 shadow-xl relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2 flex-1">
             <div className="flex items-center gap-2">
@@ -214,7 +214,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             </div>
 
             <div className="flex items-baseline gap-3">
-              <div className="text-3xl sm:text-4xl font-black tracking-tight text-zinc-100 tabular-nums">
+              <div className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white tabular-nums">
                 {stats ? formatBytes(stats.summary.monthBytes) : '0 GB'}
               </div>
               <div className="text-sm font-semibold text-zinc-400">
@@ -222,20 +222,20 @@ export function TrafficView({ user }: TrafficViewProps) {
               </div>
             </div>
 
-            <p className="text-xs text-zinc-500">
-              Noch <span className="text-zinc-300 font-semibold">{formatBytes(remainingMonthBytes)}</span> im aktuellen Monat bis zum Limit frei.
+            <p className="text-xs text-zinc-400">
+              Noch <span className="text-emerald-400 font-semibold">{formatBytes(remainingMonthBytes)}</span> im aktuellen Monat bis zum Limit frei.
             </p>
           </div>
 
           <div className="lg:w-72 flex flex-col justify-center space-y-2">
             <div className="flex justify-between text-xs text-zinc-400">
               <span>0 GB</span>
-              <span className="font-semibold text-zinc-300">{monthPercent}%</span>
+              <span className="font-semibold text-zinc-200">{monthPercent}%</span>
               <span>{Math.round(monthQuotaGB / 1024 * 10) / 10} TB</span>
             </div>
 
             {/* Multi-tier Progress Bar */}
-            <div className="w-full bg-zinc-950 border border-zinc-800 h-3.5 rounded-full overflow-hidden p-0.5">
+            <div className="w-full bg-black/50 border border-white/[0.08] h-3.5 rounded-full overflow-hidden p-0.5">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
                   monthPercent > 90
@@ -248,10 +248,10 @@ export function TrafficView({ user }: TrafficViewProps) {
               />
             </div>
 
-            <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+            <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
               {monthPercent < 75 ? (
                 <>
-                  <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
+                  <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
                   <span>Oracle Free Tier Traffic im optimalen Bereich</span>
                 </>
               ) : (
@@ -267,28 +267,28 @@ export function TrafficView({ user }: TrafficViewProps) {
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-xl">
+        <div className="apple-glass-card p-4 rounded-2xl">
           <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Heute verbraucht</div>
-          <div className="text-2xl font-bold text-zinc-100 tabular-nums">
+          <div className="text-2xl font-bold text-white tabular-nums">
             {stats ? formatBytes(stats.summary.todayBytes) : '...'}
           </div>
         </div>
 
-        <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-xl">
+        <div className="apple-glass-card p-4 rounded-2xl">
           <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Ausgewählter Zeitraum</div>
           <div className="text-2xl font-bold text-emerald-400 tabular-nums">
             {stats ? formatBytes(stats.totalBytes) : '...'}
           </div>
         </div>
 
-        <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-xl">
+        <div className="apple-glass-card p-4 rounded-2xl">
           <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Gesamt seit Beginn</div>
           <div className="text-2xl font-bold text-zinc-200 tabular-nums">
             {stats ? formatBytes(stats.summary.allTimeBytes) : '...'}
           </div>
         </div>
 
-        <div className="bg-zinc-900/90 border border-zinc-800 p-4 rounded-xl">
+        <div className="apple-glass-card p-4 rounded-2xl">
           <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Aktive Playlists im Zeitraum</div>
           <div className="text-2xl font-bold text-purple-400 tabular-nums">
             {stats ? stats.byPlaylist.length : 0}
@@ -297,18 +297,18 @@ export function TrafficView({ user }: TrafficViewProps) {
       </div>
 
       {/* Stream Type Breakdown Cards (TV, Serie, VOD) */}
-      <div className="bg-zinc-900/80 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+      <div className="apple-glass-card p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Layers size={17} className="text-emerald-400" />
               Aufschlüsselung nach Medientyp im Zeitraum
             </h3>
-            <p className="text-xs text-zinc-500">Live TV, Serien und Filme (VOD)</p>
+            <p className="text-xs text-zinc-400">Live TV, Serien und Filme (VOD)</p>
           </div>
 
           <div className="text-xs text-zinc-400">
-            Gesamt: <span className="text-zinc-200 font-bold">{stats ? formatBytes(stats.totalBytes) : '0 B'}</span>
+            Gesamt: <span className="text-white font-bold">{stats ? formatBytes(stats.totalBytes) : '0 B'}</span>
           </div>
         </div>
 
@@ -319,7 +319,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             const total = stats?.totalBytes || 1;
             const pct = Math.round((liveBytes / total) * 1000) / 10;
             return (
-              <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/90 space-y-2">
+              <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Tv size={14} className="text-blue-400" />
@@ -329,8 +329,8 @@ export function TrafficView({ user }: TrafficViewProps) {
                     {pct}%
                   </span>
                 </div>
-                <div className="text-xl font-bold text-zinc-100 tabular-nums">{formatBytes(liveBytes)}</div>
-                <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                <div className="text-xl font-bold text-white tabular-nums">{formatBytes(liveBytes)}</div>
+                <div className="w-full bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
                   <div className="bg-blue-500 h-full rounded-full" style={{ width: `${Math.max(1, pct)}%` }} />
                 </div>
               </div>
@@ -343,7 +343,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             const total = stats?.totalBytes || 1;
             const pct = Math.round((seriesBytes / total) * 1000) / 10;
             return (
-              <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/90 space-y-2">
+              <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Film size={14} className="text-purple-400" />
@@ -353,8 +353,8 @@ export function TrafficView({ user }: TrafficViewProps) {
                     {pct}%
                   </span>
                 </div>
-                <div className="text-xl font-bold text-zinc-100 tabular-nums">{formatBytes(seriesBytes)}</div>
-                <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                <div className="text-xl font-bold text-white tabular-nums">{formatBytes(seriesBytes)}</div>
+                <div className="w-full bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
                   <div className="bg-purple-500 h-full rounded-full" style={{ width: `${Math.max(1, pct)}%` }} />
                 </div>
               </div>
@@ -367,7 +367,7 @@ export function TrafficView({ user }: TrafficViewProps) {
             const total = stats?.totalBytes || 1;
             const pct = Math.round((movieBytes / total) * 1000) / 10;
             return (
-              <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800/90 space-y-2">
+              <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Film size={14} className="text-amber-400" />
@@ -377,8 +377,8 @@ export function TrafficView({ user }: TrafficViewProps) {
                     {pct}%
                   </span>
                 </div>
-                <div className="text-xl font-bold text-zinc-100 tabular-nums">{formatBytes(movieBytes)}</div>
-                <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                <div className="text-xl font-bold text-white tabular-nums">{formatBytes(movieBytes)}</div>
+                <div className="w-full bg-white/[0.08] h-1.5 rounded-full overflow-hidden">
                   <div className="bg-amber-500 h-full rounded-full" style={{ width: `${Math.max(1, pct)}%` }} />
                 </div>
               </div>
@@ -388,7 +388,7 @@ export function TrafficView({ user }: TrafficViewProps) {
       </div>
 
       {/* Date Range Selector Bar */}
-      <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-4 space-y-3">
+      <div className="apple-glass-card p-4 sm:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-400 uppercase tracking-wider">
             <Calendar size={14} className="text-emerald-400" />
@@ -397,13 +397,14 @@ export function TrafficView({ user }: TrafficViewProps) {
 
           {stats && (
             <div className="text-xs text-zinc-400">
-              Von <span className="text-zinc-200 font-semibold">{stats.range.startDate}</span> bis{' '}
-              <span className="text-zinc-200 font-semibold">{stats.range.endDate}</span>
+              Von <span className="text-white font-semibold">{stats.range.startDate}</span> bis{' '}
+              <span className="text-white font-semibold">{stats.range.endDate}</span>
             </div>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* Scrollable preset pills on mobile, wrap on desktop */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1 sm:flex-wrap">
           {[
             { id: 'this_month', label: 'Diesen Monat' },
             { id: 'last_month', label: 'Letzten Monat' },
@@ -417,10 +418,10 @@ export function TrafficView({ user }: TrafficViewProps) {
             <button
               key={p.id}
               onClick={() => setPreset(p.id as RangePreset)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all min-h-[34px] cursor-pointer ${
                 preset === p.id
-                  ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20'
-                  : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:text-zinc-200 hover:bg-zinc-800'
+                  ? 'bg-emerald-500 text-zinc-950 shadow-sm'
+                  : 'bg-white/[0.05] text-zinc-300 hover:text-white hover:bg-white/[0.08] border border-white/[0.06]'
               }`}
             >
               {p.label}
@@ -429,14 +430,14 @@ export function TrafficView({ user }: TrafficViewProps) {
         </div>
 
         {preset === 'custom' && (
-          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-zinc-800/80">
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/[0.06]">
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-400">Von:</span>
               <input
                 type="date"
                 value={customStart}
                 onChange={e => setCustomStart(e.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:border-emerald-500 outline-none"
+                className="bg-black/50 border border-white/[0.1] rounded-lg px-2.5 py-1 text-xs text-white focus:border-emerald-500 outline-none"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -445,12 +446,12 @@ export function TrafficView({ user }: TrafficViewProps) {
                 type="date"
                 value={customEnd}
                 onChange={e => setCustomEnd(e.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1 text-xs text-zinc-200 focus:border-emerald-500 outline-none"
+                className="bg-black/50 border border-white/[0.1] rounded-lg px-2.5 py-1 text-xs text-white focus:border-emerald-500 outline-none"
               />
             </div>
             <button
               onClick={() => fetchStats()}
-              className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold transition-all"
+              className="px-3.5 py-1.5 bg-white/[0.08] hover:bg-white/[0.14] text-white rounded-lg text-xs font-semibold transition-all min-h-[34px] cursor-pointer"
             >
               Anwenden
             </button>
@@ -460,7 +461,7 @@ export function TrafficView({ user }: TrafficViewProps) {
 
       {/* Daily Timeline Chart */}
       {stats && stats.daily.length > 0 && (
-        <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl p-5 space-y-4">
+        <div className="apple-glass-card p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-base font-bold text-zinc-100">Täglicher Traffic-Verlauf</h3>
@@ -517,11 +518,11 @@ export function TrafficView({ user }: TrafficViewProps) {
       )}
 
       {/* Playlist Breakdown Table */}
-      <div className="bg-zinc-900/90 border border-zinc-800/90 rounded-2xl overflow-hidden shadow-xl">
-        <div className="p-4 border-b border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="apple-glass-card rounded-2xl overflow-hidden shadow-xl">
+        <div className="p-4 border-b border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-base font-bold text-zinc-100">Verbrauch pro Playlist</h3>
-            <p className="text-xs text-zinc-500">Sortiert nach übertragener Datenmenge</p>
+            <h3 className="text-base font-bold text-white">Verbrauch pro Playlist</h3>
+            <p className="text-xs text-zinc-400">Sortiert nach übertragener Datenmenge</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -531,7 +532,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Playlist filtern..."
-                className="bg-zinc-950 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 focus:border-emerald-500 outline-none w-48 sm:w-60"
+                className="bg-black/50 border border-white/[0.1] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-emerald-500/80 outline-none w-full sm:w-60 min-h-[36px]"
               />
             </div>
           </div>
@@ -543,18 +544,18 @@ export function TrafficView({ user }: TrafficViewProps) {
           </div>
         ) : filteredPlaylists.length === 0 ? (
           <div className="p-12 text-center space-y-2">
-            <div className="w-12 h-12 rounded-full bg-zinc-800/50 flex items-center justify-center mx-auto text-zinc-500">
+            <div className="w-12 h-12 rounded-full bg-white/[0.05] border border-white/[0.08] flex items-center justify-center mx-auto text-zinc-500">
               <Activity size={20} />
             </div>
-            <p className="text-sm font-semibold text-zinc-400">Keine Datenübertragungen in diesem Zeitraum</p>
-            <p className="text-xs text-zinc-600 max-w-sm mx-auto">
+            <p className="text-sm font-semibold text-zinc-300">Keine Datenübertragungen in diesem Zeitraum</p>
+            <p className="text-xs text-zinc-500 max-w-sm mx-auto">
               Sobald Clients über Gecko Streams wiedergeben, werden hier genaue Datenmengen pro Playlist und Medientyp angezeigt.
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-left text-xs">
-              <thead className="bg-zinc-950/70 border-b border-zinc-800 text-zinc-400 uppercase text-[10px] tracking-wider font-semibold">
+              <thead className="bg-black/40 border-b border-white/[0.08] text-zinc-400 uppercase text-[10px] tracking-wider font-semibold">
                 <tr>
                   <th
                     className="p-3.5 cursor-pointer hover:text-zinc-200 transition-colors"
@@ -606,13 +607,13 @@ export function TrafficView({ user }: TrafficViewProps) {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60">
+              <tbody className="divide-y divide-white/[0.06]">
                 {filteredPlaylists.map((p: PlaylistTrafficSummary) => {
                   const totalRange = stats?.totalBytes || 1;
                   const sharePct = Math.round((p.totalBytes / totalRange) * 1000) / 10;
 
                   return (
-                    <tr key={p.playlistId} className="hover:bg-zinc-800/40 transition-colors group">
+                    <tr key={p.playlistId} className="hover:bg-white/[0.04] transition-colors group">
                       <td className="p-3.5 font-semibold text-zinc-200">
                         <div className="flex items-center gap-2">
                           <span className="truncate max-w-[200px] sm:max-w-xs">{p.playlistName}</span>
