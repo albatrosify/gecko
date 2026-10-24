@@ -54,6 +54,11 @@ const STARTUP_GRACE_MS = 15_000;
  * Sized by the `STREAM_BUFFER_MB` env var (megabytes, default 16).
  */
 const BUFFER_WARN_BYTES = (parseInt(process.env.STREAM_BUFFER_MB || '16', 10) || 16) * 1024 * 1024;
+/**
+ * How much may sit queued for one subscriber before we stop handing over surplus.
+ * Kept far below BUFFER_WARN_BYTES so a fast hand-off never looks like a stall.
+ */
+const LIVE_CLIENT_HEADROOM_MAX_BYTES = 4 * 1024 * 1024;
 /** How long a subscriber may sit above the warn threshold before eviction. */
 const MAX_STALL_MS = 15_000;
 /** Absolute per-subscriber buffer ceiling; above this the subscriber is evicted immediately. */
@@ -66,8 +71,12 @@ const HARD_BUFFER_CAP_BYTES = BUFFER_WARN_BYTES * 2;
  * `GECKO_LIVE_BUFFER_SECONDS` sets it; 0 disables pacing (plain pass-through). Providers
  * that go silent for longer than this will still interrupt playback, because a buffer
  * cannot cover content that was never delivered.
+ *
+ * This is a *floor*, not the total buffer: wide upstreams deliver a multi-second
+ * backlog when a client connects (measured 22 s), and everything above the reserve is
+ * handed to the players immediately — see `pumpChannelBuffer`.
  */
-const LIVE_BUFFER_DEFAULT_RESERVE_S = 18;
+const LIVE_BUFFER_DEFAULT_RESERVE_S = 12;
 /**
  * Cap on accumulated allowance. Only meant to stop a long stall being repaid as one
  * huge burst — keep it far below the provider's gap length, or tokens bank through
@@ -656,14 +665,10 @@ class StreamHub {
       : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0);
     const pacing = effectiveRate > 0 && !drainFully;
     const reserveBytes = effectiveRate * liveBufferReserveSeconds();
-    // Pace at the stream's own rate. Two deliberate exceptions:
-    //  - above 1.2x reserve, draw 8 % faster to burn excess buffer back down;
-    //  - a slow trim of at most 5 % steers the level back to the reserve (see the
-    //    update below). The trim is bounded on purpose: throttling far below 1.0x
-    //    depletes the player's own buffer and stalls playback.
-    const releaseRate = (pacing && channel.bufferedBytes > reserveBytes * 1.2
-      ? effectiveRate * 1.08
-      : effectiveRate) * (channel.paceTrim ?? 1);
+    // The reserve is paced at the stream's own rate; a slow trim of at most 5 %
+    // steers the level back to it (see the update below). The trim is bounded on
+    // purpose: throttling far below 1.0x depletes the player's buffer and stalls.
+    const releaseRate = effectiveRate * (channel.paceTrim ?? 1);
 
     // Allowance accumulates at the release rate and is capped so a long stall cannot
     // be repaid as one huge burst. Allow burning down the initial startup burst.
@@ -677,10 +682,21 @@ class StreamHub {
     const deadSubscribers: string[] = [];
     while (channel.buffer.length > 0) {
       const head = channel.buffer[0];
+      // Everything above the reserve goes to the clients right away instead of being
+      // metered out at 1.0x. A player-side buffer is the better place for surplus: it
+      // also covers the last hop (WiFi hiccups, decoder stalls) which a server-side
+      // buffer cannot, and it is the only way the player gets a cushion at all —
+      // bleeding the surplus off at 1.08 % left it at zero in practice.
+      const surplus = pacing
+        && channel.bufferedBytes > reserveBytes
+        && this.hasClientHeadroom(channel);
+
       // Before a rate exists, or when the upstream is gone rather than merely
       // quiet, release without pacing so the client keeps getting data.
-      if (pacing && channel.pacingTokens < head.data.length) break;
-      if (pacing) channel.pacingTokens -= head.data.length;
+      if (!surplus) {
+        if (pacing && channel.pacingTokens < head.data.length) break;
+        if (pacing) channel.pacingTokens -= head.data.length;
+      }
 
       channel.buffer.shift();
       channel.bufferedBytes -= head.data.length;
@@ -758,6 +774,18 @@ class StreamHub {
       });
     }
 
+  }
+
+  /**
+   * True while every subscriber still has room in its outgoing queue. Keeps the
+   * surplus hand-off from piling megabytes into a slow client (which would then trip
+   * the stalled-subscriber eviction).
+   */
+  private hasClientHeadroom(channel: ActiveStreamChannel): boolean {
+    for (const sub of channel.subscribers.values()) {
+      if ((sub.res.writableLength || 0) > LIVE_CLIENT_HEADROOM_MAX_BYTES) return false;
+    }
+    return true;
   }
 
   /**

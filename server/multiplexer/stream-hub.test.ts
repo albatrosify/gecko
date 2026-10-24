@@ -27,6 +27,45 @@ describe('StreamHub', () => {
     vi.useRealTimers();
   });
 
+  it('hands buffer above the reserve to the client instead of pacing it out', async () => {
+    // Smootheness over latency: the reserve is a floor that covers provider pauses,
+    // everything above it belongs in the player's buffer.
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-burst', '200', 'Bursty', 'live', 'http://upstream.tv', { data: fakeDataStream }
+    );
+
+    const res: any = new EventEmitter();
+    let released = 0;
+    res.write = (buf: Buffer) => { released += buf.length; return true; };
+    res.setHeader = vi.fn();
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-surplus', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+
+    // Establish a steady rate first: 10 KB per (fake) second for 30 s, so the
+    // 60 s rate window is dominated by the real rate rather than the gulp below.
+    for (let i = 0; i < 30; i++) {
+      fakeDataStream.emit('data', Buffer.alloc(10_000, 1));
+      vi.advanceTimersByTime(1_000);
+    }
+
+    // A 5 MB gulp at ~176 KB/s makes the 4 s reserve ~0.7 MB, so almost all of it
+    // is surplus and must reach the client in this tick, not over the next minutes.
+    released = 0;
+    fakeDataStream.emit('data', Buffer.alloc(5_000_000, 2));
+    vi.advanceTimersByTime(50);
+
+    expect(released).toBeGreaterThan(3_000_000);
+    // The floor is kept: Gecko still holds the reserve for the next provider pause.
+    expect(channel.bufferedBytes).toBeGreaterThan(0);
+    expect(channel.bufferedBytes).toBeLessThan(1_000_000);
+  });
+
   /** Advance past the jitter buffer's lead time so queued chunks become due. */
   const pumpOnce = () => vi.advanceTimersByTime(9_000);
 
