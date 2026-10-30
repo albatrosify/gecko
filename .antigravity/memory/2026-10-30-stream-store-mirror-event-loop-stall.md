@@ -30,7 +30,7 @@ Die Invalidierungs-Abdeckung ist vollständig verifiziert: jeder Schreibpfad geh
 - Der Mirror hält jetzt den gesamten Katalog dauerhaft im RAM (geschätzt ~100–300 MB JS-Objekte bei 158 k+51 k). Bei 3-GiB-Limit akzeptabel; zu beobachten.
 - Tests ergänzt (`stream-store — mirror lifetime`, +2): gleiche Referenz = Mirror-Hit, `invalidateSourceStreams`/`deleteSourceStreams` erzwingen Re-Materialisierung.
 
-## Offen (nächste Schritte, noch NICHT umgesetzt)
-1. `epg:assemble` / `epg:to-buffer` in `server/epg-service.ts` blockieren ebenfalls synchron (Buffer.from/join des ~100-MB-XML) auf `/xmltv.php`-Rebuild.
-2. **Conservation-Ratenschätzung** in `stream-hub.ts` (exakte Ankunftsrate statt 60-s-Schätzung) — damit der Floor tatsächlich hält (aktuelle ~4 s statt konfigurierter 12 s).
-3. Floor danach auf 18–20 s anheben: Provider-Pausen liegen jetzt bei **13–17 s** (früher 2–4 s/10,5 s), der Compose-Kommentar („2–4 s, selten ~10 s“) ist veraltet.
+## Offen (nächste Schritte)
+1. ✅ `epg:assemble` / `epg:to-buffer` — umgesetzt: `buildEpgCache()` läuft jetzt im Sync-Worker (`requestEpgBuild`).
+2. ✅ **Conservation-Ratenschätzung** in `stream-hub.ts` — umgesetzt, siehe `2026-10-30-conservation-rate-estimator.md`.
+3. ~~Floor auf 18–20 s anheben~~ — **nicht nötig**: die „13–17 s"-Lücken waren ein Artefakt des 13-s-Log-Thresholds; ein korrekt gehaltener 12-s-Floor genügt.

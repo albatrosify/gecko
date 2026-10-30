@@ -69,6 +69,39 @@ describe('StreamHub', () => {
   /** Advance past the jitter buffer's lead time so queued chunks become due. */
   const pumpOnce = () => vi.advanceTimersByTime(9_000);
 
+  it('freezes the measured rate across an upstream silence instead of dropping to zero', async () => {
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-freeze', '500', 'Freeze Channel', 'live', 'http://upstream.tv', { data: fakeDataStream }
+    );
+
+    const res: any = new EventEmitter();
+    res.write = vi.fn().mockReturnValue(true);
+    res.setHeader = vi.fn();
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-freeze', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+
+    // Establish a ~10 KB/s arrival rate over 30 s.
+    for (let i = 0; i < 30; i++) {
+      fakeDataStream.emit('data', Buffer.alloc(10_000, 1));
+      vi.advanceTimersByTime(1_000);
+    }
+
+    const before = streamHub.getBufferHealth(channel.channelKey)?.rateBps ?? 0;
+    expect(before).toBeGreaterThan(0);
+
+    // 15 s of silence (past the 12 s freeze threshold): the measured rate must not
+    // collapse to zero, otherwise the pump would strand the buffered content.
+    vi.advanceTimersByTime(15_000);
+    const after = streamHub.getBufferHealth(channel.channelKey)?.rateBps ?? 0;
+
+    expect(after).toBeGreaterThan(before * 0.5);
+  });
+
   it('registers a channel and broadcasts chunks to multiple subscribers', async () => {
     const fakeDataStream = new EventEmitter();
     (fakeDataStream as any).destroy = vi.fn();
