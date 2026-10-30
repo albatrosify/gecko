@@ -698,7 +698,10 @@ class StreamHub {
         ? measuredRate
         : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0));
     const pacing = effectiveRate > 0 && !drainFully;
-    const reserveBytes = effectiveRate * liveBufferReserveSeconds();
+    // The reserve is floored at the fallback depth: while the rate estimate is still
+    // warming up after a connect burst, it under-reads the true bitrate and would let
+    // the surplus hand-off drain the buffer below a useful reserve.
+    const reserveBytes = Math.max(effectiveRate, LIVE_BUFFER_FALLBACK_RATE_BPS) * liveBufferReserveSeconds();
     // The reserve is paced at the stream's own rate; a slow trim of at most 5 %
     // steers the level back to it (see the update below). The trim is bounded on
     // purpose: throttling far below 1.0x depletes the player's buffer and stalls.

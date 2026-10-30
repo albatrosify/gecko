@@ -47,23 +47,23 @@ describe('StreamHub', () => {
       id: 'sub-surplus', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
     });
 
-    // Establish a steady rate first: 10 KB per (fake) second for 30 s, so the
-    // 60 s rate window is dominated by the real rate rather than the gulp below.
+    // Establish a steady rate above the fallback (1 MB/s) so the reserve floor does
+    // not kick in; 30 s of it dominates the rate window before the gulp below.
     for (let i = 0; i < 30; i++) {
-      fakeDataStream.emit('data', Buffer.alloc(10_000, 1));
+      fakeDataStream.emit('data', Buffer.alloc(1_000_000, 1));
       vi.advanceTimersByTime(1_000);
     }
 
-    // A 5 MB gulp at ~176 KB/s makes the 4 s reserve ~0.7 MB, so almost all of it
-    // is surplus and must reach the client in this tick, not over the next minutes.
+    // A 10 MB gulp against a ~4 MB (1 MB/s × 4 s) reserve leaves ~6 MB of surplus
+    // that must reach the client in this tick, not over the next minutes.
     released = 0;
-    fakeDataStream.emit('data', Buffer.alloc(5_000_000, 2));
+    fakeDataStream.emit('data', Buffer.alloc(10_000_000, 2));
     vi.advanceTimersByTime(50);
 
     expect(released).toBeGreaterThan(3_000_000);
     // The floor is kept: Gecko still holds the reserve for the next provider pause.
     expect(channel.bufferedBytes).toBeGreaterThan(0);
-    expect(channel.bufferedBytes).toBeLessThan(1_000_000);
+    expect(channel.bufferedBytes).toBeLessThan(8_000_000);
   });
 
   /** Advance past the jitter buffer's lead time so queued chunks become due. */
