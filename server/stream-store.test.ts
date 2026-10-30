@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { connectDb, getSqlite } from './db.ts';
 import {
   normalizeStream,
@@ -11,6 +11,9 @@ import {
   getStreamRow,
   escapeLike,
   toMatchQuery,
+  readSourceStreams,
+  hasSourceStreams,
+  invalidateSourceStreams,
 } from './stream-store.ts';
 
 const SOURCE = 'src-1';
@@ -456,5 +459,50 @@ describe('stream-store — incremental FTS maintenance', () => {
     expectIndexConsistent();
 
     expect(searchStreams('Disappearing Name')).toHaveLength(0);
+  });
+});
+
+describe('stream-store — mirror lifetime', () => {
+  const MIRROR_SOURCE = 'mirror-src';
+
+  beforeEach(async () => {
+    process.env.SQLITE_PATH = ':memory:';
+    await connectDb();
+    // The mirror is module-level state; clear it so tests never see a previous
+    // test's primed partition.
+    invalidateSourceStreams();
+  });
+
+  afterEach(() => {
+    invalidateSourceStreams();
+  });
+
+  it('serves a partition from the mirror (same reference) and re-materialises after invalidate', () => {
+    replaceSourceStreams(MIRROR_SOURCE, 'live', [
+      { stream_id: '1', name: 'Mirror One' },
+      { stream_id: '2', name: 'Mirror Two' },
+    ]);
+
+    const first = readSourceStreams(MIRROR_SOURCE, 'live');
+    expect(first.map((s: any) => s.name)).toEqual(['Mirror One', 'Mirror Two']);
+
+    // Same reference => served from the mirror, not re-materialised. A 60 s TTL
+    // would eventually break this and re-block the event loop every minute.
+    const second = readSourceStreams(MIRROR_SOURCE, 'live');
+    expect(second).toBe(first);
+
+    invalidateSourceStreams(MIRROR_SOURCE, 'live');
+    const third = readSourceStreams(MIRROR_SOURCE, 'live');
+    expect(third).not.toBe(first);
+    expect(third.map((s: any) => s.name)).toEqual(['Mirror One', 'Mirror Two']);
+  });
+
+  it('deleteSourceStreams invalidates the mirror', () => {
+    replaceSourceStreams(MIRROR_SOURCE, 'live', [{ stream_id: '1', name: 'Gone' }]);
+    expect(readSourceStreams(MIRROR_SOURCE, 'live')).toHaveLength(1);
+
+    deleteSourceStreams(MIRROR_SOURCE, 'live');
+    expect(readSourceStreams(MIRROR_SOURCE, 'live')).toEqual([]);
+    expect(hasSourceStreams(MIRROR_SOURCE, 'live')).toBe(false);
   });
 });

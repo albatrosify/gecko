@@ -513,12 +513,15 @@ export function getStreamRow(sourceId: string, type: StreamType, streamId: strin
 // ---------------------------------------------------------------------------
 
 /**
- * Short-lived in-process mirror, matching the TTL the old cache mirror used, so
- * repeated requests within the same minute do not re-materialise the catalog.
- * The `streams` table is the durable source of truth.
+ * In-process mirror of the materialised catalog, keyed by partition and kept
+ * until invalidated. `primeSourceStreams()` re-seeds it after every sync and
+ * `invalidateSourceStreams()`/`deleteSourceStreams()` clear it on delete, so it
+ * is never stale. A partition is therefore materialised from the `streams` table
+ * once per process lifetime (per sync) instead of once per minute — the old 60 s
+ * TTL re-materialised 50k+ rows every minute, which blocks the event loop for
+ * ~200 ms–3 s and stalls the live-stream pump loop.
  */
-const MIRROR_TTL_MS = 60_000;
-const mirror = new Map<string, { data: unknown[]; expiresAt: number }>();
+const mirror = new Map<string, unknown[]>();
 
 function mirrorKey(sourceId: string, type: StreamType): string {
   return `${sourceId}_${type}`;
@@ -547,17 +550,17 @@ function materializePartition(sourceId: string, type: StreamType): Record<string
 
 /**
  * Returns a partition as upstream-shaped stream objects (the shape consumers had
- * before), served from a one-minute mirror and materialised from the table on a
+ * before), served from the in-memory mirror and materialised from the table on a
  * miss. Returns an empty array when the partition has never been synced.
  */
 export function readSourceStreams(sourceId: string, type: StreamType): any[] {
   const key = mirrorKey(sourceId, type);
   const hit = mirror.get(key);
-  if (hit && Date.now() < hit.expiresAt && hit.data.length > 0) return hit.data as any[];
+  if (hit && hit.length > 0) return hit;
 
   const data = materializePartition(sourceId, type);
   if (data.length > 0) {
-    mirror.set(key, { data, expiresAt: Date.now() + MIRROR_TTL_MS });
+    mirror.set(key, data);
   }
   return data;
 }
@@ -577,13 +580,13 @@ export function getCachedStreams(sourceId: string, type: StreamType): { data: an
  * writing the catalog back out as a JSON blob.
  */
 export function primeSourceStreams(sourceId: string, type: StreamType, items: unknown[]): void {
-  mirror.set(mirrorKey(sourceId, type), { data: items, expiresAt: Date.now() + MIRROR_TTL_MS });
+  mirror.set(mirrorKey(sourceId, type), items);
 }
 
 /** Cheap presence check that never materialises the partition. */
 export function hasSourceStreams(sourceId: string, type: StreamType): boolean {
   const hit = mirror.get(mirrorKey(sourceId, type));
-  if (hit && Date.now() < hit.expiresAt) return hit.data.length > 0;
+  if (hit) return hit.length > 0;
 
   const row = getSqlite()
     .prepare('SELECT 1 AS present FROM streams WHERE sourceId = ? AND type = ? LIMIT 1')
