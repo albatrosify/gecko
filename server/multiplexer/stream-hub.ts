@@ -417,8 +417,13 @@ class StreamHub {
     // time jump. Real clients hold one connection and ride out short gaps, so
     // do the same: only reconnect once the gap is long enough that a player
     // buffer cannot cover it.
-    const UPSTREAM_GAP_WARN_MS = 13_000;
-    const UPSTREAM_GAP_RECONNECT_MS = 16_000;
+    //
+    // These must stay ABOVE the reserve (GECKO_LIVE_BUFFER_SECONDS): if the
+    // watchdog fires while the jitter buffer could still be covering the gap,
+    // the reconnect discards playable content and jumps the timeline. Measured
+    // DEL2/relay pauses reach 13-17 s, hence 18 s warn / 22 s reconnect.
+    const UPSTREAM_GAP_WARN_MS = 18_000;
+    const UPSTREAM_GAP_RECONNECT_MS = 22_000;
 
     // Release buffered chunks on a fixed cadence so a bursty upstream is smoothed
     // into a continuous downstream stream.
