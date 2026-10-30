@@ -714,7 +714,12 @@ class StreamHub {
       // also covers the last hop (WiFi hiccups, decoder stalls) which a server-side
       // buffer cannot, and it is the only way the player gets a cushion at all —
       // bleeding the surplus off at 1.08 % left it at zero in practice.
-      const surplus = pacing
+      //
+      // Held back during the connect burst: until the rate is measured the reserve is
+      // computed against the fallback rate, so handing off surplus here primes the
+      // buffer to a fraction of the real reserve and the floor never fills.
+      const surplus = !channel.inInitialBurst
+        && pacing
         && channel.bufferedBytes > reserveBytes
         && this.hasClientHeadroom(channel);
 
