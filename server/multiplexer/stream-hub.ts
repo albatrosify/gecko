@@ -687,9 +687,16 @@ class StreamHub {
     // itself would make output gulp-synced, because the buffer only grows when a
     // gulp arrives.
 
-    const effectiveRate = measuredRate > 0
-      ? measuredRate
-      : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0);
+    // During the connect burst, pace at the fallback rate instead of the measured
+    // one: the burst itself inflates the rate (a 17-86 Mbps TCP dump), so pacing at
+    // that rate would drain the buffer before it ever fills the reserve. The fallback
+    // keeps release slow so the whole burst lands in the buffer; once the burst ends
+    // and a real rate exists, the surplus hand-off trims it back to the reserve.
+    const effectiveRate = channel.inInitialBurst
+      ? (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0)
+      : (measuredRate > 0
+        ? measuredRate
+        : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0));
     const pacing = effectiveRate > 0 && !drainFully;
     const reserveBytes = effectiveRate * liveBufferReserveSeconds();
     // The reserve is paced at the stream's own rate; a slow trim of at most 5 %
