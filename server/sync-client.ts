@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { log } from './logger.ts';
 import { invalidateSourceStreams } from './stream-store.ts';
 import type { StreamType } from './stream-store.ts';
+import type { Playlist } from '../src/types.ts';
 
 /**
  * Client side of the sync worker (see `server/sync-worker.ts`).
@@ -115,6 +116,11 @@ export function requestSourceSync(
   force = false,
 ): Promise<unknown> {
   return send({ op: 'sync', sourceId, type, force });
+}
+
+/** Builds (or refreshes) the EPG cache in the worker process, off the serving event loop. */
+export function requestEpgBuild(playlist: Playlist, imgBase: string): Promise<unknown> {
+  return send({ op: 'epg', playlist, imgBase });
 }
 
 /** Asks the worker to rebuild its cron schedule after a source changed. */

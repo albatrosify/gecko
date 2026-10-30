@@ -2,6 +2,8 @@ import { connectDb } from './db.ts';
 import { log } from './logger.ts';
 import { initEventLoopMonitor } from './event-loop-monitor.ts';
 import { refreshSource, initCronManager, rescheduleCrons } from './sync.ts';
+import { buildEpgCache } from './epg-service.ts';
+import type { Playlist } from '../src/types.ts';
 
 /**
  * Sync worker — the process that owns every catalog sync.
@@ -22,7 +24,8 @@ import { refreshSource, initCronManager, rescheduleCrons } from './sync.ts';
 
 type SyncRequest = { id: number; op: 'sync'; sourceId: string; type: 'live' | 'vod' | 'series'; force: boolean };
 type RescheduleRequest = { id: number; op: 'reschedule' };
-type WorkerRequest = SyncRequest | RescheduleRequest;
+type EpgRequest = { id: number; op: 'epg'; playlist: Playlist; imgBase: string };
+type WorkerRequest = SyncRequest | RescheduleRequest | EpgRequest;
 
 function reply(message: Record<string, unknown>): void {
   process.send?.(message);
@@ -31,6 +34,14 @@ function reply(message: Record<string, unknown>): void {
 async function handle(request: WorkerRequest): Promise<void> {
   if (request.op === 'reschedule') {
     await rescheduleCrons();
+    reply({ id: request.id, ok: true, result: null });
+    return;
+  }
+
+  // The EPG build does seconds of synchronous ~100 MB string work (regex,
+  // join, Buffer.from); it belongs here, off the serving event loop.
+  if (request.op === 'epg') {
+    await buildEpgCache(request.playlist, request.imgBase);
     reply({ id: request.id, ok: true, result: null });
     return;
   }

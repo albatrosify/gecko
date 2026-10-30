@@ -8,6 +8,7 @@ import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { proxyXmlIcons } from "./utils.ts";
 import { measureSync } from "./event-loop-monitor.ts";
+import { requestEpgBuild } from "./sync-client.ts";
 import type { Playlist } from "../src/types.ts";
 
 const gunzipAsync = promisify(zlib.gunzip);
@@ -168,7 +169,7 @@ export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string): P
   }
 
   const buildPromise = (async () => {
-    await buildEpgCache(playlist, imgBase);
+    await requestEpgBuild(playlist, imgBase);
   })();
 
   inFlightBuilds.set(playlistId, buildPromise);
@@ -182,8 +183,12 @@ export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string): P
 /**
  * Core builder that downloads feeds, decompresses asynchronously in the libuv threadpool,
  * yields to the event loop, and writes the gzipped XML to disk atomically.
+ *
+ * Runs in the sync-worker process (see `requestEpgBuild`): the synchronous string
+ * work (XML ampersand-escape, icon regex rewrite, `join`, `Buffer.from`) is on the
+ * order of the full ~100 MB feed, so it must not run on the serving event loop.
  */
-async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void> {
+export async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void> {
   const cachePath = getEpgCachePath(playlist.id);
   const cacheDir = path.dirname(cachePath);
   await fs.promises.mkdir(cacheDir, { recursive: true });
