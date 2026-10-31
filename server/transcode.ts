@@ -40,8 +40,7 @@ export interface TranscodeSession {
   streamName: string;
   clientIp: string;
   startedAt: number;
-  /** Last spawned ffmpeg; null between retry attempts. */
-  child: TranscodeChild | null;
+  child: TranscodeChild;
   bytesOut: number;
 }
 
@@ -188,15 +187,16 @@ export function handleAudioTranscode(req: Request, res: Response, opts: AudioTra
 
   const id = crypto.randomUUID();
   const ffmpegPath = process.env.GECKO_FFMPEG_PATH || 'ffmpeg';
+  const args = buildAudioTranscodeArgs(opts.upstreamUrl);
 
-  /**
-   * The provider allows one connection per account in most setups, and answers
-   * the next attempt with 409/513 for a few seconds. Switching a live player from
-   * "direct" to "transcoded" necessarily opens a fresh upstream connection, so a
-   * short backoff is part of the design here rather than an edge case.
-   */
-  const MAX_ATTEMPTS = 3;
-  const RETRY_DELAYS_MS = [1500, 3000];
+  let child: TranscodeChild;
+  try {
+    child = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err: any) {
+    log(`[Transcode] Failed to spawn ${ffmpegPath}: ${err?.message || err}`);
+    res.status(500).json({ error: 'transcode_spawn_failed', message: 'ffmpeg could not be started on the server.' });
+    return;
+  }
 
   const session: TranscodeSession = {
     id,
@@ -205,7 +205,7 @@ export function handleAudioTranscode(req: Request, res: Response, opts: AudioTra
     streamName: opts.streamName,
     clientIp: opts.clientIp,
     startedAt: Date.now(),
-    child: null,
+    child,
     bytesOut: 0,
   };
   activeSessions.set(id, session);
@@ -230,168 +230,31 @@ export function handleAudioTranscode(req: Request, res: Response, opts: AudioTra
   proxyStats.activeStreams++;
 
   let headersSent = false;
+  let stderrTail = '';
   let finished = false;
-  let attempt = 0;
-  let currentChild: TranscodeChild | null = null;
-  let retryTimer: NodeJS.Timeout | null = null;
-  let lastStderr = '';
-
-  const releaseResources = (): void => {
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
-    activeSessions.delete(id);
-    if (proxyStats.connections.has(connId)) {
-      proxyStats.connections.delete(connId);
-      proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
-    }
-    unregisterStreamController(connId);
-  };
 
   const cleanup = (reason: string): void => {
     if (finished) return;
     finished = true;
 
     const durationS = ((Date.now() - session.startedAt) / 1000).toFixed(1);
-    releaseResources();
+    activeSessions.delete(id);
 
-    if (currentChild) {
-      killChild(currentChild, 'SIGTERM');
-      const forceKill = setTimeout(() => { if (currentChild) killChild(currentChild, 'SIGKILL'); }, 2000);
-      forceKill.unref?.();
+    killChild(child, 'SIGTERM');
+    const forceKill = setTimeout(() => killChild(child, 'SIGKILL'), 2000);
+    forceKill.unref?.();
+
+    if (proxyStats.connections.has(connId)) {
+      proxyStats.connections.delete(connId);
+      proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
     }
+    unregisterStreamController(connId);
 
     if (!res.writableEnded && !res.destroyed) {
       try { res.end(); } catch {}
     }
 
     log(`[Transcode] ${opts.streamId} (${opts.streamName}) stopped after ${durationS}s — ${reason}`);
-  };
-
-  /** Gives up before anything was streamed and answers with a real HTTP error. */
-  const failBeforeStart = (status: number, error: string, message: string): void => {
-    if (finished) return;
-    finished = true;
-    releaseResources();
-    if (!res.headersSent) {
-      if (status === 409 || status === 503) res.setHeader('Retry-After', '5');
-      res.status(status).json({ error, message, detail: sanitizeDetail(lastStderr) || undefined });
-    }
-    log(`[Transcode] ${opts.streamId} gave up after ${attempt} attempt(s) — ${status} ${error}`);
-  };
-
-  const startAttempt = (): void => {
-    if (finished || res.destroyed || res.writableEnded || req.destroyed) {
-      cleanup('client went away before the stream started');
-      return;
-    }
-    attempt++;
-
-    let child: TranscodeChild;
-    try {
-      child = spawn(ffmpegPath, buildAudioTranscodeArgs(opts.upstreamUrl), { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err: any) {
-      log(`[Transcode] Failed to spawn ${ffmpegPath}: ${err?.message || err}`);
-      failBeforeStart(500, 'transcode_spawn_failed', 'ffmpeg could not be started on the server.');
-      return;
-    }
-
-    currentChild = child;
-    session.child = child;
-    let stderr = '';
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (finished) return;
-      if (res.destroyed || res.writableEnded) {
-        cleanup('client went away');
-        return;
-      }
-
-      if (!headersSent) {
-        headersSent = true;
-        res.status(200);
-        res.setHeader('Content-Type', 'video/mp2t');
-        res.setHeader('Cache-Control', 'no-cache, no-store');
-        res.setHeader('Connection', 'keep-alive');
-        // Never let a reverse proxy buffer the live stream.
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('X-Gecko-Transcode', 'audio');
-        res.socket?.setNoDelay?.(true);
-        log(`[Transcode] ${opts.streamId} (${opts.streamName}) started for ${opts.clientIp} - ffmpeg pid ${child.pid}, attempt ${attempt}`);
-      }
-
-      session.bytesOut += chunk.length;
-      const conn = proxyStats.connections.get(connId);
-      if (conn) {
-        conn.bytesRead += chunk.length;
-        conn.intervalBytes += chunk.length;
-      }
-      recordTraffic(opts.playlistId, opts.playlistName, 'live', chunk.length);
-
-      // Respect downstream backpressure: if the player stalls we must stop
-      // reading ffmpeg's stdout, otherwise the whole TS accumulates in memory.
-      if (!res.write(chunk)) child.stdout.pause();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr = (stderr + data.toString()).slice(-STDERR_TAIL_BYTES);
-      lastStderr = stderr;
-    });
-
-    child.stdout.on('error', (err: any) => {
-      log(`[Transcode] stdout error for ${opts.streamId}: ${err?.message || err}`);
-      cleanup('stdout error');
-    });
-
-    child.on('error', (err: any) => {
-      // Spawn failures (ENOENT for a missing ffmpeg) arrive here, not as a throw.
-      log(`[Transcode] ${ffmpegPath} error: ${err?.message || err}`);
-      if (!headersSent) {
-        failBeforeStart(500, 'transcode_spawn_failed', 'ffmpeg could not be started on the server.');
-        return;
-      }
-      cleanup('ffmpeg error');
-    });
-
-    child.on('exit', (code, signal) => {
-      if (finished) return;
-
-      if (headersSent) {
-        const abnormal = code !== 0;
-        if (abnormal && stderr.trim()) {
-          log(`[Transcode] ${opts.streamId} ffmpeg exited code=${code} signal=${signal}: ${sanitizeDetail(stderr)}`);
-        }
-        cleanup(`ffmpeg exited (code=${code} signal=${signal})`);
-        return;
-      }
-
-      // Died during probing — either retry or surface the reason.
-      const upstreamStatus = parseUpstreamStatus(stderr);
-      log(`[Transcode] ${opts.streamId} attempt ${attempt}/${MAX_ATTEMPTS} failed before first output (code=${code} signal=${signal}): ${sanitizeDetail(stderr)}`);
-
-      const retryable = upstreamStatus !== null && [409, 429, 500, 502, 503, 504].includes(upstreamStatus);
-      if (retryable && attempt < MAX_ATTEMPTS) {
-        const delayMs = RETRY_DELAYS_MS[attempt - 1] ?? 3000;
-        log(`[Transcode] ${opts.streamId} upstream ${upstreamStatus} - retrying in ${delayMs} ms (the provider may still be releasing the previous slot)`);
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          startAttempt();
-        }, delayMs);
-        retryTimer.unref?.();
-        return;
-      }
-
-      if (upstreamStatus === 403 || upstreamStatus === 404) {
-        failBeforeStart(upstreamStatus, 'transcode_failed', 'The provider rejected the stream (expired credentials or the channel is offline).');
-        return;
-      }
-      if (upstreamStatus === 409) {
-        failBeforeStart(409, 'upstream_slot_busy', 'The provider account is currently busy with another connection. Retry in a few seconds.');
-        return;
-      }
-      failBeforeStart(502, 'transcode_failed', 'The stream could not be re-encoded. The upstream may have failed or gone offline.');
-    });
   };
 
   // Makes the dashboard's kill switch (and "kill all") tear down this ffmpeg too.
@@ -401,22 +264,115 @@ export function handleAudioTranscode(req: Request, res: Response, opts: AudioTra
     () => !res.destroyed && !res.writableEnded
   );
 
+  child.stdout.on('data', (chunk: Buffer) => {
+    if (finished || res.destroyed || res.writableEnded) {
+      cleanup('client went away');
+      return;
+    }
+
+    if (!headersSent) {
+      headersSent = true;
+      res.status(200);
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('Connection', 'keep-alive');
+      // Never let a reverse proxy buffer the live stream.
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('X-Gecko-Transcode', 'audio');
+      res.socket?.setNoDelay?.(true);
+      log(`[Transcode] ${opts.streamId} (${opts.streamName}) started for ${opts.clientIp} - ffmpeg pid ${child.pid}`);
+    }
+
+    session.bytesOut += chunk.length;
+    const conn = proxyStats.connections.get(connId);
+    if (conn) {
+      conn.bytesRead += chunk.length;
+      conn.intervalBytes += chunk.length;
+    }
+    recordTraffic(opts.playlistId, opts.playlistName, 'live', chunk.length);
+
+    // Respect downstream backpressure: if the player stalls we must stop
+    // reading ffmpeg's stdout, otherwise the whole TS accumulates in memory.
+    if (!res.write(chunk)) child.stdout.pause();
+  });
+
   res.on('drain', () => {
-    if (!finished) currentChild?.stdout.resume();
+    if (!finished) child.stdout.resume();
+  });
+
+  child.stderr.on('data', (data: Buffer) => {
+    stderrTail = (stderrTail + data.toString()).slice(-STDERR_TAIL_BYTES);
+  });
+
+  child.stdout.on('error', (err: any) => {
+    log(`[Transcode] stdout error for ${opts.streamId}: ${err?.message || err}`);
+    cleanup('stdout error');
+  });
+
+  child.on('error', (err: any) => {
+    // Spawn failures (ENOENT for a missing ffmpeg) arrive here, not as a throw.
+    log(`[Transcode] ${ffmpegPath} error: ${err?.message || err}`);
+    if (!headersSent && !res.headersSent) {
+      res.status(500).json({ error: 'transcode_spawn_failed', message: 'ffmpeg could not be started on the server.' });
+      finished = true;
+      activeSessions.delete(id);
+      proxyStats.connections.delete(connId);
+      proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+      unregisterStreamController(connId);
+      return;
+    }
+    cleanup('ffmpeg error');
+  });
+
+  child.on('exit', (code, signal) => {
+    if (!headersSent) {
+      // Died during probing — surface the reason instead of an empty stream.
+      if (finished) return;
+      finished = true;
+      activeSessions.delete(id);
+      if (proxyStats.connections.has(connId)) {
+        proxyStats.connections.delete(connId);
+        proxyStats.activeStreams = Math.max(0, proxyStats.activeStreams - 1);
+      }
+      unregisterStreamController(connId);
+      const detail = sanitizeDetail(stderrTail);
+      log(`[Transcode] ${opts.streamId} failed before first output (code=${code} signal=${signal}): ${detail}`);
+      if (!res.headersSent) {
+        const upstreamStatus = parseUpstreamStatus(stderrTail);
+        // Pass through the statuses a client can act on; everything else means
+        // the re-encode itself failed.
+        const passthrough = upstreamStatus && [403, 404, 409, 503].includes(upstreamStatus)
+          ? upstreamStatus
+          : 502;
+        if (passthrough === 409) res.setHeader('Retry-After', '5');
+        res.status(passthrough).json({
+          error: passthrough === 409 ? 'upstream_slot_busy' : 'transcode_failed',
+          message: passthrough === 409
+            ? 'The provider account is currently busy with another connection. Retry in a few seconds.'
+            : 'The stream could not be re-encoded. The upstream may have failed or gone offline.',
+          detail: detail || undefined,
+        });
+      }
+      return;
+    }
+
+    const abnormal = code !== 0 && !finished;
+    if (abnormal && stderrTail.trim()) {
+      log(`[Transcode] ${opts.streamId} ffmpeg exited code=${code} signal=${signal}: ${sanitizeDetail(stderrTail)}`);
+    }
+    cleanup(`ffmpeg exited (code=${code} signal=${signal})`);
   });
 
   // Client-side teardown — the single most common reason a transcode stops.
   req.on('close', () => cleanup('client closed'));
   res.on('close', () => cleanup('response closed'));
   res.on('finish', () => cleanup('response finished'));
-
-  startAttempt();
 }
 
 /** Kill every running transcode (process shutdown). */
 export function stopAllTranscoders(): void {
   for (const session of Array.from(activeSessions.values())) {
-    if (session.child) killChild(session.child, 'SIGKILL');
+    killChild(session.child, 'SIGKILL');
     activeSessions.delete(session.id);
     const connId = `transcode-${session.id}`;
     if (proxyStats.connections.has(connId)) {

@@ -44,13 +44,6 @@ neue Codecs — alle enden in MSE. Mehr Codecs gibt es nur über WebCodecs/WASM
    zurück und die UI sagt es ehrlich.
 6. **Audio-Modus gehört zum Kanal**: `audioState = { url, mode }`, sonst würde
    ein „video-only"-Fallback auf den nächsten Kanal vererbt.
-7. **Der Wechsel direct → transcoded kostet eine neue Upstream-Verbindung.**
-   Prod-Log (2026-10-31): direkte Wiedergabe ok, dann Audio-Fehler, dann
-   `513` auf allen Hosts für den Transcode-Loopback. Single-Slot-Provider
-   brauchen ein paar Sekunden, bis der alte Slot frei ist. Deshalb Retry mit
-   Backoff (1,5 s / 3 s) bei 409/429/5xx und **kein** Error-Probe mehr bei
-   Codec-Fehlern (der Probe war die zusätzliche Verbindung). Verifiziert:
-   513, 513, dann Erfolg nach 4,8 s.
 
 ## Verifiziert
 
