@@ -8,11 +8,12 @@ import { connectDb } from "./server/db.ts";
 import { createAuthRouter } from "./server/auth.ts";
 import { log, LOG_PATH } from "./server/logger.ts";
 import { getClientInfo } from "./server/utils.ts";
-import { initCronManager } from "./server/sync.ts";
+import { startSyncWorker, stopSyncWorker } from "./server/sync-client.ts";
 import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { initHostStatsFlusher } from "./server/hosts.ts";
 import { initTrafficFlusher } from "./server/traffic.ts";
+import { initEventLoopMonitor, getEventLoopStats } from "./server/event-loop-monitor.ts";
 
 // Routers
 import { createSystemRouter } from "./server/routes/system.ts";
@@ -60,8 +61,9 @@ async function startServer() {
     await connectDb();
     log("Connected to SQLite");
 
-    // Initialize cron jobs
-    await initCronManager().catch(err => log(`[Cron] Initialization failed: ${err.message}`));
+    // Catalog syncs run in a separate process, so a sync can never occupy this
+    // event loop (see server/sync-worker.ts). The worker also owns the crons.
+    startSyncWorker();
 
     // Initialize proxy stats interval
     initProxyStatsInterval();
@@ -119,8 +121,16 @@ async function startServer() {
       next();
     });
 
-    // Health check — used by Docker healthcheck and monitoring
-    app.get("/health", (_req, res) => res.json({ status: "ok" }));
+    // Health check — used by Docker healthcheck and monitoring.
+    // `eventLoop` exposes the main-thread lag picture so stalls are observable
+    // from outside instead of guessed at.
+    app.get("/health", (_req, res) => {
+      const { enabled, thresholds, lag, worstPhase, lastCheckAt, stallReports } = getEventLoopStats();
+      res.json({
+        status: "ok",
+        eventLoop: { enabled, thresholds, lag, worstPhase, lastCheckAt, stallReports },
+      });
+    });
 
     // Register Routers
     const epgsRouter = createEpgsRouter();
@@ -189,9 +199,20 @@ async function startServer() {
   }
 }
 
+// Start lag monitoring before anything else, so even startup stalls are measured.
+initEventLoopMonitor();
+
 process.on('uncaughtException', (err) => {
   log('Uncaught Exception: ' + (err instanceof Error ? err.stack || err.message : String(err)));
 });
+
+// Take the sync worker down with us, so restarts do not leave orphans behind.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    stopSyncWorker();
+    process.exit(0);
+  });
+}
 
 process.on('unhandledRejection', (reason, promise) => {
   log('Unhandled Rejection at: ' + promise + ' reason: ' + reason);

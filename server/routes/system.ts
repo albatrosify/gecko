@@ -5,6 +5,7 @@ import { requireAuth } from "../auth.ts";
 import { getDb } from "../db.ts";
 import { LOG_PATH, log } from "../logger.ts";
 import { proxyStats, killStream, killAllStreams } from "../proxy-stats.ts";
+import { streamHub } from "../multiplexer/stream-hub.ts";
 import { getMonthTrafficBytes } from "../traffic.ts";
 import { invalidateQualityFormatCache } from "../quality-scan.ts";
 import { DEFAULT_LLM_SYSTEM_PROMPT } from "../llm.ts";
@@ -106,7 +107,12 @@ export function createSystemRouter() {
         totalPlaylists: playlistsCount,
         totalUsers: usersCount,
         directStreamsCount,
-        connections: Array.from(proxyStats.connections.values()),
+        connections: Array.from(proxyStats.connections.values()).map((conn) => ({
+          ...conn,
+          // Only multiplexed live channels have a jitter buffer; 1:1 VOD/timeshift
+          // connections pipe straight through and get no gauge.
+          buffer: conn.channelKey ? streamHub.getBufferHealth(conn.channelKey) : null,
+        })),
         cache: getCacheStats(),
         monthBytes,
         monthlyQuotaBytes: quotaBytes,

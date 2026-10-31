@@ -177,6 +177,53 @@ function countryToFlag(code: string): string {
     .join('');
 }
 
+/**
+ * Jitter-buffer gauge for the "Now Playing" card.
+ *
+ * The bar is measured against the configured reserve (18 s by default), not the
+ * memory cap — 100 % means "the pump holds exactly the amount of content it aims
+ * to hold". A dip below 30 % is a warning, an empty buffer is a stall the client
+ * actually sees.
+ */
+function BufferGauge({ health }: { health?: import('../types').BufferHealth | null }) {
+  if (!health) return <div className="flex-1" />;
+
+  const palette: Record<string, { bar: string; text: string; label: string }> = {
+    healthy: { bar: 'bg-emerald-500', text: 'text-emerald-400', label: 'stabil' },
+    low: { bar: 'bg-amber-500', text: 'text-amber-400', label: 'knapp' },
+    starved: { bar: 'bg-red-500', text: 'text-red-400', label: 'hungert' },
+    warming: { bar: 'bg-zinc-600', text: 'text-zinc-400', label: 'messe…' },
+  };
+  const tone = palette[health.status] ?? palette.warming;
+  const width = Math.max(2, Math.min(100, health.fillPercent));
+  const lastHiccup = health.lastStarveAt
+    ? `Letzter Aussetzer: ${Math.round(health.lastStarveMs ?? 0)} ms, vor ${Math.max(0, Math.round((Date.now() - health.lastStarveAt) / 1000))} s`
+    : 'Seit Verbindungsaufbau kein Aussetzer';
+  const readout = health.status === 'warming'
+    ? tone.label
+    : health.status === 'starved'
+      ? `hungert seit ${((health.starvedMs ?? 0) / 1000).toFixed(1)} s`
+      : `${health.bufferedSeconds.toFixed(1)} / ${health.reserveSeconds} s · ${tone.label}`;
+  const rateMbps = health.rateBps > 0 ? (health.rateBps * 8 / 1_000_000).toFixed(1) : null;
+  const title = health.status === 'warming'
+    ? 'Puffer wird aufgebaut — die Streamrate wird noch gemessen'
+    : `Puffer: ${health.bufferedSeconds} s von ${health.reserveSeconds} s Reserve (${health.fillPercent} %)` +
+      `${rateMbps ? `\nStreamrate: ${rateMbps} Mbps (Pacing-Basis)` : ''}` +
+      `\n${lastHiccup}`;
+
+  return (
+    <div className="flex-1 min-w-[140px]" title={title}>
+      <div className="flex items-center justify-between gap-2 text-[9px] mb-1">
+        <span className="text-zinc-500 uppercase font-bold tracking-wider">Puffer</span>
+        <span className={`font-mono ${tone.text}`}>{readout}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${tone.bar}`} style={{ width: `${width}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function VpnStatusBar() {
   const [ipInfo, setIpInfo] = useState<{ ip: string; country: string; city: string; org: string } | null>(null);
   const [vpnStatus, setVpnStatus] = useState<import('../types').VpnStatus | null>(null);
@@ -496,22 +543,32 @@ export function Dashboard() {
                   : 'text-purple-400 bg-purple-500/10';
                 return (
                   <div key={conn.id} className="bg-black/40 border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
-                    {/* Top row: icon + name + type badge */}
+                    {/* Top row: icon + name + type badge. The icon shows the channel/poster art when
+                        available; the name wraps instead of truncating. */}
                     <div className="flex items-start justify-between gap-2.5 flex-wrap sm:flex-nowrap">
                       <div className="flex items-center gap-2.5 min-w-[130px] flex-1">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconColor}`}>
+                        <div className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${iconColor}`}>
                           <Play size={14} fill="currentColor" />
+                          {conn.streamIcon && (
+                            <img
+                              src={proxyImg(conn.streamIcon)}
+                              alt=""
+                              loading="lazy"
+                              className={`absolute inset-0 w-full h-full bg-zinc-900 ${conn.type === 'live' ? 'object-contain p-0.5' : 'object-cover'}`}
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-bold text-xs text-white truncate leading-tight" title={conn.streamName || `Stream ${conn.streamId}`}>
+                          <div className="font-bold text-xs text-white leading-snug break-words" title={conn.streamName || `Stream ${conn.streamId}`}>
                             {conn.streamName || `Stream ${conn.streamId}`}
                           </div>
-                          <div className="text-[11px] text-zinc-400 truncate mt-0.5">
+                          <div className="text-[11px] text-zinc-400 mt-0.5 break-words">
                             via <span className="text-zinc-300 font-medium">{conn.playlistName || conn.username}</span>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                         {conn.isPlaceholder && (
                           <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
                             🛑 Hinweisanzeige
@@ -595,6 +652,10 @@ export function Dashboard() {
                       {conn.isPlaceholder && (
                         <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
                       )}
+                    </div>
+                    {/* Buffer health (actions live in the header row) */}
+                    <div className="flex items-end gap-3 pl-10">
+                      <BufferGauge health={conn.buffer} />
                     </div>
                   </div>
                 );
@@ -9339,7 +9400,7 @@ function DvrPlaybackModal({
         video.load();
       }
     };
-  }, [streamUrl]);
+  }, [streamUrl, recording.filePath]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">

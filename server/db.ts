@@ -1,12 +1,101 @@
-import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { log } from './logger.ts';
 
-let sqlite: Database.Database;
+/**
+ * Minimal surface shared by `better-sqlite3` and `bun:sqlite`. The two agree on
+ * `prepare()`, `exec()`, `transaction()` and the shape of statement results; the
+ * only divergence used here is `pragma()`, which `bun:sqlite` does not have.
+ */
+interface SqliteHandle {
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): { changes?: number; lastInsertRowid?: number | bigint };
+  };
+  exec(sql: string): void;
+  transaction<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R;
+  close(): void;
+}
+
+/** `bun:sqlite` has no `pragma()`; `exec('PRAGMA …')` works on both. */
+function applyPragma(handle: SqliteHandle, statement: string): void {
+  handle.exec(`PRAGMA ${statement}`);
+}
+
+/**
+ * Fraction of free pages above which a VACUUM is worth the one-off cost.
+ */
+const VACUUM_MIN_FREE_RATIO = 0.2;
+
+/**
+ * Reclaims disk space after the ADR 0002 upgrade cleanup.
+ *
+ * SQLite moves deleted rows onto its freelist but never shrinks the file, so an
+ * install that carried ~1 GB of stream blobs keeps a ~1 GB file that is mostly
+ * free pages. VACUUM rebuilds it. Guarded by the freelist ratio, so this is a
+ * one-off on upgrade rather than a cost on every start; set `GECKO_SKIP_VACUUM=1`
+ * to skip it entirely.
+ */
+function reclaimFreeSpace(handle: SqliteHandle): void {
+  if (process.env.GECKO_SKIP_VACUUM === '1') return;
+
+  const readPragmaNumber = (pragma: string): number => {
+    const row = handle.prepare(`PRAGMA ${pragma}`).get() as Record<string, unknown> | null;
+    return row ? Number(Object.values(row)[0] ?? 0) : 0;
+  };
+
+  const freePages = readPragmaNumber('freelist_count');
+  const totalPages = readPragmaNumber('page_count');
+  if (totalPages <= 0 || freePages / totalPages < VACUUM_MIN_FREE_RATIO) return;
+
+  const reclaimableMb = (freePages * readPragmaNumber('page_size')) / 1048576;
+
+  // VACUUM builds a temporary copy of the whole database. With `temp_store =
+  // MEMORY` that copy would live in RAM - fatal for a multi-hundred-MB database
+  // on a small box - so force it to disk for the duration and restore after.
+  applyPragma(handle, 'temp_store = FILE');
+  const started = Date.now();
+  try {
+    handle.exec('VACUUM');
+    log(`[DB] VACUUM reclaimed ~${reclaimableMb.toFixed(0)} MB of free pages in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+  } catch (err: unknown) {
+    // A failed VACUUM costs disk space, never correctness - keep going.
+    log(`[DB] VACUUM failed, space not reclaimed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    applyPragma(handle, 'temp_store = MEMORY');
+  }
+}
+
+/** True when running under Bun, where `better-sqlite3` cannot be loaded. */
+const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+
+let sqlite: SqliteHandle;
 let db: BetterSQLite3Database<typeof schema>;
+
+/**
+ * Opens the database with the driver available in the current runtime:
+ * `bun:sqlite` under Bun, `better-sqlite3` under Node. The drizzle query surface
+ * is identical either way, so only this module cares which one is in use.
+ */
+async function openDriver(dbPath: string): Promise<{ handle: SqliteHandle; db: BetterSQLite3Database<typeof schema> }> {
+  if (isBun) {
+    const { Database } = await import('bun:sqlite');
+    const { drizzle } = await import('drizzle-orm/bun-sqlite');
+    const handle = new Database(dbPath) as unknown as SqliteHandle;
+    // Drizzle's bun-sqlite driver exposes the same synchronous API as the
+    // better-sqlite3 one, so the type is a cast rather than a second code path.
+    return { handle, db: drizzle(handle as never, { schema }) as unknown as BetterSQLite3Database<typeof schema> };
+  }
+
+  const { default: Database } = await import('better-sqlite3');
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
+  const handle = new Database(dbPath) as unknown as SqliteHandle;
+  return { handle, db: drizzle(handle as never, { schema }) as unknown as BetterSQLite3Database<typeof schema> };
+}
 
 export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>> {
   const dbPath = process.env.SQLITE_PATH || path.join(process.cwd(), 'data', 'gecko.db');
@@ -17,10 +106,16 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  sqlite = new Database(dbPath);
-  sqlite.pragma('journal_mode = WAL');
-  
-  db = drizzle(sqlite, { schema });
+  const opened = await openDriver(dbPath);
+  sqlite = opened.handle;
+  db = opened.db;
+
+  applyPragma(sqlite, 'journal_mode = WAL');
+  // Two processes write this file now (the API/streaming process and the sync
+  // worker), so a writer must wait for the other instead of failing with SQLITE_BUSY.
+  applyPragma(sqlite, 'busy_timeout = 5000');
+  // Sync staging tables are only ever transient; keep them out of the disk path.
+  applyPragma(sqlite, 'temp_store = MEMORY');
   
   // Ensure tables and indexes exist (simple auto-migrate for basic setup)
   try {
@@ -63,11 +158,72 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
       CREATE INDEX IF NOT EXISTS idx_traffic_stats_date ON traffic_stats(date);
       CREATE INDEX IF NOT EXISTS idx_traffic_stats_playlistId ON traffic_stats(playlistId);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_stats_date_playlist_type ON traffic_stats(date, playlistId, streamType);
+
+      -- Normalised upstream catalog (ADR 0002). Replaces the JSON blobs that used
+      -- to live in the cache table and the snapshot blobs in source_sync_meta.
+      CREATE TABLE IF NOT EXISTS streams (
+        sourceId TEXT NOT NULL,
+        type TEXT NOT NULL,
+        streamId TEXT NOT NULL,
+        name TEXT,
+        categoryId TEXT,
+        icon TEXT,
+        epgChannelId TEXT,
+        containerExtension TEXT,
+        extra TEXT,
+        updatedAt INTEGER NOT NULL,
+        PRIMARY KEY (sourceId, type, streamId)
+      );
+      -- The composite PRIMARY KEY already serves (sourceId, type) prefix lookups,
+      -- so no separate index is needed for them.
+      CREATE INDEX IF NOT EXISTS idx_streams_source_type_category ON streams(sourceId, type, categoryId);
+
+      -- Episode titles/stills from get_series_info (see schema.ts). Must outlive a
+      -- restart: clients cache episode IDs and stop re-fetching the series info.
+      CREATE TABLE IF NOT EXISTS episode_meta (
+        sourceId TEXT NOT NULL,
+        episodeId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        icon TEXT,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (sourceId, episodeId)
+      );
+
+      -- Name search. The trigram tokenizer makes substring queries index-backed
+      -- (SQLite >= 3.34), which is what the playlist search needs. External
+      -- content keeps the names out of the index (no duplication) and is fast as
+      -- long as queries use MATCH — with LIKE, FTS5 has to re-read every
+      -- candidate from the content table (measured ~14 ms vs ~0.2 ms for MATCH).
+      --
+      -- Deliberately NO triggers: maintaining the index row-by-row during a bulk
+      -- sync measured 2.25 s for 51 k rows versus 0.49 s for load + one rebuild.
+      -- The writer (server/stream-store.ts) rebuilds it after each replace.
+      CREATE VIRTUAL TABLE IF NOT EXISTS streams_fts USING fts5(
+        name,
+        content='streams',
+        content_rowid='rowid',
+        tokenize='trigram'
+      );
+
+      -- Upgrade cleanup (ADR 0002): the catalog moved into the streams table, so the
+      -- old JSON blobs and stream snapshots are dead weight - the better part of the
+      -- database on an install that predates this change. GLOB (not LIKE) so the
+      -- underscores are matched literally. Sync cooldown rows (<id>_<type>) and the
+      -- category snapshot are deliberately preserved.
+      DELETE FROM cache
+       WHERE key GLOB '*_streams_live' OR key GLOB '*_streams_vod' OR key GLOB '*_streams_series';
+      DELETE FROM source_sync_meta
+       WHERE key GLOB 'snapshot_*_live'
+          OR key GLOB 'snapshot_*_vod'
+          OR key GLOB 'snapshot_*_series';
     `);
   } catch (err) {
     console.error('Failed to initialize database schema:', err);
     throw err;
   }
+
+  // The cleanup above frees pages inside the file; only VACUUM returns them.
+  reclaimFreeSpace(sqlite);
 
   return db;
 }
@@ -75,6 +231,21 @@ export async function connectDb(): Promise<BetterSQLite3Database<typeof schema>>
 export function getDb(): BetterSQLite3Database<typeof schema> {
   if (!db) throw new Error('Database not connected. Call connectDb() first.');
   return db;
+}
+
+/** True once `connectDb()` has opened the database (false in unit tests). */
+export function isDbConnected(): boolean {
+  return sqlite != null;
+}
+
+/**
+ * Raw `better-sqlite3` handle. Needed for bulk operations (multi-row inserts in
+ * a single transaction) and for virtual tables that Drizzle cannot model
+ * (e.g. the `streams_fts` full-text index).
+ */
+export function getSqlite(): SqliteHandle {
+  if (!sqlite) throw new Error('Database not connected. Call connectDb() first.');
+  return sqlite;
 }
 
 export function generateId(): string {

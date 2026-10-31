@@ -10,11 +10,11 @@ Self-hosted IPTV-Playlist-Aggregator. User verbinden Xtream-Codes-/M3U-Upstream-
 
 | Bereich | Technologie |
 |---|---|
-| Backend | Express + TypeScript (via `tsx`, ESM) |
+| Backend | Express + TypeScript (ESM). **Bun ist der Standard** (`bun server.ts`); Node über `tsx` als Fallback (`start:node`) |
 | Frontend | React 19 + Vite + Tailwind CSS 4 |
-| DB | SQLite (`better-sqlite3` + Drizzle ORM), WAL-Modus, Auto-Migrate in `db.ts` |
+| DB | SQLite + Drizzle ORM, WAL-Modus, Auto-Migrate in `db.ts`. Treiber ist runtime-abhängig: `bun:sqlite` unter Bun, `better-sqlite3` unter Node |
 | Auth | JWT + bcrypt (lokales E-Mail/Passwort) |
-| Tests | Vitest (`npm run test`) |
+| Tests | Vitest (`bun run test`) — läuft unter Node und braucht `better-sqlite3` |
 | Deployment | Docker + Docker Compose |
 
 **Nebenprojekte:**
@@ -37,12 +37,15 @@ Self-hosted IPTV-Playlist-Aggregator. User verbinden Xtream-Codes-/M3U-Upstream-
 ## Commands
 
 ```bash
-npm run dev      # Express + Vite HMR auf Port 3000
-npm run build    # Frontend -> dist/
-npm run start    # Produktion: NODE_ENV=production tsx server.ts
-npm run lint     # tsc --noEmit (Type-Check, kein Linter)
-npm run test     # vitest run
+bun run dev      # Bun + Vite HMR auf Port 3000
+bun run build    # Frontend -> dist/
+bun run start    # Produktion: NODE_ENV=production bun server.ts
+bun run lint     # tsc --noEmit (Type-Check, kein Linter)
+bun run test     # vitest run (unter Node, braucht better-sqlite3)
+bun run bench    # scripts/bench-data-layer.ts
 ```
+
+Node-Fallback: `npm run dev:node` / `npm run start:node` (siehe ADR 0003).
 
 Voraussetzung: `.env` (Kopie von `.env.example`) mit `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 

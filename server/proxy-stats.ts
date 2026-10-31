@@ -12,6 +12,8 @@ export const proxyStats = {
     username: string;
     streamId: string;
     streamName: string;
+    /** Channel logo / movie poster for the dashboard card, when available. */
+    streamIcon?: string;
     playlistName: string;
     type: string;
     ip: string;

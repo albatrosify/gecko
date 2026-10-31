@@ -7,6 +7,8 @@ import type { Request, Response } from "express";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { proxyXmlIcons } from "./utils.ts";
+import { measureSync } from "./event-loop-monitor.ts";
+import { requestEpgBuild } from "./sync-client.ts";
 import type { Playlist } from "../src/types.ts";
 
 const gunzipAsync = promisify(zlib.gunzip);
@@ -167,7 +169,7 @@ export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string): P
   }
 
   const buildPromise = (async () => {
-    await buildEpgCache(playlist, imgBase);
+    await requestEpgBuild(playlist, imgBase);
   })();
 
   inFlightBuilds.set(playlistId, buildPromise);
@@ -181,8 +183,12 @@ export async function refreshPlaylistEpg(playlist: Playlist, imgBase: string): P
 /**
  * Core builder that downloads feeds, decompresses asynchronously in the libuv threadpool,
  * yields to the event loop, and writes the gzipped XML to disk atomically.
+ *
+ * Runs in the sync-worker process (see `requestEpgBuild`): the synchronous string
+ * work (XML ampersand-escape, icon regex rewrite, `join`, `Buffer.from`) is on the
+ * order of the full ~100 MB feed, so it must not run on the serving event loop.
  */
-async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void> {
+export async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void> {
   const cachePath = getEpgCachePath(playlist.id);
   const cacheDir = path.dirname(cachePath);
   await fs.promises.mkdir(cacheDir, { recursive: true });
@@ -259,7 +265,7 @@ async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void>
   if (!xmlParts.length) {
     finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n<tv></tv>';
   } else if (xmlParts.length === 1) {
-    finalXml = proxyXmlIcons(xmlParts[0], imgBase);
+    finalXml = measureSync('epg:proxy-icons', () => proxyXmlIcons(xmlParts[0], imgBase));
   } else {
     const extractInnerTv = (xml: string): string => {
       const startTag = xml.indexOf('<tv');
@@ -281,11 +287,11 @@ async function buildEpgCache(playlist: Playlist, imgBase: string): Promise<void>
       await yieldLoop();
     }
     mergedChunks.push('\n</tv>');
-    finalXml = mergedChunks.join('');
+    finalXml = measureSync('epg:assemble', () => mergedChunks.join(''));
   }
 
   await yieldLoop();
-  const compressed = await gzipAsync(Buffer.from(finalXml, 'utf-8'));
+  const compressed = await gzipAsync(measureSync('epg:to-buffer', () => Buffer.from(finalXml, 'utf-8')));
   const tempPath = `${cachePath}.tmp.${Date.now()}`;
   await fs.promises.writeFile(tempPath, compressed);
   await fs.promises.rename(tempPath, cachePath);

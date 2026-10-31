@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { streamHub } from './stream-hub.ts';
+import { streamHub, computeBufferHealth, nextPaceTrim, LIVE_BUFFER_PACE_TRIM_MIN, LIVE_BUFFER_PACE_TRIM_MAX } from './stream-hub.ts';
 import { proxyStats, streamControllers, killStream } from '../proxy-stats.ts';
 import { EventEmitter } from 'events';
 
@@ -27,8 +27,80 @@ describe('StreamHub', () => {
     vi.useRealTimers();
   });
 
+  it('hands buffer above the reserve to the client instead of pacing it out', async () => {
+    // Smootheness over latency: the reserve is a floor that covers provider pauses,
+    // everything above it belongs in the player's buffer.
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-burst', '200', 'Bursty', 'live', 'http://upstream.tv', { data: fakeDataStream }
+    );
+
+    const res: any = new EventEmitter();
+    let released = 0;
+    res.write = (buf: Buffer) => { released += buf.length; return true; };
+    res.setHeader = vi.fn();
+
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-surplus', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+
+    // Establish a steady rate above the fallback (1 MB/s) so the reserve floor does
+    // not kick in; 30 s of it dominates the rate window before the gulp below.
+    for (let i = 0; i < 30; i++) {
+      fakeDataStream.emit('data', Buffer.alloc(1_000_000, 1));
+      vi.advanceTimersByTime(1_000);
+    }
+
+    // A 10 MB gulp against a ~4 MB (1 MB/s × 4 s) reserve leaves ~6 MB of surplus
+    // that must reach the client in this tick, not over the next minutes.
+    released = 0;
+    fakeDataStream.emit('data', Buffer.alloc(10_000_000, 2));
+    vi.advanceTimersByTime(50);
+
+    expect(released).toBeGreaterThan(3_000_000);
+    // The floor is kept: Gecko still holds the reserve for the next provider pause.
+    expect(channel.bufferedBytes).toBeGreaterThan(0);
+    expect(channel.bufferedBytes).toBeLessThan(8_000_000);
+  });
+
   /** Advance past the jitter buffer's lead time so queued chunks become due. */
   const pumpOnce = () => vi.advanceTimersByTime(9_000);
+
+  it('freezes the measured rate across an upstream silence instead of dropping to zero', async () => {
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-freeze', '500', 'Freeze Channel', 'live', 'http://upstream.tv', { data: fakeDataStream }
+    );
+
+    const res: any = new EventEmitter();
+    res.write = vi.fn().mockReturnValue(true);
+    res.setHeader = vi.fn();
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-freeze', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+
+    // Establish a ~10 KB/s arrival rate over 30 s.
+    for (let i = 0; i < 30; i++) {
+      fakeDataStream.emit('data', Buffer.alloc(10_000, 1));
+      vi.advanceTimersByTime(1_000);
+    }
+
+    const before = streamHub.getBufferHealth(channel.channelKey)?.rateBps ?? 0;
+    expect(before).toBeGreaterThan(0);
+
+    // 15 s of silence (past the 12 s freeze threshold): the measured rate must not
+    // collapse to zero, otherwise the pump would strand the buffered content.
+    vi.advanceTimersByTime(15_000);
+    const after = streamHub.getBufferHealth(channel.channelKey)?.rateBps ?? 0;
+
+    expect(after).toBeGreaterThan(before * 0.5);
+  });
 
   it('registers a channel and broadcasts chunks to multiple subscribers', async () => {
     const fakeDataStream = new EventEmitter();
@@ -474,3 +546,121 @@ describe('StreamHub', () => {
 });
 
 
+
+describe('computeBufferHealth', () => {
+  const MBPS_6_8 = 850_000; // bytes per second
+  const RESERVE_S = 18;
+
+  it('reports the fill level relative to the reserve, not the memory cap', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    expect(health.status).toBe('healthy');
+    expect(health.fillPercent).toBe(100);
+    expect(health.bufferedSeconds).toBe(18);
+    expect(health.reserveSeconds).toBe(18);
+    expect(health.starved).toBe(false);
+  });
+
+  it('flags a buffer that has drained below a third of the reserve', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * 4,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    expect(health.fillPercent).toBe(22);
+    expect(health.status).toBe('low');
+  });
+
+  it('reports a dry spell as starved with its duration', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: 0,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: true,
+      starvedMs: 2400,
+    });
+    expect(health.status).toBe('starved');
+    expect(health.starved).toBe(true);
+    expect(health.starvedMs).toBe(2400);
+    expect(health.fillPercent).toBe(0);
+  });
+
+  it('never calls an unmeasured stream starved - that is just the connect phase', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: 0,
+      rateBps: 0,
+      reserveSeconds: RESERVE_S,
+      starved: true,
+    });
+    expect(health.status).toBe('warming');
+    expect(health.bufferedSeconds).toBe(0);
+  });
+
+  it('carries the last hiccup through for the tooltip', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+      lastStarveAt: 1_700_000_000_000,
+      lastStarveMs: 3100,
+    });
+    expect(health.status).toBe('healthy');
+    expect(health.lastStarveAt).toBe(1_700_000_000_000);
+    expect(health.lastStarveMs).toBe(3100);
+  });
+
+  it('caps the reported fill sensibly when the buffer overshoots the reserve', () => {
+    const health = computeBufferHealth({
+      bufferedBytes: MBPS_6_8 * RESERVE_S * 1.5,
+      rateBps: MBPS_6_8,
+      reserveSeconds: RESERVE_S,
+      starved: false,
+    });
+    // The number stays honest (150 %) - the UI clamps the bar width, not the data.
+    expect(health.fillPercent).toBe(150);
+    expect(health.status).toBe('healthy');
+  });
+});
+
+describe('nextPaceTrim', () => {
+  it('leaves the pace alone while the buffer is healthy', () => {
+    expect(nextPaceTrim(1, 0.9)).toBe(1);
+    expect(nextPaceTrim(1, 1.05)).toBe(1);
+    expect(nextPaceTrim(1, 0.8)).toBe(1); // band edge - still no correction
+  });
+
+  it('slows down step by step when the buffer runs low', () => {
+    let trim = 1;
+    for (let i = 0; i < 10; i++) trim = nextPaceTrim(trim, 0.5);
+    expect(trim).toBeCloseTo(0.951, 3);
+    expect(trim).toBeGreaterThan(LIVE_BUFFER_PACE_TRIM_MIN);
+  });
+
+  it('never slows the player below 95 % of the stream rate', () => {
+    let trim = 1;
+    for (let i = 0; i < 500; i++) trim = nextPaceTrim(trim, 0.1);
+    expect(trim).toBe(LIVE_BUFFER_PACE_TRIM_MIN);
+  });
+
+  it('speeds up when the buffer piles up, bounded at 105 %', () => {
+    let trim = 1;
+    for (let i = 0; i < 500; i++) trim = nextPaceTrim(trim, 1.5);
+    expect(trim).toBe(LIVE_BUFFER_PACE_TRIM_MAX);
+  });
+
+  it('recovers towards neutral once the level is back in the band', () => {
+    // A trim that was pulled down stays put while the level is healthy - the band is
+    // wide enough that it does not oscillate around the target.
+    expect(nextPaceTrim(0.95, 0.9)).toBe(0.95);
+  });
+
+  it('ignores a nonsensical fill ratio', () => {
+    expect(nextPaceTrim(1, Number.NaN)).toBe(1);
+  });
+});

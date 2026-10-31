@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, primaryKey } from 'drizzle-orm/sqlite-core';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -68,6 +68,22 @@ export const cache = sqliteTable('cache', {
   updatedAt: text('updatedAt'),
   expiresAt: integer('expiresAt'),
 });
+
+/**
+ * Title and still of a series *episode*. Episodes only exist inside the upstream's
+ * `get_series_info` response (the catalog holds series-level rows), and clients fetch
+ * that once and then keep playing episode IDs — so without persisting it, every
+ * container restart turns a running episode back into "Stream 1938143".
+ */
+export const episodeMeta = sqliteTable('episode_meta', {
+  sourceId: text('sourceId').notNull(),
+  episodeId: text('episodeId').notNull(),
+  title: text('title').notNull(),
+  icon: text('icon'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.sourceId, t.episodeId] }),
+}));
 
 export const customCategories = sqliteTable('customCategories', {
   id: text('id').primaryKey(),
@@ -147,4 +163,28 @@ export const traffic_stats = sqliteTable('traffic_stats', {
   bytes: integer('bytes').notNull().default(0),
   updatedAt: integer('updatedAt').notNull(),
 });
+
+/**
+ * Normalised upstream catalog (ADR 0002). One row per upstream stream, replaced
+ * wholesale per `(sourceId, type)` on each sync. Provider-specific fields that
+ * have no dedicated column are kept in `extra`.
+ *
+ * The companion FTS5 table `streams_fts` is a virtual table and therefore not
+ * modelled here — it is created and kept in sync by `server/db.ts` (triggers)
+ * and queried from `server/stream-store.ts`.
+ */
+export const streams = sqliteTable('streams', {
+  sourceId: text('sourceId').notNull(),
+  type: text('type').notNull(), // 'live' | 'vod' | 'series'
+  streamId: text('streamId').notNull(), // upstream stream_id / series_id
+  name: text('name'),
+  categoryId: text('categoryId'),
+  icon: text('icon'),
+  epgChannelId: text('epgChannelId'),
+  containerExtension: text('containerExtension'),
+  extra: text('extra', { mode: 'json' }),
+  updatedAt: integer('updatedAt').notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.sourceId, t.type, t.streamId] }),
+}));
 

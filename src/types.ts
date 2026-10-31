@@ -30,6 +30,12 @@ export interface SourceHost {
   failures: number;               // Failed proxied stream attempts
   lastUsed?: string | null;       // ISO timestamp of last successful use
   lastError?: string | null;      // Last failure reason
+  /**
+   * Decaying health score, 0..1 (1 = every recent attempt worked). Updated on each
+   * flushed use; lets the failover order demote a dead host without banning it forever.
+   */
+  health?: number;
+  lastErrorAt?: string | null;    // ISO timestamp of the last failure (for probation)
   vpnBlocked?: boolean;           // Whether this host is currently blocked by upstream CDN (HTTP 511)
 }
 
@@ -230,5 +236,32 @@ export interface TrafficStatsResponse {
   byType: TrafficTypeBreakdown;
   byPlaylist: PlaylistTrafficSummary[];
   daily: DailyTrafficPoint[];
+}
+
+export type BufferStatus = 'healthy' | 'low' | 'starved' | 'warming';
+
+/**
+ * Jitter-buffer health of a multiplexed live channel, as reported by `/proxy/stats`.
+ *
+ * `fillPercent` is relative to the configured reserve (18 s by default), so the gauge
+ * reads the same on a 3 Mbps and a 12 Mbps stream. Present only for live connections
+ * that go through the StreamHub; 1:1 VOD/timeshift connections pipe straight through.
+ */
+export interface BufferHealth {
+  status: BufferStatus;
+  fillPercent: number;
+  /** Seconds of playable content queued right now. */
+  bufferedSeconds: number;
+  /** Depth the pump aims to hold, in seconds (`GECKO_LIVE_BUFFER_SECONDS`). */
+  reserveSeconds: number;
+  /** Pacing rate the gauge is computed against, in bytes/s. */
+  rateBps: number;
+  starved: boolean;
+  /** Length of the dry spell currently in progress. */
+  starvedMs?: number;
+  /** When the last dry spell ended (epoch ms). */
+  lastStarveAt?: number;
+  /** How long that dry spell lasted, in ms. */
+  lastStarveMs?: number;
 }
 

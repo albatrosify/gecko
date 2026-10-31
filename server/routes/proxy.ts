@@ -9,8 +9,9 @@ import { log } from "../logger.ts";
 import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, decodeStreamId } from "../utils.ts";
 import { proxyStats, registerStreamController, unregisterStreamController, killStream, getActiveVodConnectionsForSource } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
-import { refreshSource } from "../sync.ts";
+import { requestSourceSync } from "../sync-client.ts";
 import { getCached } from "../cache.ts";
+import { getCachedStreams, getStreamIcon as getCatalogIcon } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
@@ -25,12 +26,33 @@ export const DVR_CATEGORY_ID = "999999";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { evaluateStreamRequest } from "../multiplexer/stream-guard.ts";
 import { recordTraffic } from "../traffic.ts";
-import { getStreamTitle, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
+import { getStreamTitle, getStreamIcon as getCachedStreamIcon, rememberStreamTitles, rememberSeriesInfo } from "../stream-title-cache.ts";
 import { servePlaylistEpg } from "../epg-service.ts";
 import fs from "fs";
 import path from "path";
 
 const limit = pLimit(5);
+
+/**
+ * How long a player should wait before re-asking when the upstream told us the
+ * account's (often single) connection slot is busy. Short enough to recover fast,
+ * long enough that the retry does not steal the slot from the attempt before it.
+ */
+const SLOT_CONFLICT_RETRY_AFTER_S = 5;
+
+/**
+ * Thumbnail for the dashboard's "Now Playing" card: the catalog icon (channel logo /
+ * movie poster) or, for series, the episode still from the series-info cache.
+ */
+function resolveStreamIcon(sourceIds: string[], type: 'live' | 'movie' | 'series', streamId: string): string | null {
+  if (type === 'series') return getCachedStreamIcon(sourceIds, 'series', streamId);
+  const storeType = type === 'movie' ? 'vod' : 'live';
+  for (const sourceId of sourceIds) {
+    const icon = getCatalogIcon(sourceId, storeType, streamId);
+    if (icon) return icon;
+  }
+  return null;
+}
 
 const isForbiddenIP = (ip: string): boolean => {
   const normalizedIP = ip.toLowerCase();
@@ -241,6 +263,7 @@ export function createProxyRouter() {
     }
 
     const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
+    const streamIcon = resolveStreamIcon(targetSourceIds, type as 'live' | 'movie' | 'series', String(originalId));
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -256,9 +279,13 @@ export function createProxyRouter() {
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     let lastStatus = 502;
+    // Set when the upstream told us this account's connection slot is taken. Rotating
+    // further would only steal that slot from ourselves (see the 409 branch below).
+    let slotConflict = false;
     for (const sourceId of targetSourceIds) {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
+      slotConflict = false;
 
       // ── Step 2: VOD stream de-duplication & auto-replacement ──────────────────
       // When a user seeks or switches episodes, ExoPlayer / TiviMate sends a new HTTP request
@@ -402,6 +429,13 @@ export function createProxyRouter() {
 
         const ipsToTry: (string | undefined)[] = candidateIps.length > 0 ? candidateIps : [undefined];
 
+        // Behind a CDN every A record is an edge of the *same* origin, so a stalled
+        // attempt will stall on the next IP too — each one costing a full handshake
+        // timeout (observed: 2 x 15 s on a dead Cloudflare origin before the failover
+        // even reached a working host).
+        const cdnFronted = matchedHost?.networkType === 'cdn'
+          || /cloudflare|cloudfront|akamai|fastly|bunny|gcore/i.test(String(matchedHost?.cdnProvider || ''));
+
         let hostSucceeded = false;
         for (const targetIp of ipsToTry) {
           const agents = targetIp ? createIpPinnedAgents(targetIp, extractHostname(hostUrl).hostname) : undefined;
@@ -428,6 +462,15 @@ export function createProxyRouter() {
                 lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
                 recordVpnBlock(sourceId, hostUrl, 511, lastError);
                 log(`[Proxy] ⚠️ Host ${hostUrl} (IP: ${targetIp || 'default'}) BLOCKED by upstream CDN (511 Network Authentication Required) for ${type}/${streamId}. Egress IP appears blacklisted. Recommend rotating VPN. - ${getClientInfo(req)}`);
+              } else if (response.status === 409) {
+                // Panels with max_connections=1 answer 409 ("a newer request of the user
+                // took the slot first") when another request of the same account grabbed
+                // the slot. Every additional IP we try kicks the previous session out and
+                // becomes the new "newer request" — so failover turns into a self-blockade
+                // that can never recover. Stop here and let the client back off instead.
+                lastError = 'upstream refused the session (HTTP 409: another request holds this account\'s connection slot)';
+                log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) answered 409 for ${type}/${streamId} — account connection slot taken by a newer request. Not retrying other IPs. - ${getClientInfo(req)}`);
+                slotConflict = true;
               } else {
                 lastError = `upstream returned ${response.status}`;
                 log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) failed (${response.status}), trying next candidate IP... - ${getClientInfo(req)}`);
@@ -436,6 +479,7 @@ export function createProxyRouter() {
                 try { response.data.destroy(); } catch {}
               }
               destroyAgents();
+              if (slotConflict) break;
               continue;
             }
 
@@ -469,7 +513,8 @@ export function createProxyRouter() {
                   headers: upstreamHeaders,
                   candidateIps: candidateIps.length > 0 ? candidateIps : undefined,
                   currentIpIndex: targetIp && candidateIps.length > 0 ? Math.max(0, candidateIps.indexOf(targetIp)) : 0,
-                }
+                },
+                streamIcon ?? undefined
               );
 
               if (dvrRecordingId) {
@@ -511,6 +556,7 @@ export function createProxyRouter() {
               username,
               streamId,
               streamName,
+              streamIcon: streamIcon ?? undefined,
               playlistName: (playlist as any).name || username,
               type,
               ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
@@ -600,19 +646,31 @@ export function createProxyRouter() {
             lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
             lastError = err.message;
             destroyAgents();
+            if (cdnFronted && ipsToTry.length > 1 && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT')) {
+              log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) timed out; host is CDN-fronted, so the remaining ${ipsToTry.length - 1} edge IP(s) share the same origin — moving to the next host. - ${getClientInfo(req)}`);
+              break;
+            }
             log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) error for ${type}/${streamId}: ${err.message}, trying next candidate IP... - ${getClientInfo(req)}`);
           }
         }
 
-        if (!hostSucceeded) {
+        if (!hostSucceeded && !slotConflict) {
+          // A 409 is not a host failure — the host answered, it just refused the
+          // session — so do not down-rank it in the failover order.
           recordHostUse(sourceId, hostUrl, false, lastError);
         }
+        if (slotConflict) break;
       }
     }
 
     log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} (status ${lastStatus}) - ${getClientInfo(req)}`);
     if (lastStatus === 511) {
       res.status(511).send(`All upstream sources failed: Upstream CDN blocked connection (HTTP 511 Network Authentication Required). Server egress IP appears blacklisted. Please rotate VPN.`);
+    } else if (slotConflict) {
+      // 409 is not a "retry immediately" status for players, 503 + Retry-After is:
+      // give the account's slot a moment to settle instead of re-asking in a tight loop.
+      res.setHeader('Retry-After', String(SLOT_CONFLICT_RETRY_AFTER_S));
+      res.status(503).send(`Upstream refused the session: another request of this account holds the only connection slot (HTTP 409). Retry in ${SLOT_CONFLICT_RETRY_AFTER_S}s.`);
     } else {
       res.status(lastStatus).send(`All upstream sources failed: ${lastError}`);
     }
@@ -915,11 +973,11 @@ export function createProxyRouter() {
     // Dynamic Sync: block until all sources are synced before serving.
     // refreshSource has a 5-min cooldown, so upstream is only hit at most once per 5 minutes.
     if (action === 'get_live_streams' && hasSyncOnDemandLive)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'live').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'live').catch(() => {}))));
     if (action === 'get_vod_streams' && hasSyncOnDemandVod)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'vod').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'vod').catch(() => {}))));
     if (action === 'get_series' && hasSyncOnDemandSeries)
-      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => refreshSource(sid, 'series').catch(() => {}))));
+      await Promise.all(playlist.sourceIds.map((sid: string) => limit(() => requestSourceSync(sid, 'series').catch(() => {}))));
 
     try {
       let data;
@@ -980,7 +1038,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_live`);
+               const streamsCached = getCachedStreams(sid, 'live');
                const streams = streamsCached?.data ?? await cl.getLiveStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1194,7 +1252,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_vod`);
+               const streamsCached = getCachedStreams(sid, 'vod');
                const streams = streamsCached?.data ?? await cl.getVodStreams().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1410,7 +1468,7 @@ export function createProxyRouter() {
                const sDoc = sourcesMap.get(sid);
                if (!sDoc) return [];
                const cl = new XtreamClient(sDoc as any);
-               const streamsCached = getCached(`${sid}_streams_series`);
+               const streamsCached = getCachedStreams(sid, 'series');
                const streams = streamsCached?.data ?? await cl.getSeries().catch(() => []);
                return streams.map((s: any) => ({ ...s, _client: cl, _sourceIdx: sourceIdx }));
            })));
@@ -1792,7 +1850,7 @@ export function createProxyRouter() {
         if (!sDoc) return [];
         const cl = new XtreamClient(sDoc as any);
         const cacheType = m3uType === 'vod' ? 'vod' : m3uType === 'series' ? 'series' : 'live';
-        const streamsCached = getCached(`${sid}_streams_${cacheType}`);
+        const streamsCached = getCachedStreams(sid, cacheType);
         let streams: any[];
         if (streamsCached?.data) {
           streams = streamsCached.data;

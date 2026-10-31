@@ -4,7 +4,7 @@ import { requireAuth, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { scanJobs, ScanJob, buildStreamUrl } from "../quality-scan.ts";
-import { getCached } from "../cache.ts";
+import { getCachedStreams } from "../stream-store.ts";
 import { probeStream } from "../quality.ts";
 import { parseSourceStreamId } from "../utils.ts";
 
@@ -119,7 +119,7 @@ export function createQualityScanRouter() {
               // (defaults to 'mp4' only when cache is cold — most providers ignore the extension anyway)
               let extension: string | undefined;
               if (type === 'vod' || type === 'series') {
-                const cached = getCached(`${sourceDoc.id}_streams_${type}`);
+                const cached = getCachedStreams(sourceDoc.id, type);
                 if (cached?.data) {
                   const streamData = (cached.data as any[]).find(
                     (s: any) => String(s.stream_id ?? s.series_id) === targetStreamId
