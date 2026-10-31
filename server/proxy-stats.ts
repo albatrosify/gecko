@@ -27,6 +27,8 @@ export const proxyStats = {
     recordingId?: string;
     isPlaceholder?: boolean;
     isHandover?: boolean;
+    /** Connection is an audio-only transcode (AC-3/DTS → AAC) of another stream. */
+    transcoded?: boolean;
   }>()
 };
 

@@ -139,6 +139,13 @@ interface DownstreamSubscriber {
   playlistName: string;
   ip: string;
   startTime: number;
+  /**
+   * Server-internal consumer (e.g. the ffmpeg audio transcoder reading from a
+   * loopback request). It keeps the channel alive and receives data, but is not
+   * a human viewer: it gets no dashboard card, no subscriber count and no
+   * traffic booking (the transcoded output is booked by the transcoder itself).
+   */
+  internal?: boolean;
   stalledSince?: number;
 }
 
@@ -757,7 +764,12 @@ class StreamHub {
             conn.bytesRead += data.length;
             conn.intervalBytes += data.length;
           }
-          recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', data.length);
+          // Internal consumers (audio transcoder) are booked by the transcoder
+          // with the bytes it actually delivers to the client, so counting the
+          // loopback leg here would double the traffic.
+          if (!sub.internal) {
+            recordTraffic(sub.playlistId, sub.playlistName, channel.type || 'live', data.length);
+          }
 
           if (sub.res.destroyed || sub.res.writableEnded) {
             deadSubscribers.push(subId);
@@ -1005,14 +1017,17 @@ class StreamHub {
       subscriberCount: channel.subscribers.size,
       recordingId: channel.dvrRecordingId,
     };
-    proxyStats.connections.set(sub.id, connectionInfo as any);
-    proxyStats.activeStreams++;
+    if (!sub.internal) {
+      proxyStats.connections.set(sub.id, connectionInfo as any);
+      proxyStats.activeStreams++;
+    }
 
     // Update subscriberCount on all sibling subscribers in proxyStats
     this.syncSubscriberCount(channel);
 
     // If there was a DVR Handover connection card in proxyStats, remove it because human viewer has joined!
-    if (channel.dvrRecordingId) {
+    // An internal consumer (transcoder) is not a viewer and must not clear it.
+    if (channel.dvrRecordingId && !sub.internal) {
       const handoverConnId = `dvr-${channel.dvrRecordingId}`;
       if (proxyStats.connections.has(handoverConnId)) {
         proxyStats.connections.delete(handoverConnId);
@@ -1233,7 +1248,12 @@ class StreamHub {
   }
 
   private syncSubscriberCount(channel: ActiveStreamChannel) {
-    const count = channel.subscribers.size;
+    // Internal consumers (audio transcoder) must not inflate the viewer count
+    // shown on the dashboard.
+    let count = 0;
+    for (const sub of channel.subscribers.values()) {
+      if (!sub.internal) count++;
+    }
     for (const sub of channel.subscribers.values()) {
       const conn = proxyStats.connections.get(sub.id);
       if (conn) {

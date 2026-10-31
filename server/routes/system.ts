@@ -7,6 +7,7 @@ import { LOG_PATH, log } from "../logger.ts";
 import { proxyStats, killStream, killAllStreams } from "../proxy-stats.ts";
 import { streamHub } from "../multiplexer/stream-hub.ts";
 import { getMonthTrafficBytes } from "../traffic.ts";
+import { getTranscodeStats } from "../transcode.ts";
 import { invalidateQualityFormatCache } from "../quality-scan.ts";
 import { DEFAULT_LLM_SYSTEM_PROMPT } from "../llm.ts";
 
@@ -147,7 +148,7 @@ export function createSystemRouter() {
   });
 
   router.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json({ status: "ok", transcode: getTranscodeStats() });
   });
 
   router.get("/version", (_req, res) => {

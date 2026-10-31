@@ -47,6 +47,8 @@ Edit `.env` (or `docker-compose.yml` environment variables):
 | `JWT_SECRET` | — | **Required.** Secret for JWT tokens (`openssl rand -hex 32`) |
 | `APP_URL` | `http://YOUR_LAN_IP:3000` | Public URL for Xtream proxy rewrites |
 | `PORT` | `3000` | Server port |
+| `GECKO_MAX_AUDIO_TRANSCODES` | `4` | Max concurrent live audio transcodes for the web player (AC-3/E-AC-3/DTS/MP2 → AAC, video is copied). `0` disables it. |
+| `GECKO_FFMPEG_PATH` | `ffmpeg` | Optional path to the ffmpeg binary used for that transcode |
 
 ## Local Development
 
