@@ -85,3 +85,18 @@ Verworfen:
 
 **Nicht verifiziert:** der Docker-Build selbst (auf dieser Maschine ist kein Docker
 installiert). Die einzelnen Schritte sind geprüft, das Image nicht.
+
+## Nachtrag: `:bun`-Tag abgeschafft (2026-10-31)
+
+Mit dem Merge von `fix/stream-store-mirror-no-ttl` nach `develop` baut der
+Dev-Pipeline (`dev.yml`) das Bun-Dockerfile selbst — `:dev` **ist** ab diesem
+Punkt das Bun-Image. Der transitionale Workflow `.github/workflows/bun.yml`
+(Trigger: Push auf `feature/data-layer`, Tags `:bun`/`:bun-<sha>`) hatte damit
+seinen Zweck erfüllt und wurde gelöscht; `:bun` wird nicht mehr fortgeschrieben
+(Stand `4bf2f5c`). Die dort mitgeführte `parity`-Absicherung (Treiber-Parität
+Node/Bun + Sync-Isolation) ist nach `.github/workflows/parity.yml` gewandert und
+läuft dort auf Push/PR gegen `develop` und `main`.
+
+Konsequenz für Deployments: Prod zeigt entweder auf `dev`/`dev-<sha>` (Entwicklungs-
+stand) oder — nach `develop` → `main` — auf `latest`/`<version>`. Die Release-Tags
+unter `main` bauen dasselbe Bun-Image.

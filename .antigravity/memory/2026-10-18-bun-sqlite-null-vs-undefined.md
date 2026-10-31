@@ -59,9 +59,9 @@ npx tsx scripts/check-db-driver.ts   # Node
 bun scripts/check-db-driver.ts       # Bun
 ```
 
-In `.github/workflows/bun.yml` als Job `parity` verdrahtet, und `merge` hängt
-davon ab (`needs: [build, parity]`) — ein Mismatch blockiert also das
-Veröffentlichen des Images.
+In `.github/workflows/parity.yml` als Job `parity` verdrahtet (früher Teil des
+transitionalen `bun.yml`-Image-Workflows, der mit dem Bun-Release entfallen ist)
+— ein Mismatch blockiert also den Merge nach `develop`/`main`.
 
 ## Lesson
 

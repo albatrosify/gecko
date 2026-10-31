@@ -46,6 +46,9 @@ npx tsx scripts/check-db-driver.ts   # Node
 bun scripts/check-db-driver.ts       # Bun
 ```
 
+In CI läuft beides plus die Sync-Isolation (`scripts/check-sync-isolation.ts`)
+als Job `parity` in `.github/workflows/parity.yml` (Push/PR auf `develop`/`main`).
+
 `.env` nötig (Kopie von `.env.example`): `SQLITE_PATH`, `JWT_SECRET`, `APP_URL`, `PORT`.
 
 ## Architektur

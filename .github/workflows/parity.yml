@@ -1,0 +1,54 @@
+name: Runtime Parity
+
+# The vitest suite only runs on Node, so the Bun path needs its own guard:
+# better-sqlite3 returns undefined for "no row" while bun:sqlite returns null,
+# which inverts checks under Bun. Same idea for sync isolation (ADR 0004) —
+# a sync must never block the serving process.
+#
+# This guard used to live in the transitional `bun.yml` image workflow. That
+# workflow is gone: `:dev` and the release tags already build the Bun image
+# (ADR 0003), so only the parity/sync-isolation checks are left to run.
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+jobs:
+  # The job key stays `parity` on purpose — renaming it would change the
+  # required check name for branch protection.
+  parity:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Driver parity under Node
+        run: npx tsx scripts/check-db-driver.ts
+
+      - name: Driver parity under Bun
+        run: bun scripts/check-db-driver.ts
+
+      - name: Sync isolation under Node
+        run: npx tsx scripts/check-sync-isolation.ts
+
+      - name: Sync isolation under Bun
+        run: bun scripts/check-sync-isolation.ts
