@@ -9,7 +9,6 @@ import { createAuthRouter } from "./server/auth.ts";
 import { log, LOG_PATH } from "./server/logger.ts";
 import { getClientInfo } from "./server/utils.ts";
 import { startSyncWorker, stopSyncWorker } from "./server/sync-client.ts";
-import { stopAllTranscoders } from "./server/transcode.ts";
 import { initProxyStatsInterval } from "./server/proxy-stats.ts";
 import { initConnectionMonitor } from "./server/connection-monitor.ts";
 import { initHostStatsFlusher } from "./server/hosts.ts";
@@ -202,7 +201,6 @@ process.on('uncaughtException', (err) => {
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     stopSyncWorker();
-    stopAllTranscoders();
     process.exit(0);
   });
 }

@@ -75,7 +75,6 @@ Der **Sync-Worker** läuft in einem eigenen Prozess (`fork`) und besitzt **alle 
 - `telegram.ts` — Benachrichtigungen. `vpn.ts` — Gluetun/VPN-Status + Block-Erkennung.
 - `quality.ts` / `quality-scan.ts` — Stream-Qualität prüfen/scannen.
 - `proxy-stats.ts` — Bandbreiten-/Verbindungs-Statistiken (300 Datenpunkte, 2 s-Interval = 10 min für die Dashboard-Fenster 1m/5m/10m), Zombie-Socket-Sweeper, `getActiveVodConnectionsForSource` + `streamControllers`-Registry (Kill-Switch je aktiver Verbindung: `registerStreamController`/`killStream`/`killAllStreams`).
-- `transcode.ts` — **Live-Audio-Transcode für den Web-Player** (ADR 0005). Browser können AC-3/E-AC-3/DTS/MP2 nicht über MSE dekodieren; `handleAudioTranscode()` startet ffmpeg mit `-c:v copy` und nur `-c:a aac` (48 kHz stereo), Ausgabe bleibt MPEG-TS → `mpegts.js` spielt sie unverändert. Input ist die **Loopback-URL** der Live-Route (wie DVR), damit Failover/Guard/Multiplexer unverändert greifen. Cap über `GECKO_MAX_AUDIO_TRANSCODES` (Default 4, `0` = aus), `GECKO_FFMPEG_PATH`. Bei Downstream-Backpressure wird `stdout` pausiert; Client-Disconnect killt ffmpeg. Der Loopback-Subscriber ist im Hub `internal` markiert (keine Dashboard-Karte, keine doppelte Traffic-Buchung).
 - `stream-title-cache.ts` — In-Memory O(1) Cache für Upstream Stream-/Filmnamen, Serien-Episodentitel **und Icons/Poster** (Live, VOD, Series) für Now-Playing & DVR. Episoden-Metadaten werden zusätzlich in `episode_meta` persistiert: sie existieren nur in der `get_series_info`-Antwort, die der Client **einmal** holt — ohne Persistenz wird nach jedem Restart aus einer laufenden Episode wieder `Stream 1938143`.
 - `traffic.ts` — Erfassung des übertragenen Datenvolumens (Buffer + periodischer SQLite-Flush), Range/Playlist/Stream-Typ Aufschlüsselung, Monatskontingent.
 - `epg-service.ts` — EPG Fetching, Disk-Caching (`.xml.gz`), Stale-While-Revalidate, Non-Blocking Streaming für `/xmltv.php`. Der schwere Build (`buildEpgCache()`: Regex-Escape, Icon-Rewrite, `join`, `Buffer.from` auf ~100 MB XML) läuft **im Sync-Worker** (`requestEpgBuild`), nicht im Serving-Prozess.
@@ -86,7 +85,6 @@ Der **Sync-Worker** läuft in einem eigenen Prozess (`fork`) und besitzt **alle 
 - `types.ts` — Shared Types (Frontend + Backend).
 - `components/index.tsx` — monolithisch (~420 KB): `Dashboard`, `PlaylistManager`, `SourceManager`, `EPGManager`, `Settings`, `PlaylistEditor`, `UserManager`, `DvrManager`. Das Dashboard rendert pro Verbindung eine Puffer-Anzeige (`BufferGauge`, Balken relativ zur 18-s-Reserve, Farben stabil/knapp/hungert/messe…); der Streamname bricht um statt abgeschnitten zu werden.
 - `components/TrafficView.tsx`, `components/SystemLogViewer.tsx`, `components/WebPlayer.tsx`, `components/BandwidthChart.tsx` — eigene Dateien. `BandwidthChart` zeichnet das Dashboard-Diagramm (SVG, kein Chart-Paket): Flächen-Gradient, Gitterlinien, `Avg`/`Peak`, Hover-Tooltip, Fenster 1m/5m/10m; Geometrie als reine Funktionen (`buildBandwidthGeometry`, `selectWindow`, `indexFromPointerX`) mit Tests.
-- `playback-capabilities.ts` — misst per `MediaSource.isTypeSupported`, was der Browser wirklich dekodiert (H.264/H.265/AV1, AAC/AC-3/E-AC-3/DTS/MP2), und liefert `withAudioTranscodeParam()`. Quelle für die Codec-Chips im Web-Player-Fehlerpanel und für die Entscheidung, ob der AAC-Transcode überhaupt möglich ist (nur proxied, nicht im `directStreams`-Modus).
 - `playerUtils.ts`, `quality.ts`, `format.ts` — Frontend-Helfer.
 
 **Routen** in `App.tsx`: `/` (Dashboard), `/traffic` (Traffic & Daten), `/dvr`, `/playlists`, `/sources`, `/epgs`, `/settings`, `/playlist/:id` (Editor), `/users` (nur admin).
@@ -138,7 +136,7 @@ Alle unter `/api` (Auth via `requireAuth`), außer Proxy-Endpoints. Detaillierte
 | LLM | `server/routes/llm.ts` | `/llm/cleanup`, `/llm/test` |
 | DVR | `server/routes/dvr.ts` (mount `/api/dvr`) | `/recordings`, `/record-now`, `/record-channel`, `/recordings/:id/stop`, `/recordings/:id`, `/recordings/:id/stream`, `/recordings/:id/repair`, `/recordings/:id/revert` |
 | Traffic | `server/routes/traffic.ts` (mount `/api/traffic`) | `/stats`, `/reset` |
-| Proxy (public) | `server/routes/proxy.ts` (mount `/`) | `/player_api.php`, `/get.php`, `/xmltv.php`, `/live\|movie\|series/:username/:password/:streamId`, `/timeshift/...`, `/img`. Live zusätzlich mit `?transcode=audio` (AAC-Audio, Video-Copy — siehe `server/transcode.ts`). |
+| Proxy (public) | `server/routes/proxy.ts` (mount `/`) | `/player_api.php`, `/get.php`, `/xmltv.php`, `/live\|movie\|series/:username/:password/:streamId`, `/timeshift/...`, `/img` |
 
 ## Wo baue ich X ein?
 
@@ -148,7 +146,6 @@ Alle unter `/api` (Auth via `requireAuth`), außer Proxy-Endpoints. Detaillierte
 | Neuer REST-Endpoint | Neuer Router in `server/routes/*.ts` + in `server.ts` mounten; Frontend-Wrapper in `src/api.ts` |
 | Neue UI-Seite | Komponente in `src/components/index.tsx`, Route + Sidebar-Nav in `src/App.tsx` |
 | Stream-Proxy-/Xtream-Logik | `server/routes/proxy.ts` + `server/multiplexer/*` |
-| Audio-Codec-Fallback (AC-3 → AAC) | `server/transcode.ts` + `src/playback-capabilities.ts` (ADR 0005) |
 | Upstream-Sync/Cron | `server/sync.ts` |
 | Host-Failover/Benchmark | `server/hosts.ts` |
 | DVR-/Aufnahme-Logik | `server/dvr/recorder.ts` |

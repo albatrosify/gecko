@@ -21,7 +21,6 @@ import { computeDisplayName } from "../../src/quality.ts";
 import { dvrRecorder } from "../dvr/recorder.ts";
 import { servePlaceholderStream } from "../dvr/placeholder.ts";
 import { serveRecordingFile } from "../dvr/playback.ts";
-import { handleAudioTranscode } from "../transcode.ts";
 
 export const DVR_CATEGORY_ID = "999999";
 import { streamHub } from "../multiplexer/stream-hub.ts";
@@ -265,27 +264,6 @@ export function createProxyRouter() {
 
     const streamName = (mappedName && mappedName.trim()) ? mappedName : `Stream ${originalId}`;
     const streamIcon = resolveStreamIcon(targetSourceIds, type as 'live' | 'movie' | 'series', String(originalId));
-
-    // ── Audio-only transcode (?transcode=audio) ──────────────────────────────
-    // Browsers cannot decode AC-3 / E-AC-3 / DTS / MP2 in MediaSource, so the
-    // web player asks for this variant when the original audio fails. We return
-    // before the source loop and let ffmpeg pull the *normal* loopback URL, so
-    // failover, IP pinning, the concurrency guard and the multiplexer run
-    // exactly once, for the loopback request.
-    if (type === 'live' && req.query.transcode === 'audio') {
-      const internalPort = parseInt(process.env.PORT || '3000', 10);
-      const loopbackUrl = `http://127.0.0.1:${internalPort}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${encodeURIComponent(streamId)}`;
-      handleAudioTranscode(req, res, {
-        upstreamUrl: loopbackUrl,
-        playlistId: playlist.id,
-        playlistName: (playlist as any).name || username,
-        username,
-        streamId,
-        streamName,
-        clientIp: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
-      });
-      return;
-    }
 
     const upstreamHeaders: Record<string, string> = {
       'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) IPTV-Proxy/1.0',
@@ -553,8 +531,6 @@ export function createProxyRouter() {
                 playlistName: (playlist as any).name || username,
                 ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
                 startTime: Date.now(),
-                // ffmpeg feeding the audio transcoder — not a viewer.
-                internal: req.headers['x-gecko-transcode'] === '1',
               });
 
               return; // success — stream multiplexer handles streaming and teardown

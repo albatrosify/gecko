@@ -1,18 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, useDragControls } from 'motion/react';
 import { X, Play, Pause, Maximize, PictureInPicture, Volume2, VolumeX, Settings2, AlertTriangle, AlertCircle, WifiOff, RotateCcw, Loader2, Copy, Check, Download, ChevronDown } from 'lucide-react';
 import mpegts from 'mpegts.js';
 import Hls from 'hls.js';
 import { downloadStreamM3u, launchExternalPlayer, toAbsoluteUrl, ExternalPlayerType } from '../playerUtils';
-import {
-  detectPlaybackCapabilities,
-  browserCapabilitySources,
-  withAudioTranscodeParam,
-  summarizeCapabilities,
-  VIDEO_CODEC_LABELS,
-  AUDIO_CODEC_LABELS,
-  type PlaybackCapabilities,
-} from '../playback-capabilities';
 
 export function VlcIcon({ size = 16, className }: { size?: number; className?: string }) {
   return (
@@ -35,14 +26,6 @@ interface PlaybackErrorInfo {
   details?: string;
   type: 'network' | 'codec' | 'media';
 }
-
-/**
- * Which audio track we hand to the browser.
- * - `original`: untouched upstream stream (video + audio copy).
- * - `transcoded`: server re-encodes audio to AAC, video is still copied.
- * - `off`: video only — last resort for audio the browser cannot decode at all.
- */
-type AudioMode = 'original' | 'transcoded' | 'off';
 
 function getHttpErrorMessage(statusCode?: number): { title: string; message: string } {
   switch (statusCode) {
@@ -76,16 +59,6 @@ function getHttpErrorMessage(statusCode?: number): { title: string; message: str
         title: 'Internal Server Error (HTTP 500)',
         message: 'An internal error occurred on the stream proxy.',
       };
-    case 409:
-      return {
-        title: 'Provider Slot Busy (HTTP 409)',
-        message: 'The provider account is already streaming on another connection. Close the other stream or retry in a few seconds.',
-      };
-    case 503:
-      return {
-        title: 'Server Busy (HTTP 503)',
-        message: 'The server cannot take another stream right now. Try again in a moment.',
-      };
     case 401:
       return {
         title: 'Unauthorized (HTTP 401)',
@@ -99,10 +72,7 @@ function getHttpErrorMessage(statusCode?: number): { title: string; message: str
   }
 }
 
-async function fetchStreamErrorMessage(streamUrl: string, allowTranscodeProbe = false): Promise<string | undefined> {
-  // Don't probe a transcode URL for a media error: the probe would spawn an
-  // ffmpeg of its own just to read the first bytes of the error body.
-  if (!allowTranscodeProbe && streamUrl.includes('transcode=audio')) return undefined;
+async function fetchStreamErrorMessage(streamUrl: string): Promise<string | undefined> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
@@ -113,16 +83,9 @@ async function fetchStreamErrorMessage(streamUrl: string, allowTranscodeProbe = 
     });
     clearTimeout(timeout);
     if (!resp.ok) {
-      const text = (await resp.text()).trim();
-      // The server answers its own failures (e.g. transcode capacity) as JSON.
-      if (text.startsWith('{')) {
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed?.message) return String(parsed.message);
-        } catch {}
-      }
+      const text = await resp.text();
       if (text && text.length < 300 && !text.includes('<!DOCTYPE') && !text.includes('<html')) {
-        return text;
+        return text.trim();
       }
     }
   } catch {}
@@ -144,10 +107,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [audioCodecWarning, setAudioCodecWarning] = useState<string | null>(null);
-  // The audio mode belongs to the channel it was chosen for: switching channels
-  // must not carry over a downgrade (e.g. video-only) to the next stream.
-  const [audioState, setAudioState] = useState<{ url: string | null; mode: AudioMode }>({ url: null, mode: 'original' });
-  const [fallbackNote, setFallbackNote] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const [showPlayerMenu, setShowPlayerMenu] = useState(false);
@@ -160,27 +119,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
   const [showSettings, setShowSettings] = useState(false);
 
   const dragControls = useDragControls();
-
-  /**
-   * Measured once per mount: what this browser's MediaSource can actually
-   * decode. Used for the honest error panel and to decide whether the
-   * server-side AAC fallback is worth attempting.
-   */
-  const caps = useMemo<PlaybackCapabilities>(
-    () => detectPlaybackCapabilities(browserCapabilitySources(mpegts.isSupported(), Hls.isSupported())),
-    []
-  );
-
-  const isLiveStream = Boolean(url && (/\.ts(\?|$)/i.test(url) || url.includes('/live/')));
-  const canTranscode = useMemo(() => (url ? withAudioTranscodeParam(url) !== null : false), [url]);
-
-  const audioMode: AudioMode = audioState.url === url ? audioState.mode : 'original';
-  const setAudioMode = (mode: AudioMode) => {
-    setAudioState({ url, mode });
-    setAudioCodecWarning(null);
-    setPlaybackError(null);
-    setIsLoading(true);
-  };
 
   // Timeout for hiding controls
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -267,47 +205,13 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     setActiveAudioTrack(-1);
     setActiveTextTrack(-1);
 
-    // Only our own proxy can transcode; a direct upstream URL (directStreams
-    // mode) is passed through as-is and gets the honest "unsupported" message.
-    const transcodeUrl = withAudioTranscodeParam(url);
-    const transcodeAvailable = transcodeUrl !== null;
-    const playbackUrl = audioMode === 'transcoded' && transcodeUrl ? transcodeUrl : url;
-
-    /**
-     * Audio codec was rejected by MediaSource. Escalate instead of silently
-     * dropping the track: original → server-side AAC → video only.
-     */
-    const escalateFromAudioFailure = (reason: string): boolean => {
-      if (audioMode === 'original' && transcodeAvailable) {
-        console.warn('[WebPlayer] Unsupported audio codec, retrying with server-side AAC transcode.');
-        setFallbackNote(`${reason} Switching to server-side AAC audio…`);
-        setAudioMode('transcoded');
-        return true;
-      }
-      return false;
-    };
-
-    const reportUnsupportedCodec = () => {
-      const summary = caps ? summarizeCapabilities(caps) : null;
-      setPlaybackError({
-        title: 'Video codec not supported',
-        message: audioMode === 'transcoded'
-          ? 'Audio was re-encoded successfully, so the video track is the problem. This browser cannot decode the channel\'s video codec (usually H.265/HEVC or MPEG-2).'
-          : 'This browser cannot decode the codec of this channel.',
-        details: summary && summary.video.length
-          ? `This browser can play: ${summary.video.join(', ')}. Audio: ${summary.audio.join(', ') || 'none'}.`
-          : undefined,
-        type: 'codec',
-      });
-    };
-
-    const initMpegts = () => {
+    const initMpegts = (forceNoAudio = false) => {
       if (mpegts.isSupported()) {
         const player = mpegts.createPlayer({
           type: 'mpegts',
           isLive: true,
-          url: playbackUrl,
-          hasAudio: audioMode === 'off' ? false : undefined,
+          url: url,
+          hasAudio: forceNoAudio ? false : undefined, // If true, forces fallback mode without audio
         }, {
           enableStashBuffer: false,
           stashInitialSize: 128,
@@ -323,18 +227,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           setIsLoading(false);
 
           if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-            playerLog('⚠️ Media error — unsupported codec or corrupt stream');
-            if (escalateFromAudioFailure('This channel uses an audio codec your browser cannot decode (AC-3 / E-AC-3 / DTS).')) return;
-            if (audioMode === 'transcoded') {
-              playerLog('⚠️ Transcode active but video codec is still rejected');
-              setAudioCodecWarning('The audio was re-encoded, but this browser cannot decode the video track. Open the channel in a native player.');
-              return;
-            }
-            if (audioMode === 'off') {
-              reportUnsupportedCodec();
-              return;
-            }
-            setAudioCodecWarning('Dolby Digital / AC-3 audio is unsupported in this web browser. Enable proxied playback so the server can convert it to AAC.');
+            playerLog('⚠️ Media error — likely unsupported codec (AC-3?)');
+            setAudioCodecWarning('Dolby Digital / AC-3 audio is unsupported in this web browser.');
             return;
           }
 
@@ -343,20 +237,9 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             const { title: errTitle, message: errMsg } = getHttpErrorMessage(statusCode);
             let details = errorInfo?.msg || (errorDetail ? `Detail: ${errorDetail}` : undefined);
 
-            const serverMsg = await fetchStreamErrorMessage(playbackUrl, true);
+            const serverMsg = await fetchStreamErrorMessage(url);
             if (serverMsg) {
               details = serverMsg;
-            }
-
-            if (statusCode === 503 && audioMode === 'transcoded') {
-              setPlaybackError({
-                title: 'Transcoder busy',
-                message: 'The server is already transcoding the maximum number of streams. Close another stream or raise GECKO_MAX_AUDIO_TRANSCODES.',
-                code: statusCode,
-                details,
-                type: 'media',
-              });
-              return;
             }
 
             setPlaybackError({
@@ -376,23 +259,31 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           }
         });
 
-        // MediaSource rejects unsupported codecs by rejecting appendBuffer().
-        // Escalate original → transcode → video-only instead of the old silent
-        // "restart without audio" that never told the user what happened.
+        // Prevent uncaught promise rejections on appendBuffer failures and attempt to recover without audio
         const unhandledRejectionHandler = (e: PromiseRejectionEvent) => {
-          if (!e.reason || e.reason.name !== 'NotSupportedError') return;
-          const lower = String(e.reason.message || '').toLowerCase();
-          // Only handle MediaSource / audio / codec errors originating from media playback
-          if (!(lower.includes('audio') || lower.includes('mediasource') || lower.includes('sourcebuffer'))) return;
-
-          e.preventDefault();
-          if (escalateFromAudioFailure('Dolby Digital (AC-3/DTS) audio is not supported by this browser.')) return;
-          if (audioMode === 'transcoded') {
-            reportUnsupportedCodec();
-            return;
+          if (e.reason && e.reason.name === 'NotSupportedError') {
+              const msg = String(e.reason.message || '');
+              const lower = msg.toLowerCase();
+              // Only handle MediaSource / audio / codec unsupported errors originating from media playback
+              if (lower.includes('audio') || lower.includes('mediasource') || lower.includes('sourcebuffer')) {
+               e.preventDefault();
+               setAudioCodecWarning('Dolby Digital (AC-3/DTS) audio codec is unsupported by browser MediaSource.');
+               if (!forceNoAudio) {
+                 console.warn("Unsupported audio codec detected. Restarting stream with video only...");
+                 // Clean up the broken player
+                 if (mpegtsPlayerRef.current) {
+                   try { mpegtsPlayerRef.current.destroy(); } catch (e) {}
+                   mpegtsPlayerRef.current = null;
+                 }
+                 if (rejectionHandlerRef.current) {
+                   window.removeEventListener('unhandledrejection', rejectionHandlerRef.current);
+                   rejectionHandlerRef.current = null;
+                 }
+                 // Re-initialize without audio
+                 initMpegts(true);
+               }
+             }
           }
-          if (audioMode === 'off') return;
-          setAudioCodecWarning('Dolby Digital (AC-3/DTS) audio codec is unsupported by browser MediaSource.');
         };
 
         if (rejectionHandlerRef.current) {
@@ -409,7 +300,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           playPromise.catch(e => console.log('Auto-play blocked', e));
         }
       } else {
-        video.src = playbackUrl;
+        video.src = url;
       }
     };
 
@@ -515,25 +406,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       setIsLoading(false);
       setPlaybackError(null);
     };
-
-    /**
-     * Chrome sometimes plays the video track while silently dropping an audio
-     * codec that MSE refused — no error event, no sound. `webkitAudioDecodedByteCount`
-     * is 0 in that case, so we use it as a last-resort watchdog. Firefox has no
-     * equivalent counter, so it is skipped there.
-     */
-    let audioWatchdog: NodeJS.Timeout | null = null;
-    const onPlayingAudioCheck = () => {
-      if (audioMode !== 'original' || !transcodeAvailable) return;
-      if (audioWatchdog) clearTimeout(audioWatchdog);
-      audioWatchdog = setTimeout(() => {
-        const decoded = (video as any).webkitAudioDecodedByteCount;
-        if (typeof decoded === 'number' && decoded === 0 && !video.paused) {
-          playerLog('🔇 no audio decoded after 6 s — escalating to AAC transcode');
-          escalateFromAudioFailure('The audio track could not be decoded.');
-        }
-      }, 6000);
-    };
     const onPause = () => {
       playerLog('⏸ paused');
       setIsPlaying(false);
@@ -578,15 +450,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
 
       let title = 'Playback Error';
       let message = 'The video element encountered an error.';
-      let errorType: PlaybackErrorInfo['type'] = 'media';
       if (err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
         title = 'Format Not Supported';
-        message = 'Your browser cannot decode this stream format or container. This is a VOD file, so the audio transcode does not apply — open it in a native player.';
-        errorType = 'codec';
+        message = 'Your browser cannot decode this stream format or container. Try opening in VLC.';
       } else if (err.code === MediaError.MEDIA_ERR_DECODE) {
         title = 'Decode Error';
         message = 'The stream data was corrupted or uses an unsupported codec.';
-        errorType = 'codec';
       } else if (err.code === MediaError.MEDIA_ERR_NETWORK) {
         title = 'Network Error';
         message = 'A network error caused the video download to fail.';
@@ -596,7 +465,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         title,
         message,
         details: err.message || `MediaError Code ${err.code}`,
-        type: errorType,
+        type: 'media',
       });
     };
 
@@ -642,7 +511,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     video.addEventListener('error', onVideoError);
     video.addEventListener('stalled', onStalled);
     video.addEventListener('ended', onEnded);
-    video.addEventListener('playing', onPlayingAudioCheck);
 
     return () => {
       video.removeEventListener('play', onPlay);
@@ -653,8 +521,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       video.removeEventListener('error', onVideoError);
       video.removeEventListener('stalled', onStalled);
       video.removeEventListener('ended', onEnded);
-      video.removeEventListener('playing', onPlayingAudioCheck);
-      if (audioWatchdog) clearTimeout(audioWatchdog);
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('addtrack', onLoadedMetadata);
       if (rejectionHandlerRef.current) {
@@ -676,7 +542,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       if (waitingTimerRef.current) clearTimeout(waitingTimerRef.current);
     };
-  }, [url, retryKey, audioMode]);
+  }, [url, retryKey]);
 
   if (!url) return null;
 
@@ -743,14 +609,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
     }
   };
 
-  // The fallback note is informational; it should not sit on top of the video
-  // forever after a successful switch to transcoded audio.
-  useEffect(() => {
-    if (!fallbackNote) return;
-    const timer = setTimeout(() => setFallbackNote(null), 6000);
-    return () => clearTimeout(timer);
-  }, [fallbackNote]);
-
   // Close player when Escape key is pressed
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -803,37 +661,6 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
           <p className="text-xs text-zinc-400 max-w-sm leading-relaxed mb-2.5 px-2">
             {playbackError.message}
           </p>
-          {playbackError.type === 'codec' && caps.probed && (
-            <div className="flex flex-wrap items-center justify-center gap-1 mb-3 max-w-[380px]">
-              {(Object.keys(VIDEO_CODEC_LABELS) as Array<keyof typeof VIDEO_CODEC_LABELS>).map((id) => (
-                <span
-                  key={`v-${id}`}
-                  title={`${VIDEO_CODEC_LABELS[id]}: ${caps.video[id] ? 'supported' : 'not decodable in this browser'}`}
-                  className={`px-1.5 py-0.5 rounded border text-[9px] font-semibold ${
-                    caps.video[id]
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                      : 'border-zinc-700 bg-zinc-900 text-zinc-500 line-through decoration-zinc-600'
-                  }`}
-                >
-                  {VIDEO_CODEC_LABELS[id]}
-                </span>
-              ))}
-              <span className="w-px h-3 bg-zinc-700 mx-0.5" />
-              {(Object.keys(AUDIO_CODEC_LABELS) as Array<keyof typeof AUDIO_CODEC_LABELS>).map((id) => (
-                <span
-                  key={`a-${id}`}
-                  title={`${AUDIO_CODEC_LABELS[id]}: ${caps.audio[id] ? 'supported' : 'not decodable in this browser'}`}
-                  className={`px-1.5 py-0.5 rounded border text-[9px] font-semibold ${
-                    caps.audio[id]
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                      : 'border-zinc-700 bg-zinc-900 text-zinc-500 line-through decoration-zinc-600'
-                  }`}
-                >
-                  {AUDIO_CODEC_LABELS[id]}
-                </span>
-              ))}
-            </div>
-          )}
           {playbackError.details && (
             <div className="mb-3 max-w-[380px] px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl text-[11px] font-mono text-red-300/90 break-words leading-normal select-text">
               {playbackError.details}
@@ -879,9 +706,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       {isLoading && !playbackError && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none z-20">
           <Loader2 size={32} className="text-emerald-500 animate-spin mb-2" />
-          <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-            {audioMode === 'transcoded' ? 'Re-encoding audio (AAC)…' : 'Connecting to stream...'}
-          </span>
+          <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Connecting to stream...</span>
         </div>
       )}
 
@@ -891,25 +716,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         onPointerDown={(e) => dragControls.start(e)}
         style={{ cursor: 'grab' }}
       >
-        <div className="flex items-center gap-2 min-w-0 pr-3">
-          <span className="text-white text-xs font-bold truncate drop-shadow-md select-none">{title}</span>
-          {audioMode === 'transcoded' && (
-            <span
-              className="shrink-0 px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-[9px] font-bold uppercase tracking-wider text-emerald-300"
-              title="Audio re-encoded to AAC on the server. The video track is copied without re-encoding."
-            >
-              AAC
-            </span>
-          )}
-          {audioMode === 'off' && (
-            <span
-              className="shrink-0 px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-[9px] font-bold uppercase tracking-wider text-amber-300"
-              title="Video only — this browser cannot decode the audio track."
-            >
-              No audio
-            </span>
-          )}
-        </div>
+        <span className="text-white text-xs font-bold truncate pr-3 drop-shadow-md select-none">{title}</span>
         <div className="flex items-center gap-2 relative">
           <div className="flex items-center rounded-lg bg-orange-500/20 border border-orange-500/30 overflow-hidden pointer-events-auto">
             <button
@@ -993,24 +800,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
         </div>
       </div>
 
-      {/* Transcode Fallback Notice */}
-      {fallbackNote && (
-        <div className="absolute top-11 left-3 right-3 p-2.5 bg-zinc-900/95 border border-emerald-500/40 rounded-xl shadow-2xl flex items-center justify-between gap-2 text-xs z-40 backdrop-blur animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center gap-2 text-emerald-300 font-medium min-w-0">
-            <Loader2 size={14} className="shrink-0 text-emerald-400 animate-spin" />
-            <span className="text-[11px] leading-snug">{fallbackNote}</span>
-          </div>
-          <button
-            onClick={() => setFallbackNote(null)}
-            className="p-1 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors shrink-0"
-          >
-            <X size={13} />
-          </button>
-        </div>
-      )}
-
       {/* Codec Warning Banner */}
-      {!fallbackNote && audioCodecWarning && (
+      {audioCodecWarning && (
         <div className="absolute top-11 left-3 right-3 p-2.5 bg-zinc-900/95 border border-amber-500/40 rounded-xl shadow-2xl flex items-center justify-between text-xs z-40 backdrop-blur animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex items-center gap-2 text-amber-400 font-medium truncate pr-2">
             <AlertTriangle size={15} className="shrink-0 text-amber-400" />
@@ -1044,27 +835,8 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       )}
 
       {/* Settings Panel */}
-      {showSettings && (audioTracks.length > 1 || textTracks.length > 0 || (isLiveStream && canTranscode)) && (
-        <div className="absolute right-4 bottom-16 bg-zinc-900/95 border border-zinc-700 rounded-lg p-3 text-xs shadow-xl backdrop-blur max-h-56 overflow-y-auto w-52 custom-scrollbar">
-          {isLiveStream && canTranscode && (
-            <div className="mb-3">
-              <div className="text-zinc-400 font-bold mb-1 uppercase tracking-wider text-[10px]">Audio Source</div>
-              {([
-                { id: 'original' as AudioMode, label: 'Original (copy)', hint: 'No server load. Fails if the browser cannot decode the codec.' },
-                { id: 'transcoded' as AudioMode, label: 'Convert to AAC', hint: 'Server re-encodes audio only; video stays untouched.' },
-                { id: 'off' as AudioMode, label: 'Video only', hint: 'Mute the stream entirely.' },
-              ]).map(option => (
-                <button
-                  key={`audio-mode-${option.id}`}
-                  onClick={() => { setAudioMode(option.id); setShowSettings(false); }}
-                  title={option.hint}
-                  className={`block w-full text-left px-2 py-1 rounded ${audioMode === option.id ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-200 hover:bg-zinc-800'}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
+      {showSettings && (audioTracks.length > 1 || textTracks.length > 0) && (
+        <div className="absolute right-4 bottom-16 bg-zinc-900/95 border border-zinc-700 rounded-lg p-3 text-xs shadow-xl backdrop-blur max-h-48 overflow-y-auto w-48 custom-scrollbar">
           {audioTracks.length > 1 && (
             <div className="mb-3">
               <div className="text-zinc-400 font-bold mb-1 uppercase tracking-wider text-[10px]">Audio Track</div>
@@ -1128,7 +900,7 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             <VlcIcon size={16} />
           </button>
 
-          {(audioTracks.length > 1 || textTracks.length > 0 || (isLiveStream && canTranscode)) && (
+          {(audioTracks.length > 1 || textTracks.length > 0) && (
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={`transition-colors ${showSettings ? 'text-emerald-400' : 'text-white hover:text-emerald-400'}`}
