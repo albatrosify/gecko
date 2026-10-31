@@ -349,13 +349,10 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
             }
 
             if (statusCode === 503 && audioMode === 'transcoded') {
-              setPlaybackError({
-                title: 'Transcoder busy',
-                message: 'The server is already transcoding the maximum number of streams. Close another stream or raise GECKO_MAX_AUDIO_TRANSCODES.',
-                code: statusCode,
-                details,
-                type: 'media',
-              });
+              // The upstream is fine, only the transcoder is at capacity — give
+              // the viewer the picture back instead of killing the player.
+              setFallbackNote('All audio transcoders are busy — continuing with video only.');
+              setAudioMode('off');
               return;
             }
 
@@ -565,7 +562,12 @@ export function WebPlayer({ url, title, onClose }: WebPlayerProps) {
       if (!err) return;
       console.warn('Video element error:', err);
 
-      const serverMsg = await fetchStreamErrorMessage(url);
+      // Only a network error can carry a meaningful server message. Probing on a
+      // codec error opens a second upstream connection exactly while the
+      // provider is still releasing the slot for the transcode fallback.
+      const serverMsg = err.code === MediaError.MEDIA_ERR_NETWORK
+        ? await fetchStreamErrorMessage(url)
+        : undefined;
       if (serverMsg) {
         setPlaybackError({
           title: 'Stream Unavailable',

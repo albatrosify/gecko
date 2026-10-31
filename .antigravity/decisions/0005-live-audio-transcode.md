@@ -44,6 +44,12 @@ Server-Transcoding oder (c) einen anderen Transport (WebRTC).
    ffmpeg wird bei Client-Disconnect beendet, `stdout` pausiert bei
    Downstream-Backpressure, `SIGTERM`→`SIGKILL` nach 2 s, und beim Shutdown
    räumt `stopAllTranscoders()` auf.
+8. **Retry mit Backoff beim Start** (1,5 s / 3 s, max. 3 Versuche) bei
+   `409/429/5xx`. Grund aus dem Prod-Log: der Wechsel `direct → transcoded`
+   öffnet zwangsläufig eine neue Upstream-Verbindung, und Single-Slot-Provider
+   antworten für ein paar Sekunden mit 409/513, bis der alte Slot freigegeben
+   ist. Zusätzlich prüft der Client bei Codec-Fehlern **kein** `fetchStreamErrorMessage`
+   mehr (das war eine dritte Verbindung im selben Sekundenfenster).
 
 ## Konsequenzen
 
