@@ -66,3 +66,13 @@ abschaltbar bzw. anders dosierbar sein.
 - `server/multiplexer/stream-hub.test.ts` (+3: Override gewinnt, Fallback auf
   Default, `0` = sofortige Weitergabe + kein Health-Report)
 - Gesamtsuite: 264 Tests / 28 Dateien grün, `tsc --noEmit` sauber.
+
+## Deployment-Hinweis (Prod)
+
+Mit `81b9271` wurde der transitionale `:bun`-Image-Workflow gelöscht; `develop`
+publiziert jetzt `:dev` (+ `:dev-<sha>`), Release-Tags kommen aus `main`/`v*`.
+Die Prod-Compose zeigte aber weiter auf `ghcr.io/albatrosify/gecko:bun` — dieses Tag
+bewegt sich nicht mehr. Beim Deploy dieses Features wurde deshalb in
+`/home/ubuntu/docker/iptv/docker-compose.yml` **`gecko` und `gecko-test-bun` auf
+`:dev` umgestellt** (Backup `docker-compose.yml.bak-<timestamp>`). Wer künftig
+„Image ist aktuell"-Annahmen trifft: `:bun` ist ein totes Tag.
