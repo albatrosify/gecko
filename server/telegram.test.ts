@@ -105,7 +105,7 @@ describe('Telegram Notification Service', () => {
       'https://api.telegram.org/botcustom_token/sendMessage',
       expect.objectContaining({
         chat_id: 'custom_chat',
-        text: expect.stringContaining('Gecko IPTV - Test Benachrichtigung'),
+        text: expect.stringContaining('Gecko IPTV - Test Notification'),
       }),
       { timeout: 10000 }
     );

@@ -166,7 +166,7 @@ class DvrRecorder {
     // Acquire lock from arbiter
     const locked = connectionArbiter.acquireDvrLock(sourceId, streamId, recordingId, streamName);
     if (!locked) {
-      throw new Error(`Die Quelle ist bereits durch eine andere Aufnahme gesperrt.`);
+      throw new Error(`The source is already locked by another recording.`);
     }
 
     const filePath = path.join(RECORDINGS_DIR, `${recordingId}.ts`);
@@ -234,9 +234,9 @@ class DvrRecorder {
 
     // Notify Telegram of start
     sendTelegramNotification(
-      `🔴 <b>Gecko DVR Aufnahme gestartet</b>\n` +
-      `Sender: <b>${streamName}</b>\n` +
-      `Startzeit: <code>${now.toLocaleTimeString()}</code>`
+      `🔴 <b>Gecko DVR recording started</b>\n` +
+      `Channel: <b>${streamName}</b>\n` +
+      `Start time: <code>${now.toLocaleTimeString()}</code>`
     ).catch(() => {});
 
     return {
@@ -272,9 +272,9 @@ class DvrRecorder {
 
       log(`[DVR] Hourly reminder for recording ${recordingId} (${streamName}) - running ${hours}h, ${sizeStr}`);
       await sendTelegramNotification(
-        `⏳ <b>Gecko DVR Erinnerung</b>\n` +
-        `Aufnahme für <b>${streamName}</b> läuft seit <b>${hours} Std.</b> (${sizeStr}).\n` +
-        `Zum Stoppen im Gecko WebUI aufrufen.`
+        `⏳ <b>Gecko DVR reminder</b>\n` +
+        `Recording for <b>${streamName}</b> running for <b>${hours}h</b> (${sizeStr}).\n` +
+        `Open Gecko WebUI to stop.`
       );
     }, 60 * 60 * 1000);
     timer.unref?.();
@@ -351,12 +351,12 @@ class DvrRecorder {
 
       if (response.status >= 400) {
         try { response.data.destroy(); } catch {}
-        throw new Error(`Stream konnte nicht geöffnet werden (HTTP ${response.status}). Quelle möglicherweise belegt.`);
+        throw new Error(`Stream could not be opened (HTTP ${response.status}). Source may be in use.`);
       }
 
       if (!this.sessions.has(recordingId) || !session.attached) {
         try { response.data.destroy(); } catch {}
-        throw new Error(session.attachError || 'Aufnahme konnte nicht an den Stream angebunden werden.');
+        throw new Error(session.attachError || 'Could not attach recording to the stream.');
       }
 
       // Drain the loopback socket so the multiplexer does not flag a stalled subscriber.
@@ -401,10 +401,10 @@ class DvrRecorder {
       log(`[DVR] Started manual channel recording for ${streamName} (id: ${recordingId}, source: ${session.sourceId})`);
 
       sendTelegramNotification(
-        `🔴 <b>Gecko DVR Aufnahme gestartet</b>\n` +
-        `Sender: <b>${streamName}</b>\n` +
-        `Startzeit: <code>${new Date(startTimeMs).toLocaleTimeString()}</code>\n` +
-        `Dauer: ${durationMinutes > 0 ? `<b>${formatDuration(durationMinutes * 60)}</b>` : 'bis manuell gestoppt'}`
+        `🔴 <b>Gecko DVR recording started</b>\n` +
+        `Channel: <b>${streamName}</b>\n` +
+        `Start time: <code>${new Date(startTimeMs).toLocaleTimeString()}</code>\n` +
+        `Duration: ${durationMinutes > 0 ? `<b>${formatDuration(durationMinutes * 60)}</b>` : 'until manually stopped'}`
       ).catch(() => {});
 
       return this.getRecordingById(recordingId)!;
@@ -424,7 +424,7 @@ class DvrRecorder {
     if (!session) return false;
 
     if (!connectionArbiter.acquireDvrLock(sourceId, String(streamId), recordingId, streamName)) {
-      session.attachError = 'Die Quelle ist bereits durch eine andere Aufnahme gesperrt.';
+      session.attachError = 'The source is already locked by another recording.';
       log(`[DVR] Refused manual recording ${recordingId}: source ${sourceId} already locked by another recording.`);
       return false;
     }
@@ -547,9 +547,9 @@ class DvrRecorder {
 
     // Send immediate Telegram handover notification
     sendTelegramNotification(
-      `⚠️ <b>Gecko DVR Handover</b>\n` +
-      `Fernseher / Client hat Verbindung getrennt.\n` +
-      `Die Aufnahme für <b>${session.streamName}</b> läuft im Hintergrund weiter!`
+      `⚠️ <b>Gecko DVR handover</b>\n` +
+      `TV / client disconnected.\n` +
+      `Recording for <b>${session.streamName}</b> continues in background!`
     ).catch(() => {});
 
     return true;
@@ -640,10 +640,10 @@ class DvrRecorder {
 
       // Notify Telegram of completion
       sendTelegramNotification(
-        `✅ <b>Gecko DVR Aufnahme beendet</b>\n` +
-        `Sender: <b>${session.streamName}</b>\n` +
-        `Dauer: <b>${formatDuration(durationSeconds)}</b>\n` +
-        `Dateigröße: <b>${formatBytes(fileSizeBytes)}</b>`
+        `✅ <b>Gecko DVR recording finished</b>\n` +
+        `Channel: <b>${session.streamName}</b>\n` +
+        `Duration: <b>${formatDuration(durationSeconds)}</b>\n` +
+        `File size: <b>${formatBytes(fileSizeBytes)}</b>`
       ).catch(() => {});
 
       return {

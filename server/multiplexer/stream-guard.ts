@@ -69,14 +69,14 @@ export function evaluateStreamRequest(
 
   if (guardEnabled && totalActive >= maxConnections) {
     const primaryActive = activeChannelsOnSource[0] || extraActiveStream || {
-      streamName: 'Anderer Stream',
+      streamName: 'Another stream',
       streamId: 'unknown',
     };
     return {
       action: 'block_placeholder',
       activeStreamName: primaryActive.streamName,
       activeStreamId: primaryActive.streamId,
-      reason: `Quelle ist durch "${primaryActive.streamName || primaryActive.streamId}" belegt (${maxConnections}-Verbindungs-Schutz aktiv).`,
+      reason: `Source is in use by "${primaryActive.streamName || primaryActive.streamId}" (${maxConnections}-connection protection active).`,
     };
   }
 

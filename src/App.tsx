@@ -143,15 +143,15 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
   // Page title resolution
   const currentTitle = useMemo(() => {
     const path = location.pathname;
-    if (path === '/') return 'Übersicht';
-    if (path === '/traffic') return 'Traffic & Daten';
-    if (path === '/dvr') return 'DVR / Aufnahmen';
+    if (path === '/') return 'Overview';
+    if (path === '/traffic') return 'Traffic & Data';
+    if (path === '/dvr') return 'DVR / Recordings';
     if (path === '/playlists') return 'Playlists';
-    if (path === '/sources') return 'Upstream Quellen';
-    if (path === '/epgs') return 'EPG Provider';
-    if (path === '/settings') return 'Einstellungen';
-    if (path === '/users') return 'Benutzerverwaltung';
-    if (path.startsWith('/playlist/')) return 'Playlist bearbeiten';
+    if (path === '/sources') return 'Upstream Sources';
+    if (path === '/epgs') return 'EPG Providers';
+    if (path === '/settings') return 'Settings';
+    if (path === '/users') return 'User Management';
+    if (path.startsWith('/playlist/')) return 'Edit Playlist';
     return 'GECKO';
   }, [location.pathname]);
 
@@ -192,7 +192,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           <button
             onClick={toggleSidebar}
             className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] rounded-lg transition-colors cursor-pointer"
-            title={collapsed ? 'Seitenleiste einblenden (Cmd+\\)' : 'Seitenleiste einklappen (Cmd+\\)'}
+            title={collapsed ? 'Show sidebar (Cmd+\\)' : 'Collapse sidebar (Cmd+\\)'}
             aria-label="Toggle Sidebar"
           >
             <PanelLeft size={17} />
@@ -211,7 +211,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <DesktopNavLink
               to="/"
               icon={<LayoutGrid size={18} />}
-              label="Übersicht"
+              label="Overview"
               active={location.pathname === '/'}
               collapsed={collapsed}
               badge={hasActiveStreams ? `${proxyStats.activeStreams}` : undefined}
@@ -219,7 +219,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <DesktopNavLink
               to="/traffic"
               icon={<BarChart3 size={18} />}
-              label="Traffic & Daten"
+              label="Traffic & Data"
               active={location.pathname === '/traffic'}
               collapsed={collapsed}
             />
@@ -229,7 +229,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           <div className="space-y-1">
             {!collapsed && (
               <div className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-                Mediathek
+                Library
               </div>
             )}
             <DesktopNavLink
@@ -242,7 +242,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <DesktopNavLink
               to="/dvr"
               icon={<Radio size={18} />}
-              label="DVR Aufnahmen"
+              label="DVR Recordings"
               active={location.pathname === '/dvr'}
               collapsed={collapsed}
             />
@@ -252,27 +252,27 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           <div className="space-y-1">
             {!collapsed && (
               <div className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
-                Verwaltung
+                Management
               </div>
             )}
             <DesktopNavLink
               to="/sources"
               icon={<Database size={18} />}
-              label="Upstream Quellen"
+              label="Upstream Sources"
               active={location.pathname === '/sources'}
               collapsed={collapsed}
             />
             <DesktopNavLink
               to="/epgs"
               icon={<Tv size={18} />}
-              label="EPG Provider"
+              label="EPG Providers"
               active={location.pathname === '/epgs'}
               collapsed={collapsed}
             />
             <DesktopNavLink
               to="/settings"
               icon={<SettingsIcon size={18} />}
-              label="Einstellungen"
+              label="Settings"
               active={location.pathname === '/settings'}
               collapsed={collapsed}
             />
@@ -280,7 +280,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
               <DesktopNavLink
                 to="/users"
                 icon={<Users size={18} />}
-                label="Benutzer"
+                label="Users"
                 active={location.pathname === '/users'}
                 collapsed={collapsed}
               />
@@ -294,7 +294,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <Link
               to="/traffic"
               className="flex items-center justify-center p-2.5 text-zinc-400 hover:text-emerald-400 hover:bg-white/[0.04] rounded-xl transition-all"
-              title={`Netzwerk: ${mbps} Mbps · ${proxyStats?.activeStreams || 0} aktive Streams`}
+              title={`Network: ${mbps} Mbps · ${proxyStats?.activeStreams || 0} active streams`}
             >
               <div className="relative">
                 <Activity size={18} />
@@ -311,7 +311,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
                   <Activity size={12} className="text-emerald-400" />
-                  Live Bandbreite
+                  Live Bandwidth
                 </span>
                 <span className="text-xs font-semibold text-zinc-300 group-hover:text-emerald-400 transition-colors">
                   Details →
@@ -345,8 +345,8 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
               <button
                 onClick={onLogout}
                 className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-                title="Abmelden"
-                aria-label="Abmelden"
+                title="Sign out"
+                aria-label="Sign out"
               >
                 <LogOut size={16} />
               </button>
@@ -355,8 +355,8 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <button
               onClick={onLogout}
               className="w-full flex items-center justify-center p-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-              title="Abmelden"
-              aria-label="Abmelden"
+              title="Sign out"
+              aria-label="Sign out"
             >
               <LogOut size={18} />
             </button>
@@ -387,7 +387,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="p-1.5 text-zinc-300 hover:text-white bg-white/[0.06] border border-white/[0.08] rounded-full active:scale-95 transition-all"
-              aria-label="Mehr Menü öffnen"
+              aria-label="Open menu"
             >
               <MoreHorizontal size={18} />
             </button>
@@ -415,7 +415,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           <MobileTabItem
             to="/"
             icon={<LayoutGrid size={20} />}
-            label="Übersicht"
+            label="Overview"
             active={location.pathname === '/'}
           />
           <MobileTabItem
@@ -433,7 +433,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           <MobileTabItem
             to="/sources"
             icon={<Database size={20} />}
-            label="Quellen"
+            label="Sources"
             active={location.pathname === '/sources'}
           />
           <button
@@ -445,7 +445,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             }`}
           >
             <MoreHorizontal size={20} />
-            <span className="text-[10px] mt-0.5 tracking-tight">Mehr</span>
+            <span className="text-[10px] mt-0.5 tracking-tight">More</span>
           </button>
         </nav>
       </div>
@@ -478,13 +478,13 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
 
               <div className="flex items-center justify-between pt-1">
                 <div>
-                  <h3 className="text-lg font-bold text-white tracking-tight">Menü & Verwaltung</h3>
-                  <p className="text-xs text-zinc-400">Erweiterte Werkzeuge & Systemoptionen</p>
+                  <h3 className="text-lg font-bold text-white tracking-tight">Menu & Management</h3>
+                  <p className="text-xs text-zinc-400">Advanced tools & system options</p>
                 </div>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
                   className="p-1.5 rounded-full bg-white/[0.08] text-zinc-400 hover:text-white"
-                  aria-label="Schließen"
+                  aria-label="Close"
                 >
                   <X size={18} />
                 </button>
@@ -495,24 +495,24 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
                 <MobileDrawerRow
                   to="/traffic"
                   icon={<BarChart3 size={18} className="text-emerald-400" />}
-                  label="Traffic & Datenverbrauch"
+                  label="Traffic & Data Usage"
                   detail={`${mbps} Mbps`}
                 />
                 <MobileDrawerRow
                   to="/epgs"
                   icon={<Tv size={18} className="text-blue-400" />}
-                  label="EPG Provider & Guide"
+                  label="EPG Providers & Guide"
                 />
                 <MobileDrawerRow
                   to="/settings"
                   icon={<SettingsIcon size={18} className="text-purple-400" />}
-                  label="Einstellungen & Scans"
+                  label="Settings & Scans"
                 />
                 {user.role === 'admin' && (
                   <MobileDrawerRow
                     to="/users"
                     icon={<Users size={18} className="text-amber-400" />}
-                    label="Benutzerverwaltung"
+                    label="User Management"
                   />
                 )}
               </div>
@@ -528,7 +528,7 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white text-xs font-medium transition-all min-h-[38px]"
                 >
                   <LogOut size={14} />
-                  <span>Abmelden</span>
+                  <span>Sign Out</span>
                 </button>
               </div>
             </motion.div>
@@ -658,7 +658,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
         : await api.auth.login(email, password);
       onLogin(user);
     } catch (err: any) {
-      setError(err.message || 'Authentifizierung fehlgeschlagen');
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -680,7 +680,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
         <form onSubmit={handleSubmit} className="space-y-3.5 text-left">
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider pl-1">
-              E-Mail
+              Email
             </label>
             <input
               type="email"
@@ -694,7 +694,7 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
 
           <div className="space-y-1">
             <label className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider pl-1">
-              Passwort
+              Password
             </label>
             <input
               type="password"
@@ -719,11 +719,11 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl shadow-[0_4px_16px_rgba(48,209,88,0.25)] active:scale-[0.98] transition-all disabled:opacity-50 min-h-[44px] cursor-pointer mt-2"
           >
             {loading ? (
-              <span className="text-xs font-semibold">Bitte warten...</span>
+              <span className="text-xs font-semibold">Please wait...</span>
             ) : (
               <>
                 {isRegistering ? <UserPlus size={18} /> : <LogIn size={18} />}
-                <span className="text-sm">{isRegistering ? 'Account erstellen' : 'Anmelden'}</span>
+                <span className="text-sm">{isRegistering ? 'Create Account' : 'Sign In'}</span>
               </>
             )}
           </button>
@@ -737,8 +737,8 @@ function LoginView({ onLogin }: { onLogin: (user: AppUser) => void }) {
           className="text-xs text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
         >
           {isRegistering
-            ? 'Bereits registriert? Hier anmelden'
-            : 'Noch kein Account? Jetzt registrieren'}
+            ? 'Already have an account? Sign in'
+            : "Don't have an account? Register now"}
         </button>
       </div>
     </div>

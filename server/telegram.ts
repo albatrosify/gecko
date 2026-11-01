@@ -95,9 +95,9 @@ export async function testTelegramNotification(
   chatId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const timestamp = new Date().toLocaleTimeString();
-  const testMessage = `🦎 <b>Gecko IPTV - Test Benachrichtigung</b>\n\n` +
-    `Die Telegram-Benachrichtigungen wurden erfolgreich eingerichtet!\n` +
-    `Zeitstempel: <code>${timestamp}</code>`;
+  const testMessage = `🦎 <b>Gecko IPTV - Test Notification</b>\n\n` +
+    `Telegram notifications were successfully configured!\n` +
+    `Timestamp: <code>${timestamp}</code>`;
 
   return sendTelegramNotification(testMessage, {
     botToken,

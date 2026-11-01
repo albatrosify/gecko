@@ -189,32 +189,32 @@ function BufferGauge({ health }: { health?: import('../types').BufferHealth | nu
   if (!health) return <div className="flex-1" />;
 
   const palette: Record<string, { bar: string; text: string; label: string }> = {
-    healthy: { bar: 'bg-emerald-500', text: 'text-emerald-400', label: 'stabil' },
-    low: { bar: 'bg-amber-500', text: 'text-amber-400', label: 'knapp' },
-    starved: { bar: 'bg-red-500', text: 'text-red-400', label: 'hungert' },
-    warming: { bar: 'bg-zinc-600', text: 'text-zinc-400', label: 'messe…' },
+    healthy: { bar: 'bg-emerald-500', text: 'text-emerald-400', label: 'stable' },
+    low: { bar: 'bg-amber-500', text: 'text-amber-400', label: 'low' },
+    starved: { bar: 'bg-red-500', text: 'text-red-400', label: 'starved' },
+    warming: { bar: 'bg-zinc-600', text: 'text-zinc-400', label: 'measuring…' },
   };
   const tone = palette[health.status] ?? palette.warming;
   const width = Math.max(2, Math.min(100, health.fillPercent));
   const lastHiccup = health.lastStarveAt
-    ? `Letzter Aussetzer: ${Math.round(health.lastStarveMs ?? 0)} ms, vor ${Math.max(0, Math.round((Date.now() - health.lastStarveAt) / 1000))} s`
-    : 'Seit Verbindungsaufbau kein Aussetzer';
+    ? `Last stall: ${Math.round(health.lastStarveMs ?? 0)} ms, ${Math.max(0, Math.round((Date.now() - health.lastStarveAt) / 1000))}s ago`
+    : 'No stalls since connection started';
   const readout = health.status === 'warming'
     ? tone.label
     : health.status === 'starved'
-      ? `hungert seit ${((health.starvedMs ?? 0) / 1000).toFixed(1)} s`
-      : `${health.bufferedSeconds.toFixed(1)} / ${health.reserveSeconds} s · ${tone.label}`;
+      ? `starving for ${((health.starvedMs ?? 0) / 1000).toFixed(1)}s`
+      : `${health.bufferedSeconds.toFixed(1)} / ${health.reserveSeconds}s · ${tone.label}`;
   const rateMbps = health.rateBps > 0 ? (health.rateBps * 8 / 1_000_000).toFixed(1) : null;
   const title = health.status === 'warming'
-    ? 'Puffer wird aufgebaut — die Streamrate wird noch gemessen'
-    : `Puffer: ${health.bufferedSeconds} s von ${health.reserveSeconds} s Reserve (${health.fillPercent} %)` +
-      `${rateMbps ? `\nStreamrate: ${rateMbps} Mbps (Pacing-Basis)` : ''}` +
+    ? 'Building buffer — measuring stream bitrate'
+    : `Buffer: ${health.bufferedSeconds}s of ${health.reserveSeconds}s reserve (${health.fillPercent}%)` +
+      `${rateMbps ? `\nBitrate: ${rateMbps} Mbps (pacing base)` : ''}` +
       `\n${lastHiccup}`;
 
   return (
     <div className="flex-1 min-w-[140px]" title={title}>
       <div className="flex items-center justify-between gap-2 text-[9px] mb-1">
-        <span className="text-zinc-500 uppercase font-bold tracking-wider">Puffer</span>
+        <span className="text-zinc-500 uppercase font-bold tracking-wider">Buffer</span>
         <span className={`font-mono ${tone.text}`}>{readout}</span>
       </div>
       <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -369,14 +369,14 @@ export function Dashboard() {
       const data = await api.proxy.stats();
       setStats(data);
     } catch (err: any) {
-      alert(`Fehler beim Beenden des Streams: ${err.message}`);
+      alert(`Failed to disconnect stream: ${err.message}`);
     } finally {
       setKillBusy(prev => ({ ...prev, [connId]: false }));
     }
   };
 
   const handleKillAllStreams = async () => {
-    if (stats.connections?.length > 0 && !confirm(`Alle ${stats.connections.length} aktiven Streams beenden? Alle Clients verlieren die Wiedergabe.`)) {
+    if (stats.connections?.length > 0 && !confirm(`Terminate all ${stats.connections.length} active streams? All clients will lose playback.`)) {
       return;
     }
     setKillAllBusy(true);
@@ -385,7 +385,7 @@ export function Dashboard() {
       const data = await api.proxy.stats();
       setStats(data);
     } catch (err: any) {
-      alert(`Fehler beim Beenden aller Streams: ${err.message}`);
+      alert(`Failed to disconnect all streams: ${err.message}`);
     } finally {
       setKillAllBusy(false);
     }
@@ -397,7 +397,7 @@ export function Dashboard() {
       const data = await api.proxy.stats();
       setStats(data);
     } catch (err: any) {
-      alert(`Fehler beim Starten der Aufnahme: ${err.message}`);
+      alert(`Failed to start recording: ${err.message}`);
     } finally {
       setDvrBusy(prev => ({ ...prev, [connId]: false }));
     }
@@ -410,7 +410,7 @@ export function Dashboard() {
       const data = await api.proxy.stats();
       setStats(data);
     } catch (err: any) {
-      alert(`Fehler beim Stoppen der Aufnahme: ${err.message}`);
+      alert(`Failed to stop recording: ${err.message}`);
     } finally {
       setDvrBusy(prev => ({ ...prev, [connId]: false }));
     }
@@ -437,8 +437,8 @@ export function Dashboard() {
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight text-white">Systemübersicht</h2>
-        <p className="text-xs text-zinc-400">Echtzeit-Durchsatz, aktive Streams und Systemleistung</p>
+        <h2 className="text-2xl font-bold tracking-tight text-white">System Overview</h2>
+        <p className="text-xs text-zinc-400">Real-time throughput, active streams, and system performance</p>
       </header>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -458,10 +458,10 @@ export function Dashboard() {
             <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{card.value}</div>
           </div>
         ))}
-        {/* Monatstraffic card */}
+        {/* Monthly traffic card */}
         <Link to="/traffic" className="apple-glass-card apple-glass-card-hover p-3.5 sm:p-4 rounded-2xl flex flex-col justify-between cursor-pointer group">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Monatstraffic</span>
+            <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Monthly Traffic</span>
             <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-current/10 shrink-0 group-hover:scale-110 transition-transform">
               <BarChart3 size={15} />
             </div>
@@ -469,7 +469,7 @@ export function Dashboard() {
           <div>
             <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{formatBytes(stats.monthBytes || 0)}</div>
             <div className="text-[10px] text-zinc-400">
-              {stats.monthlyQuotaBytes ? `${Math.round(((stats.monthBytes || 0) / stats.monthlyQuotaBytes) * 1000) / 10}% von ${formatBytes(stats.monthlyQuotaBytes)}` : 'Details ansehen'}
+              {stats.monthlyQuotaBytes ? `${Math.round(((stats.monthBytes || 0) / stats.monthlyQuotaBytes) * 1000) / 10}% of ${formatBytes(stats.monthlyQuotaBytes)}` : 'View details'}
             </div>
           </div>
         </Link>
@@ -484,7 +484,7 @@ export function Dashboard() {
             </div>
             <div>
               <div className="text-xl sm:text-2xl font-bold text-white tracking-tight tabular-nums">{stats.cache.size}</div>
-              <div className="text-[10px] text-zinc-400">{stats.cache.entries} Einträge</div>
+              <div className="text-[10px] text-zinc-400">{stats.cache.entries} entries</div>
             </div>
           </div>
         )}
@@ -497,7 +497,7 @@ export function Dashboard() {
           <div className="flex justify-between items-center mb-4">
             <div>
               <h3 className="text-base font-bold text-white">Bandwidth Usage</h3>
-              <p className="text-xs text-zinc-400">Echtzeit-Durchsatz · 2s Abtastrate</p>
+              <p className="text-xs text-zinc-400">Real-time throughput · 2s sample rate</p>
             </div>
             <div className="text-right">
               <div className="text-xl font-bold text-emerald-400 tabular-nums">{mbps} Mbps</div>
@@ -521,10 +521,10 @@ export function Dashboard() {
                   onClick={handleKillAllStreams}
                   disabled={killAllBusy}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/20 transition-all disabled:opacity-50 min-h-[30px] cursor-pointer"
-                  title="Alle aktiven Streams/Proxy-Verbindungen beenden"
+                  title="Terminate all active streams/proxy connections"
                 >
                   <Power size={11} />
-                  {killAllBusy ? '...' : 'Alle beenden'}
+                  {killAllBusy ? '...' : 'Terminate All'}
                 </button>
               )}
             </div>
@@ -543,10 +543,9 @@ export function Dashboard() {
                   : 'text-purple-400 bg-purple-500/10';
                 return (
                   <div key={conn.id} className="bg-black/40 border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
-                    {/* Top row: icon + name + type badge. The icon shows the channel/poster art when
-                        available; the name wraps instead of truncating. */}
-                    <div className="flex items-start justify-between gap-2.5 flex-wrap sm:flex-nowrap">
-                      <div className="flex items-center gap-2.5 min-w-[130px] flex-1">
+                    {/* Top row: icon + name + type badge */}
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
                         <div className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${iconColor}`}>
                           <Play size={14} fill="currentColor" />
                           {conn.streamIcon && (
@@ -568,66 +567,29 @@ export function Dashboard() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end pt-0.5">
                         {conn.isPlaceholder && (
-                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20" title="Dieser Client empfängt eine Hinweisanzeige, da die Quelle durch einen anderen Stream belegt ist">
-                            🛑 Hinweisanzeige
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20" title="This client receives a notice screen because the upstream source is in use by another stream">
+                            🛑 Notice
                           </span>
                         )}
                         {conn.isHandover && (
-                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Aufnahme läuft im Hintergrund weiter">
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20" title="Recording continues in the background">
                             📁 Handover
                           </span>
                         )}
                         {conn.subscriberCount !== undefined && conn.subscriberCount > 1 && (
-                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20" title="Dieser Stream wird lokal mit mehreren Clients geteilt (1 Upstream-Verbindung)">
+                          <span className="flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20" title="This stream is shared locally across multiple clients (1 upstream connection)">
                             👥 {conn.subscriberCount} (1 Upstream)
                           </span>
                         )}
-                        {conn.recordingId ? (
-                          <div className="flex items-center gap-1">
-                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                              REC
-                            </span>
-                            <button
-                              onClick={() => handleStopRecording(conn.id, conn.recordingId)}
-                              disabled={dvrBusy[conn.id]}
-                              className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/30 disabled:opacity-50 min-h-[30px] cursor-pointer"
-                              title="Aufnahme beenden"
-                            >
-                              {dvrBusy[conn.id] ? '...' : 'Stopp'}
-                            </button>
-                          </div>
-                        ) : (
-                          conn.type === 'live' && !conn.isPlaceholder && (
-                            <button
-                              onClick={() => handleStartRecording(conn.id)}
-                              disabled={dvrBusy[conn.id]}
-                              className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/20 disabled:opacity-50 min-h-[30px] cursor-pointer"
-                              title="Live-Stream aufnehmen (Stream-Tee)"
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                              {dvrBusy[conn.id] ? '...' : 'Aufnehmen'}
-                            </button>
-                          )
-                        )}
-                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg shrink-0 ${typeColor}`}>
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md shrink-0 ${typeColor}`}>
                           {conn.type === 'movie' ? 'VOD' : conn.type}
                         </span>
-                        <button
-                          onClick={() => handleKillStream(conn.id)}
-                          disabled={killBusy[conn.id]}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-white/[0.06] hover:bg-red-500 text-zinc-300 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-white/[0.08] hover:border-red-500/30 disabled:opacity-50 shrink-0 min-h-[30px] cursor-pointer"
-                          title="Diesen Stream/Proxy-Verbindung sofort beenden (Client bricht ab)"
-                        >
-                          <Power size={10} />
-                          {killBusy[conn.id] ? '...' : 'Trennen'}
-                        </button>
                       </div>
                     </div>
                     {/* Bottom row: stats */}
-                    <div className="flex items-center gap-3 flex-wrap pl-10 text-[10px] text-zinc-400">
+                    <div className="flex items-center gap-3 flex-wrap pl-10.5 text-[10px] text-zinc-400">
                       <div className="flex items-center gap-1">
                         <span className="text-zinc-500">⏱</span>
                         <span className="font-mono text-zinc-300">{formatElapsedSince(conn.startTime)}</span>
@@ -653,9 +615,50 @@ export function Dashboard() {
                         <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded uppercase tracking-wider">Placeholder</span>
                       )}
                     </div>
-                    {/* Buffer health (actions live in the header row) */}
-                    <div className="flex items-end gap-3 pl-10">
-                      <BufferGauge health={conn.buffer} />
+                    {/* Buffer health & action buttons */}
+                    <div className="flex items-center justify-between gap-3 pl-10.5 pt-0.5 flex-wrap">
+                      <div className="flex-1 min-w-[130px]">
+                        <BufferGauge health={conn.buffer} />
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                        {conn.recordingId ? (
+                          <div className="flex items-center gap-1">
+                            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                              REC
+                            </span>
+                            <button
+                              onClick={() => handleStopRecording(conn.id, conn.recordingId)}
+                              disabled={dvrBusy[conn.id]}
+                              className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/30 disabled:opacity-50 min-h-[30px] cursor-pointer"
+                              title="Stop recording"
+                            >
+                              {dvrBusy[conn.id] ? '...' : 'Stop'}
+                            </button>
+                          </div>
+                        ) : (
+                          conn.type === 'live' && !conn.isPlaceholder && (
+                            <button
+                              onClick={() => handleStartRecording(conn.id)}
+                              disabled={dvrBusy[conn.id]}
+                              className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-red-500/20 disabled:opacity-50 min-h-[30px] cursor-pointer"
+                              title="Record live stream (stream tee)"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                              {dvrBusy[conn.id] ? '...' : 'Record'}
+                            </button>
+                          )
+                        )}
+                        <button
+                          onClick={() => handleKillStream(conn.id)}
+                          disabled={killBusy[conn.id]}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-white/[0.06] hover:bg-red-500 text-zinc-300 hover:text-white rounded-lg text-[10px] font-bold transition-all border border-white/[0.08] hover:border-red-500/30 disabled:opacity-50 shrink-0 min-h-[30px] cursor-pointer"
+                          title="Disconnect this stream/proxy connection immediately (client will disconnect)"
+                        >
+                          <Power size={10} />
+                          {killBusy[conn.id] ? '...' : 'Disconnect'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -665,8 +668,8 @@ export function Dashboard() {
                 <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center mb-2.5 text-zinc-500">
                   <Activity size={20} />
                 </div>
-                <div className="text-white text-sm font-semibold">Aktuell keine aktiven Streams</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">Sobald ein IPTV-Client verbindet, erscheint der Stream hier</div>
+                <div className="text-white text-sm font-semibold">No active streams</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">Streams will appear here as soon as an IPTV client connects</div>
               </div>
             )}
           </div>
@@ -775,14 +778,14 @@ export function PlaylistManager() {
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-white">Playlists</h2>
-          <p className="text-xs text-zinc-400">Verwalte und konfiguriere deine aggregierten IPTV-Playlists</p>
+          <p className="text-xs text-zinc-400">Manage and configure your aggregated IPTV playlists</p>
         </div>
         <button 
           onClick={() => setShowAddModal(true)}
           className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          <span>Neue Playlist</span>
+          <span>New Playlist</span>
         </button>
       </header>
 
@@ -1172,14 +1175,14 @@ export function PlaylistManager() {
                     setShowEditModal(true);
                   }}
                   className="p-2 hover:bg-white/[0.08] text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center" 
-                  title="Einstellungen bearbeiten"
+                  title="Edit settings"
                 >
                   <Edit3 size={15} />
                 </button>
                 <button 
                   onClick={() => handleDelete(playlist.id)}
                   className="p-2 hover:bg-red-500/15 text-zinc-400 hover:text-red-400 rounded-lg transition-colors cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
-                  title="Löschen"
+                  title="Delete"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -1188,7 +1191,7 @@ export function PlaylistManager() {
 
             <div className="bg-black/40 rounded-xl p-3 border border-white/[0.06] space-y-2.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Zugangsdaten</span>
+                <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Credentials</span>
                 <div className="font-mono text-xs text-zinc-300 flex items-center gap-1.5">
                   <span className="text-white font-semibold">{playlist.username}</span>
                   <span className="text-zinc-600">/</span>
@@ -1211,12 +1214,12 @@ export function PlaylistManager() {
                   {copiedEndpoint === `${playlist.id}-api` ? (
                     <>
                       <Check size={13} className="text-emerald-400" />
-                      <span className="text-emerald-400 font-semibold text-[11px]">API kopiert!</span>
+                      <span className="text-emerald-400 font-semibold text-[11px]">API copied!</span>
                     </>
                   ) : (
                     <>
                       <Copy size={13} className="text-zinc-400" />
-                      <span className="text-[11px]">API kopieren</span>
+                      <span className="text-[11px]">Copy API</span>
                     </>
                   )}
                 </button>
@@ -1235,12 +1238,12 @@ export function PlaylistManager() {
                   {copiedEndpoint === `${playlist.id}-m3u` ? (
                     <>
                       <Check size={13} className="text-emerald-400" />
-                      <span className="text-emerald-400 font-semibold text-[11px]">M3U kopiert!</span>
+                      <span className="text-emerald-400 font-semibold text-[11px]">M3U copied!</span>
                     </>
                   ) : (
                     <>
                       <Copy size={13} className="text-zinc-400" />
-                      <span className="text-[11px]">M3U kopieren</span>
+                      <span className="text-[11px]">Copy M3U</span>
                     </>
                   )}
                 </button>
@@ -1264,7 +1267,7 @@ export function PlaylistManager() {
                 className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white/[0.08] hover:bg-emerald-500 hover:text-zinc-950 text-white rounded-xl text-xs font-bold transition-all min-h-[34px] shadow-sm active:scale-[0.98]"
               >
                 <Play size={13} fill="currentColor" />
-                <span>Editor öffnen</span>
+                <span>Open Editor</span>
               </Link>
             </div>
           </motion.div>
@@ -1805,15 +1808,15 @@ export function SourceManager() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">Upstream Quellen</h2>
-          <p className="text-xs text-zinc-400">Verbinde und überwache deine IPTV-Provider und Xtream-Server</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">Upstream Sources</h2>
+          <p className="text-xs text-zinc-400">Connect and monitor your IPTV providers and Xtream servers</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
           className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          <span>Quelle hinzufügen</span>
+          <span>Add Source</span>
         </button>
       </header>
 
@@ -2575,7 +2578,7 @@ export function SourceManager() {
                         <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1 py-0.5 rounded">1-Connection Protection</span>
                       </div>
                       <div className="text-[10px] text-zinc-500">
-                        Teilt Live-Streams lokal ohne zusätzliche Provider-Verbindungen und blockt Überschreitungen ab.
+                        Shares live streams locally without extra provider connections and blocks over-limit requests.
                       </div>
                     </div>
                   </label>
@@ -3240,15 +3243,15 @@ export function EPGManager() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">EPG Provider</h2>
-          <p className="text-xs text-zinc-400">Verwalte XMLTV-Programmzeitschriften für deine Kanäle</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">EPG Providers</h2>
+          <p className="text-xs text-zinc-400">Manage XMLTV programme guides for your channels</p>
         </div>
         <button 
           onClick={() => setShowAdd(true)}
           className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs shadow-sm transition-all active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
         >
           <Plus size={16} />
-          <span>EPG hinzufügen</span>
+          <span>Add EPG</span>
         </button>
       </header>
 
@@ -3401,10 +3404,10 @@ function TrafficSettingsCard() {
     setMessage(null);
     try {
       await api.settings.update({ monthlyTrafficQuotaGB: quotaGB });
-      setMessage('Traffic-Limit gespeichert!');
+      setMessage('Traffic limit saved!');
       setTimeout(() => setMessage(null), 4000);
     } catch (err: any) {
-      setMessage(`Fehler: ${err.message}`);
+      setMessage(`Error: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -3416,16 +3419,16 @@ function TrafficSettingsCard() {
         <div>
           <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
             <HardDrive size={16} className="text-emerald-400" />
-            Monatliches Traffic-Limit
+            Monthly Traffic Limit
           </h3>
           <p className="text-[11px] text-zinc-500">
-            Egress-Kontingent für Fortschrittsbalken und Warnungen (Oracle Free Tier: 10240 GB = 10 TB)
+            Egress quota for progress bars and warnings (Oracle Free Tier: 10240 GB = 10 TB)
           </p>
         </div>
       </div>
 
       <div className="space-y-2">
-        <label className="block text-[11px] font-semibold text-zinc-400">Limit in Gigabyte (GB)</label>
+        <label className="block text-[11px] font-semibold text-zinc-400">Limit in gigabytes (GB)</label>
         <div className="flex gap-2 items-center">
           <input
             type="number"
@@ -3440,7 +3443,7 @@ function TrafficSettingsCard() {
             disabled={saving || loading}
             className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 cursor-pointer shrink-0"
           >
-            {saving ? 'Saving...' : 'Speichern'}
+            {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
         {message && (
@@ -3611,10 +3614,10 @@ function TelegramSettingsCard() {
         telegramEnabled: enabled,
         telegramKeywords: keywords,
       });
-      setStatusMessage({ text: 'Telegram-Einstellungen gespeichert!', isError: false });
+      setStatusMessage({ text: 'Telegram settings saved!', isError: false });
       setTimeout(() => setStatusMessage(null), 4000);
     } catch (err: any) {
-      setStatusMessage({ text: `Fehler beim Speichern: ${err.message}`, isError: true });
+      setStatusMessage({ text: `Failed to save: ${err.message}`, isError: true });
     } finally {
       setSaving(false);
     }
@@ -3634,13 +3637,13 @@ function TelegramSettingsCard() {
 
   const handleTest = async () => {
     setTesting(true);
-    setStatusMessage({ text: 'Sende Test-Benachrichtigung...', isError: false });
+    setStatusMessage({ text: 'Sending test notification...', isError: false });
     try {
       await api.settings.testTelegram(botToken, chatId);
-      setStatusMessage({ text: '✅ Test-Nachricht erfolgreich gesendet!', isError: false });
+      setStatusMessage({ text: '✅ Test message sent successfully!', isError: false });
       setTimeout(() => setStatusMessage(null), 5000);
     } catch (err: any) {
-      setStatusMessage({ text: `❌ Fehler: ${err.message}`, isError: true });
+      setStatusMessage({ text: `❌ Error: ${err.message}`, isError: true });
     } finally {
       setTesting(false);
     }
@@ -3657,17 +3660,17 @@ function TelegramSettingsCard() {
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
                 : 'bg-zinc-800 text-zinc-500 border-zinc-700'
             }`}>
-              {enabled ? 'Aktiv' : 'Inaktiv'}
+              {enabled ? 'Active' : 'Inactive'}
             </span>
           </div>
-          <p className="text-[11px] text-zinc-500">DVR, Handover & Sync Benachrichtigungen</p>
+          <p className="text-[11px] text-zinc-500">DVR, Handover & Sync notifications</p>
         </div>
         <button
           onClick={() => setEnabled(!enabled)}
           className={`w-10 h-5 rounded-full transition-colors relative p-0.5 cursor-pointer ${
             enabled ? 'bg-emerald-500' : 'bg-zinc-800'
           }`}
-          title={enabled ? 'Deaktivieren' : 'Aktivieren'}
+          title={enabled ? 'Disable' : 'Enable'}
         >
           <div className={`w-4 h-4 rounded-full bg-white transition-transform shadow-sm ${
             enabled ? 'translate-x-5' : 'translate-x-0'
@@ -3707,7 +3710,7 @@ function TelegramSettingsCard() {
                 type="text"
                 value={chatId}
                 onChange={e => setChatId(e.target.value)}
-                placeholder="z.B. 123456789"
+                placeholder="e.g. 123456789"
                 className="w-full px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono text-xs"
               />
             </div>
@@ -3726,8 +3729,8 @@ function TelegramSettingsCard() {
           {/* Sync Keywords with scroll limit */}
           <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
             <div className="flex items-center justify-between">
-              <label className="block text-[11px] font-semibold text-zinc-400">Sync-Keywords</label>
-              <span className="text-[10px] text-zinc-500">Benachrichtigt bei neuen Treffern</span>
+              <label className="block text-[11px] font-semibold text-zinc-400">Sync Keywords</label>
+              <span className="text-[10px] text-zinc-500">Notifies on new matches</span>
             </div>
             <div className="flex gap-1.5">
               <input
@@ -3735,7 +3738,7 @@ function TelegramSettingsCard() {
                 value={newKeyword}
                 onChange={e => setNewKeyword(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addKeyword(); } }}
-                placeholder='z.B. "Düsseldorfer EG" oder "DEL2"'
+                placeholder='e.g. "Sports Channel" or "ESPN"'
                 className="flex-1 px-3 py-1.5 bg-zinc-950/70 border border-zinc-800 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 text-xs"
               />
               <button
@@ -3743,7 +3746,7 @@ function TelegramSettingsCard() {
                 disabled={!newKeyword.trim()}
                 className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 transition-all text-xs disabled:opacity-40 cursor-pointer"
               >
-                Hinzufügen
+                Add
               </button>
             </div>
             {keywords.length > 0 && (
@@ -3751,7 +3754,7 @@ function TelegramSettingsCard() {
                 {keywords.map(kw => (
                   <span key={kw} className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-800/90 border border-zinc-700 rounded-md text-[11px] text-zinc-200">
                     <span>{kw}</span>
-                    <button onClick={() => removeKeyword(kw)} className="text-zinc-400 hover:text-red-400 cursor-pointer" title="Entfernen">
+                    <button onClick={() => removeKeyword(kw)} className="text-zinc-400 hover:text-red-400 cursor-pointer" title="Remove">
                       <X size={11} />
                     </button>
                   </span>
@@ -3766,7 +3769,7 @@ function TelegramSettingsCard() {
               disabled={saving}
               className="flex-1 py-1.5 px-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all text-xs disabled:opacity-50 cursor-pointer"
             >
-              {saving ? 'Speichere...' : 'Speichern'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
             <button
               onClick={handleTest}
@@ -3774,7 +3777,7 @@ function TelegramSettingsCard() {
               className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-bold hover:bg-zinc-700 transition-all text-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer"
             >
               <Send size={12} />
-              <span>{testing ? 'Sende...' : 'Test'}</span>
+              <span>{testing ? 'Sending...' : 'Test'}</span>
             </button>
           </div>
         </div>
@@ -4003,8 +4006,8 @@ export function Settings({ user }: { user: User }) {
   return (
     <div className="p-4 sm:p-5 lg:p-6 space-y-5 max-w-[1600px] mx-auto">
       <header>
-        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Einstellungen</h2>
-        <p className="text-xs text-zinc-400">Globale Systemkonfiguration, Integrationen und Monitoring</p>
+        <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white">Settings</h2>
+        <p className="text-xs text-zinc-400">Global system configuration, integrations, and monitoring</p>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
@@ -5574,7 +5577,7 @@ export function PlaylistEditor() {
 
       <div className="apple-glass-topbar sticky top-0 z-20 px-3 sm:px-4 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Link to="/playlists" className="p-2 hover:bg-white/[0.08] rounded-xl text-zinc-300 hover:text-white -ml-1 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer" title="Zurück zu Playlists">
+          <Link to="/playlists" className="p-2 hover:bg-white/[0.08] rounded-xl text-zinc-300 hover:text-white -ml-1 transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center cursor-pointer" title="Back to Playlists">
             <ArrowLeft size={18} />
           </Link>
           <h2 className="text-base font-bold tracking-tight mr-1 truncate max-w-[130px] sm:max-w-xs text-white">{playlist.name}</h2>
@@ -5587,18 +5590,18 @@ export function PlaylistEditor() {
                 ? "bg-white/[0.1] text-white border-white/[0.12]" 
                 : "bg-white/[0.04] text-zinc-400 border-white/[0.06] hover:text-white hover:bg-white/[0.08]"
             )}
-            title={isCategorySidebarOpen ? "Kategorien-Leiste verbergen" : "Kategorien-Leiste einblenden"}
+            title={isCategorySidebarOpen ? "Hide category sidebar" : "Show category sidebar"}
           >
             <Folder size={13} className={isCategorySidebarOpen ? "text-emerald-400" : "text-zinc-400"} />
-            <span className="hidden sm:inline">Kategorien</span>
+            <span className="hidden sm:inline">Categories</span>
           </button>
 
           <div className="h-5 w-px bg-white/[0.1] mx-1 hidden sm:block" />
           
           <div className="flex items-center p-0.5 rounded-xl bg-white/[0.06] border border-white/[0.08]">
             <TabButton active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="Live TV" />
-            <TabButton active={activeTab === 'vod'} onClick={() => setActiveTab('vod')} label="Filme" />
-            <TabButton active={activeTab === 'series'} onClick={() => setActiveTab('series')} label="Serien" />
+            <TabButton active={activeTab === 'vod'} onClick={() => setActiveTab('vod')} label="Movies" />
+            <TabButton active={activeTab === 'series'} onClick={() => setActiveTab('series')} label="Series" />
           </div>
         </div>
         
@@ -5606,22 +5609,22 @@ export function PlaylistEditor() {
           <button
             onClick={() => setShowGlobalSearch(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 hover:text-white rounded-lg font-semibold transition-all border border-white/[0.08] min-h-[34px] cursor-pointer"
-            title="Suchen (⌘K)"
+            title="Search (⌘K)"
           >
             <Search size={14} />
-            <span className="hidden sm:inline">Suche</span>
+            <span className="hidden sm:inline">Search</span>
           </button>
           <button
             onClick={() => setShowSourceSelector(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/[0.06] hover:bg-white/[0.1] text-zinc-200 hover:text-white rounded-lg font-semibold transition-all border border-white/[0.08] min-h-[34px] cursor-pointer"
           >
             <Database size={14} />
-            <span className="hidden sm:inline">Quellen</span> ({playlist.sourceIds.length})
+            <span className="hidden sm:inline">Sources</span> ({playlist.sourceIds.length})
           </button>
           <button 
             onClick={() => loadData(true)}
             className="p-2 bg-white/[0.06] hover:bg-white/[0.1] text-zinc-300 hover:text-white rounded-lg transition-all flex items-center justify-center border border-white/[0.08] min-h-[34px] min-w-[34px] cursor-pointer"
-            title={lastUpdated ? `Zuletzt aktualisiert: ${new Date(lastUpdated).toLocaleString()}` : 'Aktualisieren'}
+            title={lastUpdated ? `Last updated: ${new Date(lastUpdated).toLocaleString()}` : 'Refresh'}
           >
             <RefreshCw size={14} className={loading ? 'animate-spin text-emerald-400' : ''} />
             {isCached && !loading && <span className="ml-[2px] text-[9px] uppercase font-bold text-zinc-500">Cache</span>}
@@ -7473,7 +7476,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
       {/* Logo */}
       <div className="w-8 h-7 shrink-0 rounded overflow-hidden bg-zinc-900 border border-zinc-800/50">
         {stream._isMissing ? (
-          <div className="w-full h-full flex items-center justify-center text-sm select-none" title="Toter Symlink (Parent existiert nicht mehr)">
+          <div className="w-full h-full flex items-center justify-center text-sm select-none" title="Dead symlink (parent no longer exists)">
             💀
           </div>
         ) : icon ? (
@@ -7502,17 +7505,17 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
             </span>
             <SourceBadge index={stream._sourceIdx} allSources={allSources || []} playlistSourceIds={playlistSourceIds || []} />
             {stream._isCopy && !stream._isMissing && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium shrink-0 flex items-center gap-1" title="Verlinkter Kanal (Symlink)">
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium shrink-0 flex items-center gap-1" title="Linked channel (symlink)">
                 <Link2 size={9} /> Link
               </span>
             )}
             {stream._isMissing && (
               <span
                 className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-bold shrink-0 flex items-center gap-1"
-                title="Toter Symlink: Der Original-Kanal (Parent) existiert nicht mehr im Upstream"
+                title="Dead symlink: Original parent channel no longer exists upstream"
               >
                 <span>💀</span>
-                <span>Tot</span>
+                <span>Dead</span>
               </span>
             )}
         </div>
@@ -7612,7 +7615,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
               }
             }}
             className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
-            title="Tote Verlinkung entfernen"
+            title="Remove dead symlink"
           >
             <Trash2 size={14} />
           </button>
@@ -7620,7 +7623,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
           <button
             onClick={async (e) => {
               e.stopPropagation();
-              if (confirm("Möchtest du diese Verlinkung wirklich entfernen? Der Original-Kanal bleibt erhalten.")) {
+              if (confirm("Are you sure you want to remove this symlink? The original channel will remain untouched.")) {
                 if (stream._customItemId) {
                   await api.customCategoryItems.remove(stream._customItemId);
                   onMappingChange();
@@ -7628,7 +7631,7 @@ const StreamRow = React.forwardRef<HTMLDivElement, {
               }
             }}
             className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-colors"
-            title="Verlinkung entfernen"
+            title="Remove symlink"
           >
             <Trash2 size={14} />
           </button>
@@ -8249,7 +8252,7 @@ function EditorPane({
           ) : (
             <div className="w-8 h-8 rounded-lg overflow-hidden bg-zinc-950 border border-zinc-800 shrink-0 flex items-center justify-center">
               {stream._isMissing ? (
-                <span className="text-base select-none" title="Original-Kanal (Parent) existiert nicht mehr">💀</span>
+                <span className="text-base select-none" title="Original parent channel no longer exists">💀</span>
               ) : effectiveIcon ? (
                 <img src={proxyImg(effectiveIcon)} alt="" className="w-full h-full object-contain p-0.5" referrerPolicy="no-referrer" />
               ) : (
@@ -8340,10 +8343,10 @@ function EditorPane({
                 }
               }}
               className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-purple-500/10 hover:bg-purple-500/20 active:scale-[0.99] text-purple-300 border border-purple-500/30 rounded-xl font-bold text-xs transition-all shadow-sm"
-              title="Diesen Kanal in eine andere Kategorie verlinken (Symlink)"
+              title="Link this channel to another category (symlink)"
             >
               <Link2 size={13} className="text-purple-400" />
-              <span>In Kategorie verlinken (Symlink)...</span>
+              <span>Link to category (symlink)...</span>
             </button>
           )}
 
@@ -8368,10 +8371,10 @@ function EditorPane({
                 }
               }}
               className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-purple-500/10 hover:bg-purple-500/20 active:scale-[0.99] text-purple-300 border border-purple-500/30 rounded-xl font-bold text-xs transition-all shadow-sm"
-              title="Ausgewählte Kanäle in eine Kategorie verlinken"
+              title="Link selected channels to a category"
             >
               <Link2 size={13} className="text-purple-400" />
-              <span>{selectedStreamIds?.size ?? 0} Kanäle verlinken (Symlink)...</span>
+              <span>Link {selectedStreamIds?.size ?? 0} channels (symlink)...</span>
             </button>
           )}
 
@@ -8385,10 +8388,10 @@ function EditorPane({
                 <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between text-[11px] font-bold text-zinc-400">
                   <div className="flex items-center gap-1.5 text-purple-400">
                     <Link2 size={12} />
-                    <span>In Kategorie verlinken</span>
+                    <span>Link to category</span>
                   </div>
                   <span className="text-[9px] text-zinc-500 font-normal">
-                    {isMulti ? `${selectedStreamIds?.size ?? 0} Kanäle` : 'Symlink'}
+                    {isMulti ? `${selectedStreamIds?.size ?? 0} channels` : 'Symlink'}
                   </span>
                 </div>
                 <div className="p-2 border-b border-zinc-800">
@@ -8396,7 +8399,7 @@ function EditorPane({
                     <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
                     <input
                       type="text"
-                      placeholder="Kategorie suchen..."
+                      placeholder="Search categories..."
                       value={linkCategorySearch}
                       onChange={(e) => setLinkCategorySearch(e.target.value)}
                       onClick={(e) => e.stopPropagation()}
@@ -8408,7 +8411,7 @@ function EditorPane({
                 <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-zinc-800/40">
                   {availableCategories.length === 0 ? (
                     <div className="px-3 py-4 text-center text-xs text-zinc-600 italic">
-                      Keine Kategorie gefunden
+                      No categories found
                     </div>
                   ) : (
                     availableCategories.map((cat: any) => {
@@ -8433,7 +8436,7 @@ function EditorPane({
                               ? "text-zinc-600 cursor-not-allowed bg-zinc-950/40"
                               : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
                           )}
-                          title={isCurrent ? "Kanal befindet sich bereits in dieser Kategorie" : `In "${catName}" verlinken`}
+                          title={isCurrent ? "Channel is already in this category" : `Link to "${catName}"`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             {isCustom ? (
@@ -8444,7 +8447,7 @@ function EditorPane({
                             <span className="truncate">{catName}</span>
                           </div>
                           {isCurrent && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 font-medium">Aktuell</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 font-medium">Current</span>
                           )}
                         </button>
                       );
@@ -8462,21 +8465,21 @@ function EditorPane({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
                   <Link2 size={13} className="text-amber-400" />
-                  <span>Verlinkter Kanal (Symlink)</span>
+                  <span>Linked Channel (Symlink)</span>
                 </div>
                 {source && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
-                    Quelle: {source.name}
+                    Source: {source.name}
                   </span>
                 )}
               </div>
               <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Dieser Kanal verweist auf den Stream aus der Originalquelle. Playback und Streamdaten nutzen dieselbe Upstream-Quelle.
+                This channel references the stream from the original source. Playback and stream data use the same upstream connection.
               </p>
               <button
                 type="button"
                 onClick={async () => {
-                  if (confirm("Möchtest du diese Verlinkung wirklich entfernen? Der Original-Kanal bleibt erhalten.")) {
+                  if (confirm("Are you sure you want to remove this symlink? The original channel will remain untouched.")) {
                     if (stream._customItemId) {
                       await api.customCategoryItems.remove(stream._customItemId);
                       await onUpdate();
@@ -8487,7 +8490,7 @@ function EditorPane({
                 className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-red-500/15 hover:bg-red-500/25 active:scale-[0.98] text-red-400 hover:text-red-300 border border-red-500/30 rounded-lg font-bold text-xs transition-all w-full"
               >
                 <Trash2 size={12} />
-                Verlinkung entfernen
+                Remove symlink
               </button>
             </div>
           )}
@@ -8497,10 +8500,10 @@ function EditorPane({
             <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 flex flex-col gap-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-red-300">
                 <span className="text-base select-none">💀</span>
-                <span>Toter Symlink: Original-Kanal (Parent) nicht gefunden</span>
+                <span>Dead symlink: Original parent channel not found</span>
               </div>
               <p className="text-[11px] text-zinc-400 leading-relaxed">
-                Der Original-Kanal existiert nicht mehr im Upstream. Dieser Symlink liefert keinen Stream mehr und kann entfernt werden.
+                The original channel no longer exists upstream. This symlink delivers no stream and can be removed.
               </p>
               <button
                 type="button"
@@ -8514,7 +8517,7 @@ function EditorPane({
                 className="flex items-center justify-center gap-1.5 py-1.5 px-3 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 rounded-lg font-bold text-xs transition-all w-full"
               >
                 <Trash2 size={12} />
-                Toten Symlink entfernen
+                Remove dead symlink
               </button>
             </div>
           )}
@@ -9011,8 +9014,8 @@ export function UserManager({ user }: { user: User }) {
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
       <header>
-        <h2 className="text-2xl font-bold tracking-tight text-white">Benutzerverwaltung</h2>
-        <p className="text-xs text-zinc-400">Verwalte Systemkonten und zugeordnete Playlists</p>
+        <h2 className="text-2xl font-bold tracking-tight text-white">User Management</h2>
+        <p className="text-xs text-zinc-400">Manage system accounts and assigned playlists</p>
       </header>
 
       <div className="apple-glass-card rounded-2xl overflow-hidden shadow-xl">
@@ -9020,10 +9023,10 @@ export function UserManager({ user }: { user: User }) {
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-white/[0.08] bg-black/40">
-                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Benutzer E-Mail</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">User Email</th>
                 <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400 text-center">Playlists</th>
-                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Rolle</th>
-                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400 text-right">Aktionen</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Role</th>
+                <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-zinc-400 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.06]">
@@ -9054,13 +9057,13 @@ export function UserManager({ user }: { user: User }) {
                       <button 
                         onClick={() => handleDelete(u.id, u.email)}
                         className="p-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/15 rounded-lg transition-all cursor-pointer min-h-[32px] min-w-[32px] inline-flex items-center justify-center"
-                        title="Benutzer löschen"
+                        title="Delete user"
                       >
                         <Trash2 size={15} />
                       </button>
                     )}
                     {u.id === user.id && (
-                      <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Aktueller Benutzer</span>
+                      <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Current User</span>
                     )}
                   </td>
                 </tr>
@@ -9164,34 +9167,34 @@ export function DvrManager() {
     <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">DVR / Aufnahmen</h2>
-          <p className="text-xs text-zinc-400">Live-Streams mit 0 Extra-Verbindungen aufnehmen & verwalten</p>
+          <h2 className="text-2xl font-bold tracking-tight text-white">DVR / Recordings</h2>
+          <p className="text-xs text-zinc-400">Record & manage live streams with 0 extra upstream connections</p>
         </div>
         <button
           onClick={() => setShowStartModal(true)}
           className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-[0.98] min-h-[38px] cursor-pointer self-start sm:self-auto"
-          title="Eine Live-Sendung direkt aufnehmen – auch ohne laufenden Player"
+          title="Record a live broadcast directly — even without an active player"
         >
           <Plus size={14} />
-          <span>Neue Aufnahme</span>
+          <span>New Recording</span>
         </button>
       </header>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Aktive Aufnahmen</div>
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Active Recordings</div>
           <div className="text-xl font-bold text-red-400 mt-1 flex items-center gap-2">
             {activeRecordings.length > 0 && <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />}
             {activeRecordings.length}
           </div>
         </div>
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Gespeicherte Aufnahmen</div>
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Saved Recordings</div>
           <div className="text-xl font-bold text-white mt-1">{completedRecordings.length}</div>
         </div>
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Belegter Speicherplatz</div>
+          <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Storage Used</div>
           <div className="text-xl font-bold text-emerald-400 mt-1">{formatBytes(totalBytes)}</div>
         </div>
       </div>
@@ -9201,7 +9204,7 @@ export function DvrManager() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-            <h3 className="text-sm font-bold text-zinc-100">Laufende Aufnahmen</h3>
+            <h3 className="text-sm font-bold text-zinc-100">Active Recordings</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {activeRecordings.map(rec => (
@@ -9216,13 +9219,13 @@ export function DvrManager() {
                     </div>
                     {rec.extra?.isHandover && (
                       <div className="mt-1 inline-flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                        <span>⚠️ Fernseher getrennt – Aufnahme läuft im Hintergrund</span>
+                        <span>⚠️ TV disconnected – recording continues in background</span>
                       </div>
                     )}
                     {rec.extra?.manual && rec.extra?.durationMinutes ? (
                       <div className="mt-1 inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-400 bg-zinc-800/60 px-1.5 py-0.5 rounded border border-zinc-700/50">
                         <Clock size={10} />
-                        <span>Stoppt automatisch nach {rec.extra.durationMinutes} Min.</span>
+                        <span>Stops automatically after {rec.extra.durationMinutes} min.</span>
                       </div>
                     ) : null}
                   </div>
@@ -9231,20 +9234,20 @@ export function DvrManager() {
                     disabled={actionBusy[rec.id]}
                     className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer shrink-0"
                   >
-                    {actionBusy[rec.id] ? 'Stoppe...' : 'Stoppen'}
+                    {actionBusy[rec.id] ? 'Stopping...' : 'Stop'}
                   </button>
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800 text-xs text-zinc-400">
                   <div>
-                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Laufzeit</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Duration</span>
                     <span className="font-mono text-xs text-zinc-200">{formatDuration(rec.durationSeconds)}</span>
                   </div>
                   <div>
-                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Größe</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Size</span>
                     <span className="font-mono text-xs text-zinc-200">{formatBytes(rec.fileSizeBytes)}</span>
                   </div>
                   <div>
-                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Startzeit</span>
+                    <span className="block text-[9px] text-zinc-500 uppercase font-bold">Started At</span>
                     <span className="font-mono text-xs text-zinc-200">{new Date(rec.startTime).toLocaleTimeString()}</span>
                   </div>
                 </div>
@@ -9256,17 +9259,17 @@ export function DvrManager() {
 
       {/* Completed Recordings Section */}
       <div className="space-y-3">
-        <h3 className="text-sm font-bold text-zinc-100">Aufnahme-Bibliothek</h3>
+        <h3 className="text-sm font-bold text-zinc-100">Recording Library</h3>
         {loading && recordings.length === 0 ? (
-          <div className="p-6 text-center text-zinc-500 animate-pulse text-xs">Lade Aufnahmen...</div>
+          <div className="p-6 text-center text-zinc-500 animate-pulse text-xs">Loading recordings...</div>
         ) : completedRecordings.length === 0 ? (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-2.5">
             <div className="w-10 h-10 rounded-xl bg-zinc-800 text-zinc-500 flex items-center justify-center mx-auto">
               <Radio size={20} />
             </div>
-            <h4 className="text-sm font-bold text-zinc-300">Noch keine Aufnahmen vorhanden</h4>
+            <h4 className="text-sm font-bold text-zinc-300">No recordings yet</h4>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Klicke auf <strong>Neue Aufnahme</strong>, um eine Live-Sendung direkt aus Gecko aufzunehmen – ganz ohne laufenden Player.
+              Click <strong>New Recording</strong> to record a live broadcast directly from Gecko — without an active player.
             </p>
           </div>
         ) : (
@@ -9274,11 +9277,11 @@ export function DvrManager() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">
-                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender / Titel</th>
-                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Datum & Uhrzeit</th>
-                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Dauer</th>
-                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Größe</th>
-                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Aktionen</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Channel / Title</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Date & Time</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Duration</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-center">Size</th>
+                  <th className="px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/80 text-xs">
@@ -9368,7 +9371,7 @@ export function DvrManager() {
                           onClick={() => setActivePlayback(rec)}
                           disabled={actionBusy[rec.id]}
                           className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
-                          title="Im Web-Player abspielen"
+                          title="Play in web player"
                         >
                           <Play size={14} />
                         </button>
@@ -9376,7 +9379,7 @@ export function DvrManager() {
                           href={api.dvr.getStreamUrl(rec.id, true)}
                           download
                           className="p-1.5 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-all cursor-pointer"
-                          title="Herunterladen"
+                          title="Download"
                         >
                           <Download size={14} />
                         </a>
@@ -9384,7 +9387,7 @@ export function DvrManager() {
                           onClick={() => handleDelete(rec.id, rec.streamName)}
                           disabled={actionBusy[rec.id]}
                           className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-50 cursor-pointer"
-                          title="Löschen"
+                          title="Delete"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -9449,9 +9452,9 @@ function DvrPlaybackModal({
       player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: any) => {
         console.warn('mpegts error in DVR player:', errorType, errorDetail, errorInfo);
         if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-          setPlaybackError('Dieser Browser unterstützt den Audio-/Videocodec der Aufnahme nicht (z. B. Dolby/AC-3). Bitte in VLC öffnen.');
+          setPlaybackError('This browser does not support the audio/video codec of this recording (e.g. Dolby/AC-3). Please open in VLC.');
         } else {
-          setPlaybackError('Wiedergabefehler im Webplayer. Bitte nutze VLC oder lade die Datei herunter.');
+          setPlaybackError('Playback error in web player. Please use VLC or download the file.');
         }
       });
 
@@ -9496,7 +9499,7 @@ function DvrPlaybackModal({
           <div className="min-w-0 pr-3">
             <h3 className="text-base font-bold text-zinc-100 truncate">{recording.streamName}</h3>
             <p className="text-[11px] text-zinc-500">
-              Aufgenommen am {new Date(recording.startTime).toLocaleString()} ({formatBytes(recording.fileSizeBytes)})
+              Recorded on {new Date(recording.startTime).toLocaleString()} ({formatBytes(recording.fileSizeBytes)})
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -9504,15 +9507,15 @@ function DvrPlaybackModal({
               href={api.dvr.getStreamUrl(recording.id, true)}
               download
               className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
-              title={`Aufnahme als ${recording.filePath?.endsWith('.mkv') ? 'MKV' : 'TS'}-Datei herunterladen`}
+              title={`Download recording as ${recording.filePath?.endsWith('.mkv') ? 'MKV' : 'TS'} file`}
             >
               <Download size={13} />
-              Herunterladen
+              Download
             </a>
             <button
               onClick={() => downloadStreamM3u(api.dvr.getStreamUrl(recording.id), recording.streamName)}
               className="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer"
-              title="In externem Player (z. B. VLC) öffnen"
+              title="Open in external player (e.g. VLC)"
             >
               <VlcIcon size={13} />
               VLC
@@ -9543,7 +9546,7 @@ function DvrPlaybackModal({
                   className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-lg"
                 >
                   <VlcIcon size={16} />
-                  In VLC öffnen
+                  Open in VLC
                 </button>
                 <a
                   href={api.dvr.getStreamUrl(recording.id, true)}
@@ -9551,7 +9554,7 @@ function DvrPlaybackModal({
                   className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all"
                 >
                   <Download size={16} />
-                  Datei herunterladen
+                  Download file
                 </a>
               </div>
             </div>
@@ -9563,14 +9566,14 @@ function DvrPlaybackModal({
 }
 
 const RECORDING_DURATIONS: { label: string; minutes: number }[] = [
-  { label: 'Unbegrenzt (bis manuell gestoppt)', minutes: 0 },
-  { label: '30 Minuten', minutes: 30 },
-  { label: '1 Stunde', minutes: 60 },
-  { label: '1,5 Stunden', minutes: 90 },
-  { label: '2 Stunden', minutes: 120 },
-  { label: '2,5 Stunden', minutes: 150 },
-  { label: '3 Stunden', minutes: 180 },
-  { label: '4 Stunden', minutes: 240 },
+  { label: 'Unlimited (until stopped manually)', minutes: 0 },
+  { label: '30 minutes', minutes: 30 },
+  { label: '1 hour', minutes: 60 },
+  { label: '1.5 hours', minutes: 90 },
+  { label: '2 hours', minutes: 120 },
+  { label: '2.5 hours', minutes: 150 },
+  { label: '3 hours', minutes: 180 },
+  { label: '4 hours', minutes: 240 },
 ];
 
 /**
@@ -9608,7 +9611,7 @@ function StartRecordingModal({
         setPlaylists(list || []);
         if (list && list.length > 0) setPlaylistId(list[0].id);
       } catch (err: any) {
-        setError(`Playlists konnten nicht geladen werden: ${err.message}`);
+        setError(`Failed to load playlists: ${err.message}`);
       } finally {
         setLoadingPlaylists(false);
       }
@@ -9629,7 +9632,7 @@ function StartRecordingModal({
         setChannels(data);
         if (data.length > 0) setSelectedId(data[0].stream_id);
       })
-      .catch(err => setError(`Sender konnten nicht geladen werden: ${err.message}`))
+      .catch(err => setError(`Failed to load channels: ${err.message}`))
       .finally(() => setLoadingChannels(false));
   }, [playlistId, playlists]);
 
@@ -9666,13 +9669,13 @@ function StartRecordingModal({
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800/80">
           <div>
-            <h3 className="text-base font-bold text-zinc-100">Neue Aufnahme starten</h3>
-            <p className="text-[11px] text-zinc-500">Gecko öffnet die Quelle selbst – ohne laufenden Player oder Zweitverbindung.</p>
+            <h3 className="text-base font-bold text-zinc-100">Start New Recording</h3>
+            <p className="text-[11px] text-zinc-500">Gecko opens the source directly — without an active player or secondary connection.</p>
           </div>
           <button
             onClick={onClose}
             className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-all cursor-pointer shrink-0"
-            title="Schließen"
+            title="Close"
           >
             <X size={16} />
           </button>
@@ -9683,9 +9686,9 @@ function StartRecordingModal({
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Playlist</label>
             {loadingPlaylists ? (
-              <div className="text-xs text-zinc-500 animate-pulse py-2">Lade Playlists...</div>
+              <div className="text-xs text-zinc-500 animate-pulse py-2">Loading playlists...</div>
             ) : playlists.length === 0 ? (
-              <div className="text-xs text-amber-400 py-2">Keine Playlist vorhanden.</div>
+              <div className="text-xs text-amber-400 py-2">No playlists available.</div>
             ) : (
               <select
                 value={playlistId}
@@ -9701,23 +9704,23 @@ function StartRecordingModal({
 
           {/* Channel */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Sender</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Channel</label>
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Sender suchen..."
+                placeholder="Search channels..."
                 disabled={loadingChannels || channels.length === 0}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-red-500/50 outline-none disabled:opacity-50"
               />
             </div>
             <div className="border border-zinc-800 rounded-xl bg-zinc-950 overflow-hidden">
               {loadingChannels ? (
-                <div className="p-4 text-center text-xs text-zinc-500 animate-pulse">Lade Sender von der Quelle...</div>
+                <div className="p-4 text-center text-xs text-zinc-500 animate-pulse">Loading channels from source...</div>
               ) : filteredChannels.length === 0 ? (
                 <div className="p-4 text-center text-xs text-zinc-500">
-                  {channels.length === 0 ? 'Keine Live-Sender gefunden.' : 'Kein Treffer für die Suche.'}
+                  {channels.length === 0 ? 'No live channels found.' : 'No matching channels.'}
                 </div>
               ) : (
                 <div className="max-h-56 overflow-y-auto divide-y divide-zinc-800/70">
@@ -9742,7 +9745,7 @@ function StartRecordingModal({
 
           {/* Duration */}
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Aufnahmedauer</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Recording Duration</label>
             <div className="flex items-center gap-2">
               <select
                 value={durationChoice}
@@ -9752,7 +9755,7 @@ function StartRecordingModal({
                 {RECORDING_DURATIONS.map(d => (
                   <option key={d.minutes} value={String(d.minutes)}>{d.label}</option>
                 ))}
-                <option value="custom">Benutzerdefiniert…</option>
+                <option value="custom">Custom…</option>
               </select>
               {durationChoice === 'custom' && (
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -9764,15 +9767,15 @@ function StartRecordingModal({
                     onChange={e => setCustomMinutes(parseInt(e.target.value, 10))}
                     className="w-20 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:border-red-500/50 outline-none"
                   />
-                  <span className="text-xs text-zinc-500">Min.</span>
+                  <span className="text-xs text-zinc-500">min</span>
                 </div>
               )}
             </div>
             <p className="text-[11px] text-zinc-500 flex items-center gap-1.5">
               <Clock size={12} className="text-zinc-600" />
               {durationMinutes > 0
-                ? `Die Aufnahme stoppt automatisch nach ${durationMinutes} Minuten.`
-                : 'Die Aufnahme läuft, bis du sie im DVR stoppst.'}
+                ? `The recording will automatically stop after ${durationMinutes} minutes.`
+                : 'The recording will run until you stop it in DVR.'}
             </p>
           </div>
 
@@ -9786,7 +9789,7 @@ function StartRecordingModal({
           {selected && (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2">
               <Radio size={13} className="text-red-500 shrink-0" />
-              <span className="truncate">Auswahl: <span className="font-semibold text-zinc-200">{selected.name}</span></span>
+              <span className="truncate">Selected: <span className="font-semibold text-zinc-200">{selected.name}</span></span>
             </div>
           )}
         </div>
@@ -9796,7 +9799,7 @@ function StartRecordingModal({
             onClick={onClose}
             className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold transition-all cursor-pointer"
           >
-            Abbrechen
+            Cancel
           </button>
           <button
             onClick={handleStart}
@@ -9804,7 +9807,7 @@ function StartRecordingModal({
             className="flex items-center gap-1.5 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-white" />
-            {starting ? 'Starte Aufnahme...' : 'Aufnahme starten'}
+            {starting ? 'Starting recording...' : 'Start Recording'}
           </button>
         </div>
       </div>

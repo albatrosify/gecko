@@ -384,7 +384,7 @@ describe('StreamHub', () => {
 
     expect(proxyStats.connections.has('sub-ghost')).toBe(true);
 
-    // The dashboard "Trennen" button path. removeSubscriber() performs its
+    // The dashboard "Disconnect" button path. removeSubscriber() performs its
     // non-DVR teardown synchronously (its only await lives in the DVR branch),
     // so no timer is needed here.
     expect(killStream('sub-ghost')).toBe(true);

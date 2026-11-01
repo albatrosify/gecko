@@ -180,8 +180,8 @@ function escapeHtml(text: string): string {
 const TYPE_LABELS: Record<string, string> = {
   live: 'Live TV',
   vod: 'VoD',
-  series: 'Serien',
-  categories: 'Kategorien',
+  series: 'Series',
+  categories: 'Categories',
 };
 
 /**
@@ -210,12 +210,12 @@ async function notifyKeywordMatches(
     for (const c of changes.added || []) {
       if (matchesKeyword(c.name)) {
         const typeTag = c.type ? ` <i>(${escapeHtml(c.type)})</i>` : '';
-        matches.push(`➕ <b>${escapeHtml(c.name)}</b>${typeTag} — neu hinzugefügt`);
+        matches.push(`➕ <b>${escapeHtml(c.name)}</b>${typeTag} — newly added`);
       }
     }
     for (const c of changes.renamed || []) {
       if (matchesKeyword(c.newName)) {
-        matches.push(`✏️ <b>${escapeHtml(c.oldName)}</b> → <b>${escapeHtml(c.newName)}</b> — umbenannt`);
+        matches.push(`✏️ <b>${escapeHtml(c.oldName)}</b> → <b>${escapeHtml(c.newName)}</b> — renamed`);
       }
     }
 
@@ -224,12 +224,12 @@ async function notifyKeywordMatches(
     const typeLabel = TYPE_LABELS[type] || type;
     const overflow = matches.length > 20 ? matches.length - 20 : 0;
     const message =
-      `🦎 <b>Gecko IPTV – Sync Treffer</b>\n\n` +
-      `Quelle: <b>${escapeHtml(source.name || source.id)}</b>\n` +
-      `Typ: ${typeLabel}\n` +
-      `Zeit: <code>${new Date().toLocaleString()}</code>\n\n` +
+      `🦎 <b>Gecko IPTV – Sync Match</b>\n\n` +
+      `Source: <b>${escapeHtml(source.name || source.id)}</b>\n` +
+      `Type: ${typeLabel}\n` +
+      `Time: <code>${new Date().toLocaleString()}</code>\n\n` +
       matches.slice(0, 20).join('\n') +
-      (overflow > 0 ? `\n\n… und ${overflow} weitere` : '');
+      (overflow > 0 ? `\n\n… and ${overflow} more` : '');
 
     await sendTelegramNotification(message, { parseMode: 'HTML' });
   } catch (err: any) {

@@ -388,7 +388,7 @@ export function createProxyRouter() {
       if (guardDecision.action === 'block_placeholder') {
         if (dvrRecordingId) {
           log(`[DVR] Refusing server-side recording for ${type}/${streamId}: source ${sourceId} busy with "${guardDecision.activeStreamName || guardDecision.activeStreamId}"`);
-          return res.status(409).json({ error: `Quelle ist durch "${guardDecision.activeStreamName || guardDecision.activeStreamId}" belegt. Aufnahme nicht gestartet.` });
+          return res.status(409).json({ error: `Source is in use by "${guardDecision.activeStreamName || guardDecision.activeStreamId}". Recording not started.` });
         }
         log(`[Proxy] Concurrency Guard blocked request for ${type}/${streamId} on source ${sourceId}: ${guardDecision.reason} - ${getClientInfo(req)}`);
         return servePlaceholderStream(
@@ -691,7 +691,7 @@ export function createProxyRouter() {
               }
             };
 
-            // Force-teardown for the Dashboard's "Trennen" button
+            // Force-teardown for the Dashboard's "Disconnect" button
             registerStreamController(
               connId,
               () => {

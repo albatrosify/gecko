@@ -109,7 +109,7 @@ export function TrafficView({ user }: TrafficViewProps) {
   }, [fetchStats]);
 
   const handleResetAll = async () => {
-    if (!confirm('Möchtest du wirklich alle aufgezeichneten Traffic-Statistiken unwiderruflich zurücksetzen?')) {
+    if (!confirm('Are you sure you want to permanently reset all recorded traffic statistics?')) {
       return;
     }
     setResetting(true);
@@ -117,7 +117,7 @@ export function TrafficView({ user }: TrafficViewProps) {
       await api.traffic.reset();
       await fetchStats();
     } catch (err: any) {
-      alert(`Fehler beim Zurücksetzen: ${err.message}`);
+      alert(`Failed to reset: ${err.message}`);
     } finally {
       setResetting(false);
     }
@@ -163,10 +163,10 @@ export function TrafficView({ user }: TrafficViewProps) {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5 text-white">
             <Activity className="text-emerald-400" size={24} />
-            Traffic & Datenverbrauch
+            Traffic & Data Usage
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
-            Übertragenes Datenvolumen aller Client-Verbindungen (z.B. für Oracle Cloud Free Tier 10 TB Egress-Kontingent).
+            Transferred data volume for all client connections (e.g. for Oracle Cloud Free Tier 10 TB egress quota).
           </p>
         </div>
 
@@ -175,10 +175,10 @@ export function TrafficView({ user }: TrafficViewProps) {
             onClick={() => fetchStats(true)}
             disabled={refreshing || loading}
             className="flex items-center gap-2 px-3.5 py-2 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] text-zinc-200 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
-            title="Statistiken aktualisieren"
+            title="Refresh statistics"
           >
             <RefreshCw size={14} className={refreshing ? "animate-spin text-emerald-400" : ""} />
-            <span>Aktualisieren</span>
+            <span>Refresh</span>
           </button>
 
           {user.role === 'admin' && (
@@ -186,7 +186,7 @@ export function TrafficView({ user }: TrafficViewProps) {
               onClick={handleResetAll}
               disabled={resetting || loading}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 min-h-[38px] cursor-pointer"
-              title="Alle Traffic-Statistiken zurücksetzen"
+              title="Reset all traffic statistics"
             >
               <Trash2 size={14} />
               <span>Reset</span>
@@ -202,14 +202,14 @@ export function TrafficView({ user }: TrafficViewProps) {
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
                 <HardDrive size={15} className="text-emerald-400" />
-                Monatsverbrauch (seit 01. des Monats)
+                Monthly Usage (since 1st of month)
               </span>
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                 monthPercent > 90 ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
                 monthPercent > 75 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
                 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
               }`}>
-                {monthPercent}% verbraucht
+                {monthPercent}% used
               </span>
             </div>
 
@@ -218,12 +218,12 @@ export function TrafficView({ user }: TrafficViewProps) {
                 {stats ? formatBytes(stats.summary.monthBytes) : '0 GB'}
               </div>
               <div className="text-sm font-semibold text-zinc-400">
-                von {formatBytes(stats?.summary.monthlyQuotaBytes || 0)} Kontingent
+                of {formatBytes(stats?.summary.monthlyQuotaBytes || 0)} quota
               </div>
             </div>
 
             <p className="text-xs text-zinc-400">
-              Noch <span className="text-emerald-400 font-semibold">{formatBytes(remainingMonthBytes)}</span> im aktuellen Monat bis zum Limit frei.
+              <span className="text-emerald-400 font-semibold">{formatBytes(remainingMonthBytes)}</span> remaining until monthly limit.
             </p>
           </div>
 
@@ -252,12 +252,12 @@ export function TrafficView({ user }: TrafficViewProps) {
               {monthPercent < 75 ? (
                 <>
                   <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
-                  <span>Oracle Free Tier Traffic im optimalen Bereich</span>
+                  <span>Oracle Free Tier traffic in optimal range</span>
                 </>
               ) : (
                 <>
                   <AlertTriangle size={12} className="text-amber-400 shrink-0" />
-                  <span>Achtung: Monatslimit nähert sich</span>
+                  <span>Warning: Approaching monthly limit</span>
                 </>
               )}
             </div>
@@ -268,28 +268,28 @@ export function TrafficView({ user }: TrafficViewProps) {
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Heute verbraucht</div>
+          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Used Today</div>
           <div className="text-2xl font-bold text-white tabular-nums">
             {stats ? formatBytes(stats.summary.todayBytes) : '...'}
           </div>
         </div>
 
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Ausgewählter Zeitraum</div>
+          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Selected Range</div>
           <div className="text-2xl font-bold text-emerald-400 tabular-nums">
             {stats ? formatBytes(stats.totalBytes) : '...'}
           </div>
         </div>
 
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Gesamt seit Beginn</div>
+          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">All-Time Total</div>
           <div className="text-2xl font-bold text-zinc-200 tabular-nums">
             {stats ? formatBytes(stats.summary.allTimeBytes) : '...'}
           </div>
         </div>
 
         <div className="apple-glass-card p-4 rounded-2xl">
-          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Aktive Playlists im Zeitraum</div>
+          <div className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider mb-1">Active Playlists in Range</div>
           <div className="text-2xl font-bold text-purple-400 tabular-nums">
             {stats ? stats.byPlaylist.length : 0}
           </div>
@@ -302,13 +302,13 @@ export function TrafficView({ user }: TrafficViewProps) {
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Layers size={17} className="text-emerald-400" />
-              Aufschlüsselung nach Medientyp im Zeitraum
+              Breakdown by Media Type in Range
             </h3>
-            <p className="text-xs text-zinc-400">Live TV, Serien und Filme (VOD)</p>
+            <p className="text-xs text-zinc-400">Live TV, series, and movies (VOD)</p>
           </div>
 
           <div className="text-xs text-zinc-400">
-            Gesamt: <span className="text-white font-bold">{stats ? formatBytes(stats.totalBytes) : '0 B'}</span>
+            Total: <span className="text-white font-bold">{stats ? formatBytes(stats.totalBytes) : '0 B'}</span>
           </div>
         </div>
 
@@ -347,7 +347,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Film size={14} className="text-purple-400" />
-                    Serien
+                    Series
                   </span>
                   <span className="text-[11px] font-bold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">
                     {pct}%
@@ -371,7 +371,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
                     <Film size={14} className="text-amber-400" />
-                    Filme / VOD
+                    Movies / VOD
                   </span>
                   <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
                     {pct}%
@@ -392,12 +392,12 @@ export function TrafficView({ user }: TrafficViewProps) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-400 uppercase tracking-wider">
             <Calendar size={14} className="text-emerald-400" />
-            Zeitraum auswählen
+            Select Date Range
           </div>
 
           {stats && (
             <div className="text-xs text-zinc-400">
-              Von <span className="text-white font-semibold">{stats.range.startDate}</span> bis{' '}
+              From <span className="text-white font-semibold">{stats.range.startDate}</span> to{' '}
               <span className="text-white font-semibold">{stats.range.endDate}</span>
             </div>
           )}
@@ -406,14 +406,14 @@ export function TrafficView({ user }: TrafficViewProps) {
         {/* Scrollable preset pills on mobile, wrap on desktop */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1 sm:flex-wrap">
           {[
-            { id: 'this_month', label: 'Diesen Monat' },
-            { id: 'last_month', label: 'Letzten Monat' },
-            { id: 'today', label: 'Heute' },
-            { id: 'yesterday', label: 'Gestern' },
-            { id: 'last_7_days', label: 'Letzte 7 Tage' },
-            { id: 'last_30_days', label: 'Letzte 30 Tage' },
-            { id: 'all_time', label: 'Gesamt' },
-            { id: 'custom', label: 'Benutzerdefiniert' },
+            { id: 'this_month', label: 'This Month' },
+            { id: 'last_month', label: 'Last Month' },
+            { id: 'today', label: 'Today' },
+            { id: 'yesterday', label: 'Yesterday' },
+            { id: 'last_7_days', label: 'Last 7 Days' },
+            { id: 'last_30_days', label: 'Last 30 Days' },
+            { id: 'all_time', label: 'All Time' },
+            { id: 'custom', label: 'Custom' },
           ].map(p => (
             <button
               key={p.id}
@@ -432,7 +432,7 @@ export function TrafficView({ user }: TrafficViewProps) {
         {preset === 'custom' && (
           <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/[0.06]">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-400">Von:</span>
+              <span className="text-xs text-zinc-400">From:</span>
               <input
                 type="date"
                 value={customStart}
@@ -441,7 +441,7 @@ export function TrafficView({ user }: TrafficViewProps) {
               />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-400">Bis:</span>
+              <span className="text-xs text-zinc-400">To:</span>
               <input
                 type="date"
                 value={customEnd}
@@ -453,7 +453,7 @@ export function TrafficView({ user }: TrafficViewProps) {
               onClick={() => fetchStats()}
               className="px-3.5 py-1.5 bg-white/[0.08] hover:bg-white/[0.14] text-white rounded-lg text-xs font-semibold transition-all min-h-[34px] cursor-pointer"
             >
-              Anwenden
+              Apply
             </button>
           </div>
         )}
@@ -464,11 +464,11 @@ export function TrafficView({ user }: TrafficViewProps) {
         <div className="apple-glass-card p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-base font-bold text-zinc-100">Täglicher Traffic-Verlauf</h3>
-              <p className="text-xs text-zinc-500">Volumen pro Tag im gewählten Zeitraum</p>
+              <h3 className="text-base font-bold text-zinc-100">Daily Traffic History</h3>
+              <p className="text-xs text-zinc-500">Volume per day in selected range</p>
             </div>
             <div className="text-xs text-zinc-400">
-              Spitzentag:{' '}
+              Peak Day:{' '}
               <span className="text-emerald-400 font-bold">{formatBytes(maxDailyBytes)}</span>
             </div>
           </div>
@@ -490,7 +490,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                         <div className="text-emerald-400 font-black">{formatBytes(d.totalBytes)}</div>
                         <div className="text-[9px] text-zinc-400 flex gap-2 justify-center">
                           <span>TV: {formatBytes(d.byType.live)}</span>
-                          <span>Serie: {formatBytes(d.byType.series)}</span>
+                          <span>Series: {formatBytes(d.byType.series)}</span>
                           <span>VOD: {formatBytes(d.byType.movie)}</span>
                         </div>
                       </div>
@@ -521,8 +521,8 @@ export function TrafficView({ user }: TrafficViewProps) {
       <div className="apple-glass-card rounded-2xl overflow-hidden shadow-xl">
         <div className="p-4 border-b border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="text-base font-bold text-white">Verbrauch pro Playlist</h3>
-            <p className="text-xs text-zinc-400">Sortiert nach übertragener Datenmenge</p>
+            <h3 className="text-base font-bold text-white">Usage by Playlist</h3>
+            <p className="text-xs text-zinc-400">Sorted by transferred data volume</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -531,7 +531,7 @@ export function TrafficView({ user }: TrafficViewProps) {
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Playlist filtern..."
+                placeholder="Filter playlists..."
                 className="bg-black/50 border border-white/[0.1] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:border-emerald-500/80 outline-none w-full sm:w-60 min-h-[36px]"
               />
             </div>
@@ -540,16 +540,16 @@ export function TrafficView({ user }: TrafficViewProps) {
 
         {loading ? (
           <div className="p-12 text-center text-zinc-500 animate-pulse text-sm">
-            Statistiken werden geladen...
+            Loading statistics...
           </div>
         ) : filteredPlaylists.length === 0 ? (
           <div className="p-12 text-center space-y-2">
             <div className="w-12 h-12 rounded-full bg-white/[0.05] border border-white/[0.08] flex items-center justify-center mx-auto text-zinc-500">
               <Activity size={20} />
             </div>
-            <p className="text-sm font-semibold text-zinc-300">Keine Datenübertragungen in diesem Zeitraum</p>
+            <p className="text-sm font-semibold text-zinc-300">No data transfers in this period</p>
             <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-              Sobald Clients über Gecko Streams wiedergeben, werden hier genaue Datenmengen pro Playlist und Medientyp angezeigt.
+              Once clients stream through Gecko, detailed data volumes per playlist and media type will appear here.
             </p>
           </div>
         ) : (
@@ -580,7 +580,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                     onClick={() => { setSortField('series'); setSortAsc(f => !f); }}
                   >
                     <div className="flex items-center justify-end gap-1.5">
-                      <span>Serien</span>
+                      <span>Series</span>
                       <ArrowUpDown size={12} className={sortField === 'series' ? 'text-emerald-400' : 'text-zinc-600'} />
                     </div>
                   </th>
@@ -589,7 +589,7 @@ export function TrafficView({ user }: TrafficViewProps) {
                     onClick={() => { setSortField('movie'); setSortAsc(f => !f); }}
                   >
                     <div className="flex items-center justify-end gap-1.5">
-                      <span>Filme / VOD</span>
+                      <span>Movies / VOD</span>
                       <ArrowUpDown size={12} className={sortField === 'movie' ? 'text-emerald-400' : 'text-zinc-600'} />
                     </div>
                   </th>
@@ -598,12 +598,12 @@ export function TrafficView({ user }: TrafficViewProps) {
                     onClick={() => { setSortField('total'); setSortAsc(f => !f); }}
                   >
                     <div className="flex items-center justify-end gap-1.5">
-                      <span>Gesamt</span>
+                      <span>Total</span>
                       <ArrowUpDown size={12} className={sortField === 'total' ? 'text-emerald-400' : 'text-zinc-600'} />
                     </div>
                   </th>
                   <th className="p-3.5 text-right w-44">
-                    <span>Anteil</span>
+                    <span>Share</span>
                   </th>
                 </tr>
               </thead>

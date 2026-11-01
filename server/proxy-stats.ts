@@ -39,7 +39,7 @@ export interface StreamController {
  * Kill switches for active proxied streams, keyed by the same id used in
  * `proxyStats.connections`. Every teardown path (subscriber, 1:1 pipe,
  * placeholder) registers a closure that fully tears the stream down; the
- * Dashboard's "Trennen" buttons call `killStream()` on it.
+ * Dashboard's "Disconnect" buttons call `killStream()` on it.
  */
 export const streamControllers = new Map<string, StreamController>();
 

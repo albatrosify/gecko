@@ -49,7 +49,7 @@ describe('StreamGuard', () => {
     const decision = evaluateStreamRequest({ id: 's1', maxConnections: 1 }, '200', active);
     expect(decision.action).toBe('block_placeholder');
     expect(decision.activeStreamName).toBe('Das Erste HD');
-    expect(decision.reason).toContain('1-Verbindungs-Schutz');
+    expect(decision.reason).toContain('1-connection protection');
   });
 
   it('allows second stream if concurrencyGuard is explicitly disabled', () => {
@@ -77,7 +77,7 @@ describe('StreamGuard', () => {
     );
     expect(decision.action).toBe('block_placeholder');
     expect(decision.activeStreamName).toBe('Inception (2010)');
-    expect(decision.reason).toContain('1-Verbindungs-Schutz');
+    expect(decision.reason).toContain('1-connection protection');
   });
 
   it('allows stream when totalActive is within multi-connection limit', () => {

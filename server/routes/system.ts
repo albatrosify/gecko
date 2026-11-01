@@ -127,7 +127,7 @@ export function createSystemRouter() {
     const id = req.params.id;
     const conn = proxyStats.connections.get(id);
     if (!conn) {
-      return res.status(404).json({ error: 'Stream nicht mehr aktiv' });
+      return res.status(404).json({ error: 'Stream is no longer active' });
     }
     const killed = killStream(id);
     if (!killed) {

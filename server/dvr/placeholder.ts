@@ -49,7 +49,7 @@ export function servePlaceholderStream(
       playlistId,
       username: username || 'client',
       streamId: requestedStreamId,
-      streamName: `${displayName} (Gesperrt: ${channelInfo})`,
+      streamName: `${displayName} (Locked: ${channelInfo})`,
       playlistName: playlistName || username || 'Client',
       type: 'live',
       ip: req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown',
@@ -84,7 +84,7 @@ export function servePlaceholderStream(
       log(`[DVR Placeholder] Client disconnected from placeholder for ${requestedStreamId}`);
     };
 
-    // Force-teardown for the Dashboard's "Trennen" button
+    // Force-teardown for the Dashboard's "Disconnect" button
     registerStreamController(
       connId,
       () => {
@@ -151,6 +151,6 @@ export function servePlaceholderStream(
 
   // Fallback if no placeholder file exists
   res.status(503).send(
-    `Gecko DVR: Aufnahme aktiv auf ${channelInfo}. Der Upstream erlaubt nur 1 Verbindung. Bitte im Gecko Dashboard pruefen.`
+    `Gecko DVR: Recording active on ${channelInfo}. Upstream allows only 1 connection. Please check in Gecko Dashboard.`
   );
 }
