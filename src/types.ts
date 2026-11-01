@@ -146,6 +146,8 @@ export interface CategoryMapping {
   order: number;
   hidden: boolean;
   syncOnDemand?: boolean;
+  /** Per-category jitter-buffer override in seconds. `undefined`/`null` = global default, `0` = passthrough. */
+  bufferSeconds?: number | null;
 }
 
 export interface StreamMapping {

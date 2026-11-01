@@ -543,6 +543,72 @@ describe('StreamHub', () => {
     });
     expect(resolvedIp2).toBe('198.51.100.3');
   });
+
+  // ── Per-category buffer override ──────────────────────────────────────────
+  it('uses the per-channel buffer override instead of the global default', () => {
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-override', '600', 'Hockey', 'live', 'http://upstream.tv', { data: fakeDataStream },
+      undefined, undefined, undefined, 12,
+    );
+
+    expect(channel.reserveSeconds).toBe(12);
+
+    // The health gauge must report against the channel's own reserve, not the default.
+    const res: any = new EventEmitter();
+    res.write = vi.fn().mockReturnValue(true);
+    res.setHeader = vi.fn();
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-override', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+    expect(streamHub.getBufferHealth(channel.channelKey)?.reserveSeconds).toBe(12);
+  });
+
+  it('falls back to the global default when no override is given', () => {
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '7';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-default', '601', 'News', 'live', 'http://upstream.tv', { data: fakeDataStream },
+    );
+
+    expect(channel.reserveSeconds).toBe(7);
+  });
+
+  it('forwards immediately when the category override turns buffering off', () => {
+    process.env.GECKO_LIVE_BUFFER_SECONDS = '10';
+
+    const fakeDataStream = new EventEmitter();
+    (fakeDataStream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-off', '602', 'Raw Feed', 'live', 'http://upstream.tv', { data: fakeDataStream },
+      undefined, undefined, undefined, 0,
+    );
+
+    expect(channel.reserveSeconds).toBe(0);
+
+    const res: any = new EventEmitter();
+    let released = 0;
+    res.write = (buf: Buffer) => { released += buf.length; return true; };
+    res.setHeader = vi.fn();
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-off', res, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+    // No buffer health to report when pacing is off for this channel.
+    expect(streamHub.getBufferHealth(channel.channelKey)).toBeNull();
+
+    const payload = Buffer.alloc(1_000_000, 1);
+    fakeDataStream.emit('data', payload);
+    vi.advanceTimersByTime(50);
+
+    // Passthrough: the client gets the chunk on the next pump, nothing is held back.
+    expect(released).toBe(payload.length);
+    expect(channel.bufferedBytes).toBe(0);
+  });
 });
 
 

@@ -102,8 +102,8 @@ const LIVE_BUFFER_STARVE_LOG_MS = 1_500;
 /** Hard ceiling on jitter-buffer memory per channel. */
 const LIVE_BUFFER_MAX_BYTES = 64_000_000;
 /** If the upstream goes quiet for longer than this, release the buffer anyway. Scales with reserve. */
-function liveBufferDrainAfterMs(): number {
-  return (liveBufferReserveSeconds() * 2 + 15) * 1000;
+function liveBufferDrainAfterMs(reserveSeconds: number): number {
+  return (reserveSeconds * 2 + 15) * 1000;
 }
 
 /** Configured reserve depth in seconds; 0 means pacing is off. */
@@ -113,8 +113,13 @@ function liveBufferReserveSeconds(): number {
   return configured;
 }
 
-function isLivePacingEnabled(): boolean {
-  return liveBufferReserveSeconds() > 0;
+/**
+ * Resolves a channel's reserve: an explicit override (per-category) wins, otherwise
+ * the global `GECKO_LIVE_BUFFER_SECONDS` default. `0` disables pacing for that channel.
+ */
+function resolveReserveSeconds(override?: number): number {
+  if (typeof override === 'number' && Number.isFinite(override) && override >= 0) return override;
+  return liveBufferReserveSeconds();
 }
 
 /** Destroys both agents of a pinned pair, ignoring any close errors. */
@@ -187,6 +192,8 @@ interface ActiveStreamChannel {
   /** Leaky-bucket allowance that paces downstream delivery. */
   pacingTokens: number;
   lastPumpAt: number;
+  /** Jitter-buffer reserve depth for this channel (category override or global default). 0 = pacing off. */
+  reserveSeconds: number;
   /** Timestamp when the current upstream connection was established (or reconnected). */
   lastConnectAt?: number;
   /** True while the initial TCP connect-burst is still active; chunks build the buffer but don't inflate the rate. */
@@ -315,15 +322,15 @@ class StreamHub {
    * buffer by design when nobody is watching, so a level would be meaningless).
    */
   getBufferHealth(channelKey: string): ChannelBufferHealth | null {
-    if (!isLivePacingEnabled()) return null;
     const channel = this.channels.get(channelKey);
     if (!channel || channel.subscribers.size === 0) return null;
+    if (channel.reserveSeconds <= 0) return null;
 
     const starvedSince = channel.starvedSince;
     return computeBufferHealth({
       bufferedBytes: channel.bufferedBytes,
       rateBps: this.measureUpstreamRate(channel),
-      reserveSeconds: liveBufferReserveSeconds(),
+      reserveSeconds: channel.reserveSeconds,
       starved: starvedSince !== undefined,
       ...(starvedSince !== undefined ? { starvedMs: Date.now() - starvedSince } : {}),
       ...(channel.lastStarveAt !== undefined ? { lastStarveAt: channel.lastStarveAt } : {}),
@@ -365,7 +372,8 @@ class StreamHub {
     upstreamResponse: any,
     headersSent?: Record<string, any>,
     upstreamConfig?: UpstreamConfig,
-    streamIcon?: string
+    streamIcon?: string,
+    bufferSecondsOverride?: number
   ): ActiveStreamChannel {
     const channelKey = StreamHub.makeKey(sourceId, streamId);
 
@@ -373,6 +381,8 @@ class StreamHub {
     if (this.channels.has(channelKey)) {
       this.closeChannel(channelKey);
     }
+
+    const reserveSeconds = resolveReserveSeconds(bufferSecondsOverride);
 
     const channel: ActiveStreamChannel = {
       channelKey,
@@ -397,9 +407,10 @@ class StreamHub {
       rateSnapshots: [],
       lastMeasuredRate: 0,
       lastSnapshotAt: 0,
-      pacingTokens: isLivePacingEnabled() ? LIVE_BUFFER_INITIAL_BURST_BYTES : 0,
+      pacingTokens: reserveSeconds > 0 ? LIVE_BUFFER_INITIAL_BURST_BYTES : 0,
       paceTrim: 1,
       lastPumpAt: Date.now(),
+      reserveSeconds,
     };
 
     this.channels.set(channelKey, channel);
@@ -418,12 +429,14 @@ class StreamHub {
     // do the same: only reconnect once the gap is long enough that a player
     // buffer cannot cover it.
     //
-    // These must stay ABOVE the reserve (GECKO_LIVE_BUFFER_SECONDS): if the
-    // watchdog fires while the jitter buffer could still be covering the gap,
-    // the reconnect discards playable content and jumps the timeline. Measured
-    // DEL2/relay pauses reach 13-17 s, hence 18 s warn / 22 s reconnect.
-    const UPSTREAM_GAP_WARN_MS = 18_000;
-    const UPSTREAM_GAP_RECONNECT_MS = 22_000;
+    // These must stay ABOVE the reserve: if the watchdog fires while the jitter
+    // buffer could still be covering the gap, the reconnect discards playable
+    // content and jumps the timeline. Measured DEL2/relay pauses reach 13-17 s,
+    // hence a floor of 18 s warn / 22 s reconnect; a deeper per-category reserve
+    // pushes both further out so the buffer is always given the chance to cover it.
+    const reserveMs = channel.reserveSeconds * 1000;
+    const UPSTREAM_GAP_WARN_MS = Math.max(18_000, reserveMs + 4_000);
+    const UPSTREAM_GAP_RECONNECT_MS = Math.max(22_000, reserveMs + 8_000);
 
     // Release buffered chunks on a fixed cadence so a bursty upstream is smoothed
     // into a continuous downstream stream.
@@ -657,7 +670,7 @@ class StreamHub {
       }
     }
 
-    const measuredRate = isLivePacingEnabled() ? this.measureUpstreamRate(channel) : 0;
+    const measuredRate = channel.reserveSeconds > 0 ? this.measureUpstreamRate(channel) : 0;
 
     // A dry buffer with subscribers attached is the condition that actually reaches
     // the player as an interruption. Checked before the empty-buffer return below —
@@ -680,7 +693,7 @@ class StreamHub {
     }
 
     const upstreamQuietMs = now - (channel.lastChunkAt || now);
-    const drainFully = upstreamQuietMs > liveBufferDrainAfterMs();
+    const drainFully = upstreamQuietMs > liveBufferDrainAfterMs(channel.reserveSeconds);
 
     // Pacing is the only thing that gates release; the reserve is maintained by
     // releasing a little slower until it is filled. Gating release on the reserve
@@ -693,15 +706,15 @@ class StreamHub {
     // keeps release slow so the whole burst lands in the buffer; once the burst ends
     // and a real rate exists, the surplus hand-off trims it back to the reserve.
     const effectiveRate = channel.inInitialBurst
-      ? (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0)
+      ? (channel.reserveSeconds > 0 ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0)
       : (measuredRate > 0
         ? measuredRate
-        : (isLivePacingEnabled() ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0));
+        : (channel.reserveSeconds > 0 ? LIVE_BUFFER_FALLBACK_RATE_BPS : 0));
     const pacing = effectiveRate > 0 && !drainFully;
     // The reserve is floored at the fallback depth: while the rate estimate is still
     // warming up after a connect burst, it under-reads the true bitrate and would let
     // the surplus hand-off drain the buffer below a useful reserve.
-    const reserveBytes = Math.max(effectiveRate, LIVE_BUFFER_FALLBACK_RATE_BPS) * liveBufferReserveSeconds();
+    const reserveBytes = Math.max(effectiveRate, LIVE_BUFFER_FALLBACK_RATE_BPS) * channel.reserveSeconds;
     // The reserve is paced at the stream's own rate; a slow trim of at most 5 %
     // steers the level back to it (see the update below). The trim is bounded on
     // purpose: throttling far below 1.0x depletes the player's buffer and stalls.

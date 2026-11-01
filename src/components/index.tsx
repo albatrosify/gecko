@@ -6559,6 +6559,34 @@ function CategoryPane({
     onMappingChange();
   };
 
+  // ── Live jitter buffer (per category) ──────────────────────────────────────
+  // Stored in the category mapping's `extra`; `null` clears it so the global
+  // GECKO_LIVE_BUFFER_SECONDS default applies again.
+  const [bufferInput, setBufferInput] = useState('');
+  const bufferSeconds = typeof mapping?.bufferSeconds === 'number' ? mapping.bufferSeconds : null;
+
+  useEffect(() => {
+    setBufferInput(bufferSeconds === null ? '' : String(bufferSeconds));
+  }, [bufferSeconds, catId]);
+
+  const handleSetBuffer = async (value: number | null) => {
+    if (!catId || isCustom) return;
+    if (value !== null && (!Number.isFinite(value) || value < 0)) return;
+    const bufferSecondsValue = value === null ? null : Math.round(value);
+    if (mapping?.id) {
+      await api.categoryMappings.update(mapping.id, { bufferSeconds: bufferSecondsValue });
+    } else {
+      await api.categoryMappings.create({
+        playlistId, type: activeTab, originalId: catId,
+        originalName: category?.category_name || category?.name || '',
+        customName: category?.category_name || category?.name || '',
+        order: 999999, hidden: false,
+        bufferSeconds: bufferSecondsValue,
+      });
+    }
+    onMappingChange();
+  };
+
   const handleResetSingleCategory = async () => {
     if (!catId || isCustom) return;
     const catName = category?.category_name || category?.name || '';
@@ -6717,6 +6745,65 @@ function CategoryPane({
                   AI Clean {selectedCategoryIds.size} categories
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Per-category live jitter-buffer override (live tab, single category) */}
+          {isSingle && activeTab === 'live' && !isCustom && (
+            <div className="space-y-2 border-b border-zinc-800/80 pb-3">
+              <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center justify-between">
+                <span className="flex items-center gap-1.5"><Gauge size={11} /> Live buffer</span>
+                <span className="text-[10px] text-zinc-600 font-normal font-mono">
+                  {bufferSeconds === null ? 'default' : bufferSeconds === 0 ? 'off' : `${bufferSeconds}s`}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={0}
+                  max={120}
+                  step={1}
+                  value={bufferInput}
+                  placeholder="default"
+                  onChange={e => setBufferInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSetBuffer(bufferInput === '' ? null : Number(bufferInput)); }}
+                  className="w-20 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  title="Seconds of live stream Gecko holds back to ride out provider pauses"
+                />
+                <button
+                  onClick={() => handleSetBuffer(bufferInput === '' ? null : Number(bufferInput))}
+                  className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-bold hover:bg-emerald-500/20 transition-all cursor-pointer"
+                >
+                  Set
+                </button>
+                <button
+                  onClick={() => { setBufferInput(''); handleSetBuffer(null); }}
+                  className="px-2.5 py-1 bg-zinc-800/60 text-zinc-400 border border-zinc-700/60 rounded-lg text-xs font-bold hover:bg-zinc-800 transition-all cursor-pointer"
+                  title="Use the global GECKO_LIVE_BUFFER_SECONDS default"
+                >
+                  Default
+                </button>
+              </div>
+              <div className="flex gap-1.5">
+                {[{ label: 'Off', value: 0 }, { label: '8s', value: 8 }, { label: '14s', value: 14 }, { label: '20s', value: 20 }].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setBufferInput(String(opt.value)); handleSetBuffer(opt.value); }}
+                    className={cn(
+                      "px-2 py-1 rounded-md text-[11px] font-bold border transition-all cursor-pointer",
+                      bufferSeconds === opt.value
+                        ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                        : "bg-zinc-900/60 text-zinc-400 border-zinc-800 hover:bg-zinc-800"
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-zinc-600 leading-snug">
+                Seconds of the live stream Gecko holds to ride out provider pauses. <strong className="text-zinc-500">Off</strong> forwards immediately (no smoothing).
+                Applies to streams that start after the change.
+              </p>
             </div>
           )}
 

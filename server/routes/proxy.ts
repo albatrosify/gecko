@@ -11,7 +11,7 @@ import { proxyStats, registerStreamController, unregisterStreamController, killS
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { requestSourceSync } from "../sync-client.ts";
 import { getCached } from "../cache.ts";
-import { getCachedStreams, getStreamIcon as getCatalogIcon } from "../stream-store.ts";
+import { getCachedStreams, getStreamIcon as getCatalogIcon, getStreamRow } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
@@ -137,6 +137,69 @@ function shouldSkipStreamForCategory(
   if (categoryId && String(s.category_id) !== categoryId) return true;
 
   return false;
+}
+
+/**
+ * Resolves the per-category jitter-buffer override for a stream that is about to
+ * start. The stream's own upstream category wins; a category override applied via
+ * the stream mapping is used when present. Returns `undefined` when neither
+ * carries an override, which means "use the global GECKO_LIVE_BUFFER_SECONDS".
+ *
+ * `0` is a meaningful value (passthrough, no Gecko-side buffering), so it must not
+ * be conflated with "unset".
+ */
+export async function resolveCategoryBufferSeconds(params: {
+  playlistId: string;
+  type: 'live' | 'movie' | 'series';
+  originalId: string;
+  sourceId: string;
+  sourceIndex: number;
+  streamMapping: StreamMapping | null | undefined;
+}): Promise<number | undefined> {
+  const { playlistId, type, originalId, sourceId, sourceIndex, streamMapping } = params;
+  const mappingType = type === 'movie' ? 'vod' : type;
+  const row = getStreamRow(sourceId, mappingType, String(originalId));
+
+  // Category ids are stored both raw ("123") and source-prefixed ("0_123")
+  // depending on where they were created. Order matters: a category override set
+  // on the stream mapping wins, then the exact source-prefixed id, then the raw id
+  // (which is ambiguous when several sources share a category id).
+  const candidates: string[] = [];
+  const pushCandidate = (value: string | null | undefined) => {
+    if (value === null || value === undefined) return;
+    const str = String(value);
+    if (str && !candidates.includes(str)) candidates.push(str);
+  };
+  pushCandidate(streamMapping?.categoryId);
+  if (row?.categoryId) {
+    pushCandidate(`${sourceIndex}_${row.categoryId}`);
+    pushCandidate(row.categoryId);
+  }
+  if (candidates.length === 0) return undefined;
+
+  const db = getDb();
+  const { categoryMappings: schemaCategoryMappings } = await import('../schema.ts');
+  const { eq, and, inArray } = await import('drizzle-orm');
+  const docs = db.select().from(schemaCategoryMappings)
+    .where(and(
+      eq(schemaCategoryMappings.playlistId, String(playlistId)),
+      eq(schemaCategoryMappings.type, mappingType),
+      inArray(schemaCategoryMappings.originalId, candidates),
+    ))
+    .all();
+
+  const overrideById = new Map<string, number>();
+  for (const doc of docs) {
+    const value = (doc.extra as any)?.bufferSeconds;
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      overrideById.set(String(doc.originalId), value);
+    }
+  }
+  for (const candidate of candidates) {
+    const value = overrideById.get(candidate);
+    if (value !== undefined) return value;
+  }
+  return undefined;
 }
 
 export function createProxyRouter() {
@@ -500,6 +563,16 @@ export function createProxyRouter() {
                 if (response.headers[h]) forwardHeaders[h] = response.headers[h];
               }
 
+              // Per-category jitter-buffer override (see CategoryMapping.bufferSeconds).
+              const bufferSeconds = await resolveCategoryBufferSeconds({
+                playlistId: String(playlist.id),
+                type,
+                originalId: String(originalId),
+                sourceId,
+                sourceIndex: sourceIds.indexOf(sourceId),
+                streamMapping,
+              });
+
               const channel = streamHub.registerChannel(
                 sourceId,
                 originalId,
@@ -514,7 +587,8 @@ export function createProxyRouter() {
                   candidateIps: candidateIps.length > 0 ? candidateIps : undefined,
                   currentIpIndex: targetIp && candidateIps.length > 0 ? Math.max(0, candidateIps.indexOf(targetIp)) : 0,
                 },
-                streamIcon ?? undefined
+                streamIcon ?? undefined,
+                bufferSeconds,
               );
 
               if (dvrRecordingId) {

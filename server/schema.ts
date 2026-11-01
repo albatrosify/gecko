@@ -53,7 +53,7 @@ export const categoryMappings = sqliteTable('categoryMappings', {
   playlistId: text('playlistId').notNull(),
   type: text('type').notNull(),
   originalId: text('originalId').notNull(),
-  extra: text('extra', { mode: 'json' }), // stores order, hidden, customName, syncOnDemand
+  extra: text('extra', { mode: 'json' }), // stores order, hidden, customName, syncOnDemand, bufferSeconds
 });
 
 export const source_sync_meta = sqliteTable('source_sync_meta', {
