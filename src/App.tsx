@@ -164,15 +164,34 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
       {/* DESKTOP macOS-STYLE ADAPTABLE SIDEBAR                     */}
       {/* ────────────────────────────────────────────────────────── */}
       <aside
-        className={`hidden md:flex flex-col border-r border-white/[0.08] apple-glass-sidebar transition-all duration-300 ease-out z-30 shrink-0 ${
+        className={`hidden md:flex flex-col border-r border-white/[0.08] apple-glass-sidebar transition-all duration-300 ease-out z-30 shrink-0 select-none overflow-x-hidden ${
           collapsed ? 'w-[72px]' : 'w-64'
         }`}
       >
         {/* Sidebar Header */}
-        <div className="h-16 px-4 flex items-center justify-between border-b border-white/[0.06]">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <img src={Logo} alt="Gecko" className="w-8 h-8 rounded-lg shrink-0 shadow-sm" />
-            {!collapsed && (
+        {collapsed ? (
+          <div className="h-16 flex items-center justify-center border-b border-white/[0.06] shrink-0">
+            <button
+              onClick={toggleSidebar}
+              className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/[0.08] transition-all relative group cursor-pointer"
+              title="Expand sidebar (Cmd+\)"
+              aria-label="Expand sidebar"
+            >
+              <img
+                src={Logo}
+                alt="Gecko"
+                className="w-7 h-7 rounded-lg shadow-sm transition-all duration-200 group-hover:scale-90 group-hover:opacity-0"
+              />
+              <PanelLeft
+                size={18}
+                className="text-emerald-400 absolute opacity-0 transition-all duration-200 group-hover:opacity-100 group-hover:scale-100 scale-75"
+              />
+            </button>
+          </div>
+        ) : (
+          <div className="h-16 px-4 flex items-center justify-between border-b border-white/[0.06] shrink-0">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <img src={Logo} alt="Gecko" className="w-8 h-8 rounded-lg shrink-0 shadow-sm" />
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold text-sm tracking-tight text-white truncate">GECKO</span>
@@ -186,21 +205,25 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
                   </span>
                 )}
               </div>
-            )}
-          </div>
+            </div>
 
-          <button
-            onClick={toggleSidebar}
-            className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] rounded-lg transition-colors cursor-pointer"
-            title={collapsed ? 'Show sidebar (Cmd+\\)' : 'Collapse sidebar (Cmd+\\)'}
-            aria-label="Toggle Sidebar"
-          >
-            <PanelLeft size={17} />
-          </button>
-        </div>
+            <button
+              onClick={toggleSidebar}
+              className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06] rounded-lg transition-colors cursor-pointer"
+              title="Collapse sidebar (Cmd+\)"
+              aria-label="Collapse sidebar"
+            >
+              <PanelLeft size={17} />
+            </button>
+          </div>
+        )}
 
         {/* Sidebar Navigation */}
-        <nav className="flex-1 p-2.5 space-y-4 overflow-y-auto custom-scrollbar">
+        <nav
+          className={`flex-1 overflow-y-auto custom-scrollbar ${
+            collapsed ? 'p-2 space-y-2' : 'p-2.5 space-y-4'
+          }`}
+        >
           {/* Section: Monitor */}
           <div className="space-y-1">
             {!collapsed && (
@@ -225,6 +248,8 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
             />
           </div>
 
+          {collapsed && <div className="w-6 h-px bg-white/[0.08] mx-auto" />}
+
           {/* Section: Library */}
           <div className="space-y-1">
             {!collapsed && (
@@ -247,6 +272,8 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
               collapsed={collapsed}
             />
           </div>
+
+          {collapsed && <div className="w-6 h-px bg-white/[0.08] mx-auto" />}
 
           {/* Section: System & Config */}
           <div className="space-y-1">
@@ -288,80 +315,87 @@ function AppLayout({ user, onLogout }: { user: AppUser; onLogout: () => void }) 
           </div>
         </nav>
 
-        {/* Sidebar Speed Glance Widget */}
-        <div className="p-2 border-t border-white/[0.06]">
-          {collapsed ? (
+        {/* Sidebar Bottom Utilities */}
+        {collapsed ? (
+          <div className="p-2 border-t border-white/[0.06] flex flex-col items-center gap-1.5 shrink-0">
             <Link
               to="/traffic"
-              className="flex items-center justify-center p-2.5 text-zinc-400 hover:text-emerald-400 hover:bg-white/[0.04] rounded-xl transition-all"
-              title={`Network: ${mbps} Mbps · ${proxyStats?.activeStreams || 0} active streams`}
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-400 hover:text-emerald-400 hover:bg-white/[0.04] transition-all relative group"
+              title={`Network: ${mbps} Mbps · ${proxyStats?.activeStreams || 0} active stream${
+                proxyStats?.activeStreams === 1 ? '' : 's'
+              }`}
+              aria-label="Live Bandwidth"
             >
-              <div className="relative">
+              <div className="relative flex items-center justify-center">
                 <Activity size={18} />
                 {hasActiveStreams && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-[#0c0d0e] animate-pulse" />
                 )}
               </div>
             </Link>
-          ) : (
-            <Link
-              to="/traffic"
-              className="block p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all group"
-            >
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Activity size={12} className="text-emerald-400" />
-                  Live Bandwidth
-                </span>
-                <span className="text-xs font-semibold text-zinc-300 group-hover:text-emerald-400 transition-colors">
-                  Details →
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-lg font-bold text-white tabular-nums tracking-tight">
-                  {mbps} <span className="text-xs font-normal text-emerald-400">Mbps</span>
-                </span>
-                <span className="text-[11px] text-zinc-400">
-                  {proxyStats?.activeStreams || 0} {proxyStats?.activeStreams === 1 ? 'Stream' : 'Streams'}
-                </span>
-              </div>
-            </Link>
-          )}
-        </div>
 
-        {/* Sidebar Footer User Info */}
-        <div className="p-3 border-t border-white/[0.06] flex items-center justify-between gap-2">
-          {!collapsed ? (
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-full bg-white/[0.08] border border-white/[0.1] flex items-center justify-center font-semibold text-xs text-white shrink-0">
-                {user.email.slice(0, 2).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium text-white truncate" title={user.email}>
-                  {user.email}
-                </div>
-                <div className="text-[10px] text-zinc-500 capitalize">{user.role}</div>
-              </div>
-              <button
-                onClick={onLogout}
-                className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-                title="Sign out"
-                aria-label="Sign out"
-              >
-                <LogOut size={16} />
-              </button>
-            </div>
-          ) : (
             <button
               onClick={onLogout}
-              className="w-full flex items-center justify-center p-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-              title="Sign out"
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+              title={`Sign out (${user.email})`}
               aria-label="Sign out"
             >
               <LogOut size={18} />
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            {/* Sidebar Speed Glance Widget */}
+            <div className="p-2 border-t border-white/[0.06] shrink-0">
+              <Link
+                to="/traffic"
+                className="block p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.04] transition-all group"
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Activity size={12} className="text-emerald-400" />
+                    Live Bandwidth
+                  </span>
+                  <span className="text-xs font-semibold text-zinc-300 group-hover:text-emerald-400 transition-colors">
+                    Details →
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-lg font-bold text-white tabular-nums tracking-tight">
+                    {mbps} <span className="text-xs font-normal text-emerald-400">Mbps</span>
+                  </span>
+                  <span className="text-[11px] text-zinc-400">
+                    {proxyStats?.activeStreams || 0}{' '}
+                    {proxyStats?.activeStreams === 1 ? 'Stream' : 'Streams'}
+                  </span>
+                </div>
+              </Link>
+            </div>
+
+            {/* Sidebar Footer User Info */}
+            <div className="p-3 border-t border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-full bg-white/[0.08] border border-white/[0.1] flex items-center justify-center font-semibold text-xs text-white shrink-0">
+                  {user.email.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-white truncate" title={user.email}>
+                    {user.email}
+                  </div>
+                  <div className="text-[10px] text-zinc-500 capitalize">{user.role}</div>
+                </div>
+                <button
+                  onClick={onLogout}
+                  className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </aside>
 
       {/* ────────────────────────────────────────────────────────── */}
@@ -557,15 +591,19 @@ function DesktopNavLink({
   return (
     <Link
       to={to}
-      className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium transition-all group relative min-h-[38px] ${
+      className={`rounded-xl text-xs font-medium transition-all group relative ${
+        collapsed
+          ? 'w-10 h-10 mx-auto flex items-center justify-center p-0'
+          : 'flex items-center gap-3 px-3 py-2 min-h-[38px]'
+      } ${
         active
           ? 'bg-white/[0.1] text-white shadow-sm border border-white/[0.08]'
           : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]'
       }`}
-      title={collapsed ? label : undefined}
+      title={collapsed ? (badge ? `${label} (${badge})` : label) : undefined}
     >
       <span
-        className={`shrink-0 transition-colors ${
+        className={`shrink-0 transition-colors flex items-center justify-center ${
           active ? 'text-emerald-400' : 'text-zinc-400 group-hover:text-zinc-200'
         }`}
       >
@@ -583,7 +621,7 @@ function DesktopNavLink({
       )}
 
       {collapsed && badge && (
-        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500" />
+        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-[#0c0d0e]" />
       )}
     </Link>
   );
