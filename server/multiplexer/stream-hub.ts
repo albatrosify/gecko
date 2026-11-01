@@ -209,6 +209,10 @@ interface ActiveStreamChannel {
   lastStarveMs?: number;
   /** True once the current upstream silence has been reported, so it logs once. */
   gapWarned?: boolean;
+  /** True when upstream readable stream is paused to propagate downstream TCP backpressure. */
+  isUpstreamPaused?: boolean;
+  /** Timestamp when upstream was paused due to downstream backpressure. */
+  pausedAt?: number;
 }
 
 type ChunkCallback = (channelKey: string, chunk: Buffer) => void;
@@ -443,6 +447,17 @@ class StreamHub {
     channel.pumpTimer = setInterval(() => this.pumpChannelBuffer(channel), LIVE_BUFFER_PUMP_MS);
     channel.pumpTimer.unref?.();
     let upstreamGapTimer = setInterval(() => {
+      // If the upstream was paused deliberately to propagate downstream backpressure,
+      // it is not an outage. Check for idle timeout (5 mins) or skip reconnect.
+      if (channel.isUpstreamPaused) {
+        if (channel.pausedAt && (Date.now() - channel.pausedAt > 5 * 60 * 1000)) {
+          log(`[StreamHub] Channel ${channelKey} has been paused for >5m due to downstream backpressure. Closing idle upstream.`);
+          this.closeChannel(channelKey);
+          return;
+        }
+        channel.lastChunkAt = Date.now();
+        return;
+      }
       const silentMs = Date.now() - (channel.lastChunkAt || channel.startTime);
       if (
         silentMs >= UPSTREAM_GAP_RECONNECT_MS &&
@@ -678,7 +693,9 @@ class StreamHub {
     // needs to observe. Reported on recovery so a report of "it buffered" can be
     // matched against something concrete in the logs.
     if (channel.buffer.length === 0) {
-      channel.starvedSince ??= now;
+      if (channel.reserveSeconds > 0 && !channel.isUpstreamPaused) {
+        channel.starvedSince ??= now;
+      }
       channel.pacingTokens = 0;
       return;
     }
@@ -829,6 +846,76 @@ class StreamHub {
       });
     }
 
+    this.checkUpstreamBackpressure(channel, reserveBytes);
+  }
+
+  /**
+   * Propagates downstream TCP backpressure upstream for single-subscriber channels.
+   *
+   * When a client's local buffer (e.g. TiviMate ExoPlayer) is full, it pauses reading
+   * from its TCP socket. In a broadcast multiplexer with multiple subscribers or DVR,
+   * we cannot pause the upstream without starving other consumers. But when exactly one
+   * subscriber is active and no DVR is recording, pausing the upstream readable stream
+   * propagates TCP ZeroWindow back to the provider, preventing memory ballooning and
+   * matching direct-mode streaming behavior.
+   */
+  private checkUpstreamBackpressure(channel: ActiveStreamChannel, reserveBytes: number): void {
+    const isSingleConsumer = channel.subscribers.size === 1 && !channel.dvrRecordingId;
+    if (!isSingleConsumer) {
+      if (channel.isUpstreamPaused) {
+        this.resumeUpstream(channel, 'multiple subscribers or dvr active');
+      }
+      return;
+    }
+
+    const hasHeadroom = this.hasClientHeadroom(channel);
+    const maxAllowedBuffered = Math.max(reserveBytes, LIVE_SLICE_BYTES) + LIVE_CLIENT_HEADROOM_MAX_BYTES;
+    const isCongested = !hasHeadroom || channel.bufferedBytes >= maxAllowedBuffered;
+
+    if (isCongested && !channel.isUpstreamPaused) {
+      this.pauseUpstream(
+        channel,
+        !hasHeadroom
+          ? `downstream socket congested (writableLength > ${Math.round(LIVE_CLIENT_HEADROOM_MAX_BYTES / 1024)} KB)`
+          : `channel buffer full (${Math.round(channel.bufferedBytes / 1024)} KB >= ${Math.round(maxAllowedBuffered / 1024)} KB)`
+      );
+    } else if (!isCongested && channel.isUpstreamPaused) {
+      // Resume when downstream has headroom and buffer has drained to target reserve depth
+      if (hasHeadroom && channel.bufferedBytes <= Math.max(reserveBytes, LIVE_SLICE_BYTES * 2)) {
+        this.resumeUpstream(channel, `downstream drained (${Math.round(channel.bufferedBytes / 1024)} KB buffered)`);
+      }
+    }
+  }
+
+  private pauseUpstream(channel: ActiveStreamChannel, reason: string): void {
+    if (channel.isUpstreamPaused) return;
+    const stream = channel.upstreamResponse?.data;
+    if (!stream || typeof stream.pause !== 'function') return;
+
+    try {
+      stream.pause();
+      channel.isUpstreamPaused = true;
+      channel.pausedAt = Date.now();
+      log(`[StreamHub] ⏸️ Pausing upstream for ${channel.channelKey} (${reason})`);
+    } catch (err: any) {
+      log(`[StreamHub] Error pausing upstream for ${channel.channelKey}: ${err.message}`);
+    }
+  }
+
+  private resumeUpstream(channel: ActiveStreamChannel, reason: string): void {
+    if (!channel.isUpstreamPaused) return;
+    const stream = channel.upstreamResponse?.data;
+    if (!stream || typeof stream.resume !== 'function') return;
+
+    try {
+      stream.resume();
+      channel.isUpstreamPaused = false;
+      channel.pausedAt = undefined;
+      channel.lastChunkAt = Date.now();
+      log(`[StreamHub] ▶️ Resuming upstream for ${channel.channelKey} (${reason})`);
+    } catch (err: any) {
+      log(`[StreamHub] Error resuming upstream for ${channel.channelKey}: ${err.message}`);
+    }
   }
 
   /**
@@ -911,6 +998,8 @@ class StreamHub {
       channel.upstreamAgents = agents;
       channel.lastChunkAt = Date.now();
       channel.lastConnectAt = Date.now();
+      channel.isUpstreamPaused = false;
+      channel.pausedAt = undefined;
       channel.inInitialBurst = true;
       channel.burstBytes = 0;
       channel.rateSnapshots.length = 0;
@@ -996,6 +1085,11 @@ class StreamHub {
 
     channel.subscribers.set(sub.id, sub);
 
+    // Multi-subscriber broadcast cannot be paused without starving other viewers
+    if (channel.subscribers.size > 1 && channel.isUpstreamPaused) {
+      this.resumeUpstream(channel, 'second subscriber joined');
+    }
+
     // Track connection in proxyStats
     const connectionInfo = {
       id: sub.id,
@@ -1061,9 +1155,11 @@ class StreamHub {
     sub.res.on('close', cleanup);
     sub.res.on('error', cleanup);
 
-    // Reset backpressure stall tracking whenever socket drains
+    // Reset backpressure stall tracking whenever socket drains and resume upstream if needed
     sub.res.on('drain', () => {
       sub.stalledSince = undefined;
+      const reserveBytes = Math.max(channel.lastMeasuredRate, LIVE_BUFFER_FALLBACK_RATE_BPS) * channel.reserveSeconds;
+      this.checkUpstreamBackpressure(channel, reserveBytes);
     });
 
     log(`[StreamHub] Subscriber ${sub.id} joined ${channelKey} (${channel.subscribers.size} active viewers on this stream)`);
@@ -1151,6 +1247,9 @@ class StreamHub {
 
     channel.dvrRecordingId = recordingId;
     this.syncRecordingId(channel, recordingId);
+    if (channel.isUpstreamPaused) {
+      this.resumeUpstream(channel, 'dvr recording attached');
+    }
     log(`[StreamHub] Attached DVR recording ${recordingId} to active channel ${channelKey}`);
     return true;
   }

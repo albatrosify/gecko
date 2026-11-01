@@ -7,6 +7,8 @@ vi.mock('../logger.ts', () => ({
   log: vi.fn(),
 }));
 
+const pumpOnce = () => vi.advanceTimersByTime(9_000);
+
 describe('StreamHub', () => {
   beforeEach(() => {
     // Chunks are no longer forwarded the instant they arrive: the jitter buffer
@@ -66,8 +68,6 @@ describe('StreamHub', () => {
     expect(channel.bufferedBytes).toBeLessThan(8_000_000);
   });
 
-  /** Advance past the jitter buffer's lead time so queued chunks become due. */
-  const pumpOnce = () => vi.advanceTimersByTime(9_000);
 
   it('freezes the measured rate across an upstream silence instead of dropping to zero', async () => {
     process.env.GECKO_LIVE_BUFFER_SECONDS = '4';
@@ -608,6 +608,201 @@ describe('StreamHub', () => {
     // Passthrough: the client gets the chunk on the next pump, nothing is held back.
     expect(released).toBe(payload.length);
     expect(channel.bufferedBytes).toBe(0);
+  });
+
+  describe('Downstream TCP Backpressure Propagation', () => {
+    it('pauses upstream stream when single subscriber socket is congested', () => {
+      const fakeDataStream = new EventEmitter();
+      (fakeDataStream as any).pause = vi.fn();
+      (fakeDataStream as any).resume = vi.fn();
+      (fakeDataStream as any).destroy = vi.fn();
+
+      const channel = streamHub.registerChannel(
+        'source-bp',
+        '101',
+        'Backpressure Test',
+        'live',
+        'http://upstream.tv',
+        { data: fakeDataStream }
+      );
+
+      const res: any = new EventEmitter();
+      res.setHeader = vi.fn();
+      res.writableLength = 5 * 1024 * 1024; // > 4 MB limit
+      res.write = vi.fn().mockReturnValue(false);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-1',
+        res,
+        username: 'u',
+        playlistName: 'p',
+        ip: '10.0.0.1',
+        startTime: Date.now(),
+      });
+
+      fakeDataStream.emit('data', Buffer.alloc(100_000, 1));
+      pumpOnce();
+
+      expect(channel.isUpstreamPaused).toBe(true);
+      expect((fakeDataStream as any).pause).toHaveBeenCalled();
+    });
+
+    it('resumes upstream stream when subscriber socket drains', () => {
+      const fakeDataStream = new EventEmitter();
+      (fakeDataStream as any).pause = vi.fn();
+      (fakeDataStream as any).resume = vi.fn();
+      (fakeDataStream as any).destroy = vi.fn();
+
+      const channel = streamHub.registerChannel(
+        'source-bp',
+        '102',
+        'Backpressure Drain Test',
+        'live',
+        'http://upstream.tv',
+        { data: fakeDataStream }
+      );
+
+      const res: any = new EventEmitter();
+      res.setHeader = vi.fn();
+      res.writableLength = 5 * 1024 * 1024;
+      res.write = vi.fn().mockReturnValue(false);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-2',
+        res,
+        username: 'u',
+        playlistName: 'p',
+        ip: '10.0.0.1',
+        startTime: Date.now(),
+      });
+
+      fakeDataStream.emit('data', Buffer.alloc(100_000, 1));
+      pumpOnce();
+      expect(channel.isUpstreamPaused).toBe(true);
+
+      // Client reads data, socket drains
+      res.writableLength = 100_000; // < 4 MB
+      res.emit('drain');
+
+      expect(channel.isUpstreamPaused).toBe(false);
+      expect((fakeDataStream as any).resume).toHaveBeenCalled();
+    });
+
+    it('does not pause upstream if multiple subscribers are watching', () => {
+      const fakeDataStream = new EventEmitter();
+      (fakeDataStream as any).pause = vi.fn();
+      (fakeDataStream as any).resume = vi.fn();
+      (fakeDataStream as any).destroy = vi.fn();
+
+      const channel = streamHub.registerChannel(
+        'source-bp',
+        '103',
+        'Multi-subscriber Backpressure Test',
+        'live',
+        'http://upstream.tv',
+        { data: fakeDataStream }
+      );
+
+      const res1: any = new EventEmitter();
+      res1.setHeader = vi.fn();
+      res1.writableLength = 5 * 1024 * 1024; // sub 1 full
+      res1.write = vi.fn().mockReturnValue(false);
+
+      const res2: any = new EventEmitter();
+      res2.setHeader = vi.fn();
+      res2.writableLength = 10_000; // sub 2 healthy
+      res2.write = vi.fn().mockReturnValue(true);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-3a', res: res1, username: 'u1', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+      });
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-3b', res: res2, username: 'u2', playlistName: 'p', ip: '10.0.0.2', startTime: Date.now(),
+      });
+
+      fakeDataStream.emit('data', Buffer.alloc(100_000, 1));
+      pumpOnce();
+
+      expect(channel.isUpstreamPaused).toBeFalsy();
+      expect((fakeDataStream as any).pause).not.toHaveBeenCalled();
+    });
+
+    it('resumes upstream immediately if second subscriber joins while paused', () => {
+      const fakeDataStream = new EventEmitter();
+      (fakeDataStream as any).pause = vi.fn();
+      (fakeDataStream as any).resume = vi.fn();
+      (fakeDataStream as any).destroy = vi.fn();
+
+      const channel = streamHub.registerChannel(
+        'source-bp',
+        '104',
+        'Join while paused Test',
+        'live',
+        'http://upstream.tv',
+        { data: fakeDataStream }
+      );
+
+      const res1: any = new EventEmitter();
+      res1.setHeader = vi.fn();
+      res1.writableLength = 5 * 1024 * 1024;
+      res1.write = vi.fn().mockReturnValue(false);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-4a', res: res1, username: 'u1', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+      });
+
+      fakeDataStream.emit('data', Buffer.alloc(100_000, 1));
+      pumpOnce();
+      expect(channel.isUpstreamPaused).toBe(true);
+
+      // Second subscriber joins
+      const res2: any = new EventEmitter();
+      res2.setHeader = vi.fn();
+      res2.writableLength = 0;
+      res2.write = vi.fn().mockReturnValue(true);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-4b', res: res2, username: 'u2', playlistName: 'p', ip: '10.0.0.2', startTime: Date.now(),
+      });
+
+      expect(channel.isUpstreamPaused).toBe(false);
+      expect((fakeDataStream as any).resume).toHaveBeenCalled();
+    });
+
+    it('resumes upstream immediately if DVR recording is attached while paused', () => {
+      const fakeDataStream = new EventEmitter();
+      (fakeDataStream as any).pause = vi.fn();
+      (fakeDataStream as any).resume = vi.fn();
+      (fakeDataStream as any).destroy = vi.fn();
+
+      const channel = streamHub.registerChannel(
+        'source-bp',
+        '105',
+        'DVR while paused Test',
+        'live',
+        'http://upstream.tv',
+        { data: fakeDataStream }
+      );
+
+      const res1: any = new EventEmitter();
+      res1.setHeader = vi.fn();
+      res1.writableLength = 5 * 1024 * 1024;
+      res1.write = vi.fn().mockReturnValue(false);
+
+      streamHub.addSubscriber(channel.channelKey, {
+        id: 'sub-bp-5', res: res1, username: 'u1', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+      });
+
+      fakeDataStream.emit('data', Buffer.alloc(100_000, 1));
+      pumpOnce();
+      expect(channel.isUpstreamPaused).toBe(true);
+
+      // Attach DVR recording
+      streamHub.attachDvr(channel.sourceId, channel.streamId, 'rec-1234');
+
+      expect(channel.isUpstreamPaused).toBe(false);
+      expect((fakeDataStream as any).resume).toHaveBeenCalled();
+    });
   });
 });
 
