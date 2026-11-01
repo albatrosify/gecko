@@ -4,6 +4,9 @@ import { proxyStats, registerStreamController, unregisterStreamController } from
 import { StreamChannelSummary } from './stream-guard.ts';
 import { recordTraffic } from '../traffic.ts';
 import { createIpPinnedAgents, extractHostname, type IpPinnedAgents } from '../dns-resolver.ts';
+import { getDb } from '../db.ts';
+import { settings } from '../schema.ts';
+import { eq } from 'drizzle-orm';
 
 /** How many consecutive reconnect failures to tolerate before waiting for the client. */
 const RECONNECT_MAX_ATTEMPTS = 4;
@@ -106,18 +109,51 @@ function liveBufferDrainAfterMs(reserveSeconds: number): number {
   return (reserveSeconds * 2 + 15) * 1000;
 }
 
+let _globalBufferSecondsCache: { value: number; expiresAt: number } | null = null;
+
+/**
+ * Returns the effective global live buffer reserve in seconds.
+ * Priority: 1. DB setting (settings.extra.liveBufferSeconds) -> 2. ENV (GECKO_LIVE_BUFFER_SECONDS) -> 3. Default (12)
+ */
+export function getGlobalLiveBufferSeconds(): number {
+  if (_globalBufferSecondsCache && Date.now() < _globalBufferSecondsCache.expiresAt) {
+    return _globalBufferSecondsCache.value;
+  }
+
+  // 1. Check database settings if connected
+  try {
+    const db = getDb();
+    if (db) {
+      const doc = db.select().from(settings).where(eq(settings.id, 'global')).get();
+      const extra = (doc?.extra as any) || {};
+      if (typeof extra.liveBufferSeconds === 'number' && Number.isFinite(extra.liveBufferSeconds) && extra.liveBufferSeconds >= 0) {
+        _globalBufferSecondsCache = { value: Math.round(extra.liveBufferSeconds), expiresAt: Date.now() + 60_000 };
+        return _globalBufferSecondsCache.value;
+      }
+    }
+  } catch {}
+
+  // 2. Fall back to process.env.GECKO_LIVE_BUFFER_SECONDS or default
+  const configured = Number(process.env.GECKO_LIVE_BUFFER_SECONDS);
+  const val = (Number.isFinite(configured) && configured >= 0) ? configured : LIVE_BUFFER_DEFAULT_RESERVE_S;
+  _globalBufferSecondsCache = { value: val, expiresAt: Date.now() + 60_000 };
+  return val;
+}
+
+export function invalidateGlobalLiveBufferSecondsCache(): void {
+  _globalBufferSecondsCache = null;
+}
+
 /** Configured reserve depth in seconds; 0 means pacing is off. */
 function liveBufferReserveSeconds(): number {
-  const configured = Number(process.env.GECKO_LIVE_BUFFER_SECONDS ?? LIVE_BUFFER_DEFAULT_RESERVE_S);
-  if (!Number.isFinite(configured) || configured < 0) return LIVE_BUFFER_DEFAULT_RESERVE_S;
-  return configured;
+  return getGlobalLiveBufferSeconds();
 }
 
 /**
  * Resolves a channel's reserve: an explicit override (per-category) wins, otherwise
- * the global `GECKO_LIVE_BUFFER_SECONDS` default. `0` disables pacing for that channel.
+ * the global setting. `0` disables pacing for that channel (passthrough).
  */
-function resolveReserveSeconds(override?: number): number {
+export function resolveReserveSeconds(override?: number): number {
   if (typeof override === 'number' && Number.isFinite(override) && override >= 0) return override;
   return liveBufferReserveSeconds();
 }
@@ -1368,6 +1404,7 @@ class StreamHub {
   }
 
   reset(): void {
+    invalidateGlobalLiveBufferSecondsCache();
     for (const key of Array.from(this.channels.keys())) {
       this.closeChannel(key);
     }

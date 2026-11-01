@@ -174,6 +174,9 @@ export function createSystemRouter() {
       llmModel: extra.llmModel ?? '',
       llmSystemPrompt: extra.llmSystemPrompt ?? DEFAULT_LLM_SYSTEM_PROMPT,
       monthlyTrafficQuotaGB: typeof extra.monthlyTrafficQuotaGB === 'number' ? extra.monthlyTrafficQuotaGB : 10240,
+      liveBufferSeconds: typeof extra.liveBufferSeconds === 'number' && Number.isFinite(extra.liveBufferSeconds) && extra.liveBufferSeconds >= 0
+        ? Math.round(extra.liveBufferSeconds)
+        : (Number.isFinite(Number(process.env.GECKO_LIVE_BUFFER_SECONDS)) && Number(process.env.GECKO_LIVE_BUFFER_SECONDS) >= 0 ? Number(process.env.GECKO_LIVE_BUFFER_SECONDS) : 12),
     });
   });
 
@@ -184,8 +187,11 @@ export function createSystemRouter() {
     const db = getDb();
     const { settings } = await import('../schema.ts');
     const { eq } = await import('drizzle-orm');
-    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords, llmEnabled, llmUrl, llmApiKey, llmModel, llmSystemPrompt, monthlyTrafficQuotaGB } = req.body;
+    const { qualityLabelFormat, telegramBotToken, telegramChatId, telegramEnabled, telegramKeywords, llmEnabled, llmUrl, llmApiKey, llmModel, llmSystemPrompt, monthlyTrafficQuotaGB, liveBufferSeconds } = req.body;
 
+    if (liveBufferSeconds !== undefined && (typeof liveBufferSeconds !== 'number' || liveBufferSeconds < 0 || !Number.isFinite(liveBufferSeconds))) {
+      return res.status(400).json({ error: 'liveBufferSeconds must be a non-negative number' });
+    }
     if (monthlyTrafficQuotaGB !== undefined && (typeof monthlyTrafficQuotaGB !== 'number' || monthlyTrafficQuotaGB < 0 || !Number.isFinite(monthlyTrafficQuotaGB))) {
       return res.status(400).json({ error: 'monthlyTrafficQuotaGB must be a positive number' });
     }
@@ -237,6 +243,7 @@ export function createSystemRouter() {
       ...(llmApiKey !== undefined ? { llmApiKey: llmApiKey.trim() } : {}),
       ...(llmModel !== undefined ? { llmModel: llmModel.trim() } : {}),
       ...(llmSystemPrompt !== undefined ? { llmSystemPrompt } : {}),
+      ...(liveBufferSeconds !== undefined ? { liveBufferSeconds: Math.round(liveBufferSeconds) } : {}),
     };
 
     db.insert(settings)
@@ -246,6 +253,10 @@ export function createSystemRouter() {
 
     if (qualityLabelFormat !== undefined) {
       invalidateQualityFormatCache();
+    }
+    if (liveBufferSeconds !== undefined) {
+      const { invalidateGlobalLiveBufferSecondsCache } = await import('../multiplexer/stream-hub.ts');
+      invalidateGlobalLiveBufferSecondsCache();
     }
     res.json({ success: true });
   });

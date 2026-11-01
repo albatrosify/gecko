@@ -403,6 +403,7 @@ export interface GlobalSettings {
   llmModel?: string;
   llmSystemPrompt?: string;
   monthlyTrafficQuotaGB?: number;
+  liveBufferSeconds?: number;
 }
 
 export const settings = {

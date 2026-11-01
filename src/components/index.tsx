@@ -3382,6 +3382,120 @@ function QualityPresetButtons({ onSelect }: { onSelect: (t: string) => void }) {
   );
 }
 
+function LiveBufferSettingsCard() {
+  const [bufferSeconds, setBufferSeconds] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.settings.get()
+      .then((s: any) => {
+        if (typeof s.liveBufferSeconds === 'number') {
+          setBufferSeconds(s.liveBufferSeconds);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async (val: number) => {
+    const rounded = Math.max(0, Math.round(val));
+    setSaving(true);
+    try {
+      await api.settings.update({ liveBufferSeconds: rounded });
+      setBufferSeconds(rounded);
+      setMessage(
+        rounded === 0
+          ? '✓ Passthrough aktiv (0s Puffer, direkte Steuerung durch den Player)'
+          : `✓ Intelligenter Puffer aktiv (${rounded}s Polster im Server-RAM + TCP-Backpressure)`
+      );
+      setTimeout(() => setMessage(null), 5000);
+    } catch (err: any) {
+      setMessage(`Fehler: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const presets = [
+    { label: '🚀 Passthrough (0s)', value: 0, desc: 'Direkt & minimale Latenz' },
+    { label: '⚖️ Ausbalanciert (8s)', value: 8, desc: 'Schutz vor Schwankungen' },
+    { label: '🛡️ Maximal (14s)', value: 14, desc: 'Tiefer Puffer für schwache Provider' },
+  ];
+
+  return (
+    <div className="apple-glass-card p-4 sm:p-5 rounded-2xl space-y-3.5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+            <Gauge size={16} className="text-emerald-400" />
+            Live-Stream Puffer
+          </h3>
+          <p className="text-[11px] text-zinc-500">
+            Steuert, wie viel Videomaterial Gecko im Server-RAM puffert, bevor das Signal an den Upstream pausiert wird.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-[11px] font-semibold text-zinc-400">Puffer-Modus wählen</label>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {presets.map(p => (
+            <button
+              key={p.value}
+              type="button"
+              disabled={saving || loading}
+              onClick={() => handleSave(p.value)}
+              className={clsx(
+                "p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1",
+                bufferSeconds === p.value
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+                  : "bg-zinc-950/60 border-zinc-800/80 text-zinc-300 hover:bg-zinc-900/80 hover:border-zinc-700"
+              )}
+            >
+              <span className="text-xs font-bold leading-tight">{p.label}</span>
+              <span className="text-[10px] text-zinc-500 leading-tight">{p.desc}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-2 items-center pt-1">
+          <div className="relative flex-1">
+            <input
+              type="number"
+              min="0"
+              max="120"
+              step="1"
+              disabled={saving || loading}
+              value={bufferSeconds}
+              onChange={e => setBufferSeconds(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-full px-3 py-1.5 bg-zinc-950/80 border border-zinc-800 rounded-lg text-zinc-100 font-mono text-xs focus:outline-none focus:border-emerald-500 pr-8"
+              placeholder="Sekunden"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-zinc-500 font-mono">Sek.</span>
+          </div>
+          <button
+            onClick={() => handleSave(bufferSeconds)}
+            disabled={saving || loading}
+            className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-bold hover:bg-emerald-500 hover:text-zinc-950 transition-all disabled:opacity-50 cursor-pointer shrink-0"
+          >
+            {saving ? 'Saving...' : 'Übernehmen'}
+          </button>
+        </div>
+
+        {message && (
+          <p className="text-[11px] text-emerald-400 font-medium pt-0.5">{message}</p>
+        )}
+
+        <p className="text-[10px] text-zinc-500 leading-relaxed pt-0.5">
+          Tipp: Im Playlist-Editor kann unter jeder Kategorie zusätzlich ein individueller Puffer festgelegt werden (z. B. 0s für Live-Sport, 10s für Filme/Serien).
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function TrafficSettingsCard() {
   const [quotaGB, setQuotaGB] = useState<number>(10240);
   const [loading, setLoading] = useState(true);
@@ -4038,6 +4152,8 @@ export function Settings({ user }: { user: User }) {
           </div>
 
           <VpnSettingsCard />
+
+          <LiveBufferSettingsCard />
 
           <TrafficSettingsCard />
 
