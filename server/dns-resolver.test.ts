@@ -14,7 +14,6 @@ import {
   measureIpLatency,
   rankHostIps,
   clearDnsCache,
-  getDnsCacheSize,
   isPrivateIp,
   extractHostname,
 } from "./dns-resolver.ts";
@@ -67,7 +66,6 @@ describe("dns-resolver", () => {
     it("returns directly if hostname is already an IPv4", async () => {
       const ips = await resolveHostIps("1.2.3.4");
       expect(ips).toEqual(["1.2.3.4"]);
-      expect(getDnsCacheSize()).toBe(0);
     });
 
     it("resolves multiple A records and caches results", async () => {
@@ -78,7 +76,6 @@ describe("dns-resolver", () => {
       const ips1 = await resolveHostIps("multi.cdn.com");
       expect(ips1).toEqual(["198.51.100.1", "198.51.100.2"]);
       expect(resolveSpy).toHaveBeenCalledTimes(1);
-      expect(getDnsCacheSize()).toBe(1);
 
       // Second call should hit in-memory cache
       const ips2 = await resolveHostIps("multi.cdn.com");
@@ -113,12 +110,13 @@ describe("dns-resolver", () => {
     });
 
     it("clears cache with clearDnsCache", async () => {
-      vi.spyOn(dns.promises, "resolve4").mockResolvedValue(["198.51.100.1"]);
+      const resolveSpy = vi.spyOn(dns.promises, "resolve4").mockResolvedValue(["198.51.100.1"]);
       await resolveHostIps("cache-test.com");
-      expect(getDnsCacheSize()).toBe(1);
+      expect(resolveSpy).toHaveBeenCalledTimes(1);
 
       clearDnsCache();
-      expect(getDnsCacheSize()).toBe(0);
+      await resolveHostIps("cache-test.com");
+      expect(resolveSpy).toHaveBeenCalledTimes(2);
     });
   });
 

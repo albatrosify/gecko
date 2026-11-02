@@ -21,13 +21,6 @@ export function clearDnsCache(): void {
 }
 
 /**
- * Returns current number of entries in the in-memory DNS cache (useful for testing).
- */
-export function getDnsCacheSize(): number {
-  return dnsCache.size;
-}
-
-/**
  * Checks whether an IPv4 address is in a private, loopback, or reserved range.
  */
 export function isPrivateIp(ip: string): boolean {
