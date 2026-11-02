@@ -184,37 +184,35 @@ export function parseTvBlocks(xml: string, neededIds?: Set<string>): ParsedSourc
 
   const channels = new Map<string, string>();
   const programmes = new Map<string, string[]>();
-  let pos = 0;
-  const len = src.length;
-  while (pos < len) {
-    const chIdx = src.indexOf('<channel', pos);
-    const prIdx = src.indexOf('<programme', pos);
-    if (chIdx === -1 && prIdx === -1) break;
-    const isChannel = chIdx !== -1 && (prIdx === -1 || chIdx < prIdx);
-    const tagStart = isChannel ? chIdx : prIdx;
-
-    const openEnd = src.indexOf('>', tagStart);
-    const openTag = openEnd === -1 ? src.slice(tagStart) : src.slice(tagStart, openEnd + 1);
-    const selfClosing = /\/>\s*$/.test(openTag);
-    const endTag = isChannel ? '</channel>' : '</programme>';
-    const closeIdx = selfClosing ? openEnd : src.indexOf(endTag, openEnd + 1);
-    const blockEnd = selfClosing ? openEnd + 2 : (closeIdx === -1 ? len : closeIdx + endTag.length);
-    const block = src.slice(tagStart, blockEnd);
-    pos = blockEnd;
-
+  // Single pass with a regex scan: per-element String.indexOf over huge sources
+  // falls back to a naive search in Bun (~56 s per 10 MB observed) and dominated
+  // the whole build. `exec` advances one C++-driven scan instead.
+  const openTagRe = /<(channel|programme)\b[^>]*>/g;
+  let match: RegExpExecArray | null;
+  while ((match = openTagRe.exec(src)) !== null) {
+    const isChannel = match[1] === 'channel';
+    const tagStart = match.index;
+    const openTag = match[0];
+    const selfClosing = openTag.endsWith('/>');
     if (isChannel) {
-      const id = block.match(/\bid="([^"]*)"/)?.[1] ?? '';
-      if (id && !channels.has(id) && (!neededIds || neededIds.has(id))) channels.set(id, block);
+      const id = openTag.match(/\bid="([^"]*)"/)?.[1] ?? '';
+      if (!id || channels.has(id) || (neededIds && !neededIds.has(id))) continue;
+      if (selfClosing) { channels.set(id, openTag); continue; }
+      const end = src.indexOf('</channel>', tagStart + openTag.length);
+      if (end === -1) break;
+      channels.set(id, src.slice(tagStart, end + '</channel>'.length));
+      openTagRe.lastIndex = end + '</channel>'.length;
     } else {
-      // Filter-aware: with a needed-id set, blocks for channels the playlist
-      // never references are skipped without allocating (the 190k-programme
-      // input packs were the dominant CPU/memory cost of the old builder).
-      const channelId = block.match(/\bchannel="([^"]*)"/)?.[1] ?? '';
-      if (!channelId) continue;
-      if (neededIds && !neededIds.has(channelId)) continue;
+      const channelId = openTag.match(/\bchannel="([^"]*)"/)?.[1] ?? '';
+      if (!channelId || (neededIds && !neededIds.has(channelId))) continue;
+      if (selfClosing) { continue; }
+      const end = src.indexOf('</programme>', tagStart + openTag.length);
+      if (end === -1) break;
+      const block = src.slice(tagStart, end + '</programme>'.length);
       const list = programmes.get(channelId);
       if (list) list.push(block);
       else programmes.set(channelId, [block]);
+      openTagRe.lastIndex = end + '</programme>'.length;
     }
   }
   return { channels, programmes };
@@ -248,13 +246,20 @@ export function collectPlaylistEpgBindings(playlist: Playlist): ChannelBinding[]
   if (!sourceIds.length) return [];
 
   // Manual overrides, keyed `${sourceIdx}_${originalId}` (older rows without
-  // sourceIdx additionally match the unprefixed form).
+  // sourceIdx additionally match the unprefixed form). `extra` may arrive as a
+  // pre-parsed object (drizzle json-mode on some drivers) or as a string —
+  // tolerate both; a failed parse here would silently drop every override.
   const overridesByKey = new Map<string, any>();
   const mappingRows = db.select().from(schemaMappings).where(eq(schemaMappings.playlistId, playlist.id)).all();
   for (const m of mappingRows) {
     if (m.type !== 'live') continue;
-    let extra: any = {};
-    try { extra = JSON.parse((m.extra as any) || '{}'); } catch { /* tolerate bad rows */ }
+    const rawExtra = m.extra as any;
+    let extra: any;
+    if (typeof rawExtra === 'string') {
+      try { extra = JSON.parse(rawExtra || '{}'); } catch { /* tolerate bad rows */ }
+    } else {
+      extra = rawExtra || {};
+    }
     if (extra?.sourceIdx !== undefined && extra?.sourceIdx !== null) {
       overridesByKey.set(`${extra.sourceIdx}_${m.originalId}`, extra);
     }
