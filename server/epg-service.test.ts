@@ -209,7 +209,7 @@ describe('EPG Service & Disk Caching', () => {
       const ger = '<?xml version="1.0"?><tv>'
         + '<channel id="ProSieben.de"><display-name>DE - ProSieben</display-name></channel>'
         + '<channel id="3sat.de"><display-name>DE - 3sat (not exported)</display-name></channel>'
-        + '<programme start="a" channel="ProSieben.de"><title>DE-Prog</title></programme>'
+        + '<programme start="a" channel="ProSieben.de"><title>DE-Prog &amp; Fun</title></programme>'
         + '<programme start="b" channel="3sat.de"><title>3sat-Prog</title></programme>'
         + '</tv>';
       const up = '<?xml version="1.0"?><tv>'
@@ -238,7 +238,8 @@ describe('EPG Service & Disk Caching', () => {
 
       // Override wins: Germany's channel + programme, NOT the upstream duplicate
       expect((xml.match(/<channel id="ProSieben\.de"/g) || []).length).toBe(1);
-      expect(xml).toContain('<title>DE-Prog</title>');
+      expect(xml).toContain('<title>DE-Prog &amp; Fun</title>');
+      expect(xml).not.toContain('DE-Prog & Fun</title>');
       expect(xml).not.toContain('UP-dupe-drop');
       expect(xml).toContain('DE - ProSieben');
       // Upstream default pairing kept with its own programme

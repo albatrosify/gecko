@@ -173,7 +173,7 @@ interface ParsedSourceTv {
  * the sync worker (background role), so linear scans over very large strings are
  * acceptable; the serving process never runs this.
  */
-export function parseTvBlocks(xml: string): ParsedSourceTv {
+export function parseTvBlocks(xml: string, neededIds?: Set<string>): ParsedSourceTv {
   const startTag = xml.indexOf('<tv');
   let src = xml;
   if (startTag !== -1) {
@@ -204,14 +204,17 @@ export function parseTvBlocks(xml: string): ParsedSourceTv {
 
     if (isChannel) {
       const id = block.match(/\bid="([^"]*)"/)?.[1] ?? '';
-      if (id && !channels.has(id)) channels.set(id, block);
+      if (id && !channels.has(id) && (!neededIds || neededIds.has(id))) channels.set(id, block);
     } else {
+      // Filter-aware: with a needed-id set, blocks for channels the playlist
+      // never references are skipped without allocating (the 190k-programme
+      // input packs were the dominant CPU/memory cost of the old builder).
       const channelId = block.match(/\bchannel="([^"]*)"/)?.[1] ?? '';
-      if (channelId) {
-        const list = programmes.get(channelId);
-        if (list) list.push(block);
-        else programmes.set(channelId, [block]);
-      }
+      if (!channelId) continue;
+      if (neededIds && !neededIds.has(channelId)) continue;
+      const list = programmes.get(channelId);
+      if (list) list.push(block);
+      else programmes.set(channelId, [block]);
     }
   }
   return { channels, programmes };
@@ -323,24 +326,36 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
   const cacheDir = path.dirname(cachePath);
   await fs.promises.mkdir(cacheDir, { recursive: true });
 
-  const fetchXml = async (url: string): Promise<string | null> => {
+  const fetchXml = async (url: string, deadlineMs = 120_000): Promise<string | null> => {
+    // Hard deadline on the WHOLE transfer: axios' `timeout` only covers the
+    // response-header phase, so a crawling provider body (observed tonight on a
+    // 63 MB feed) would stall the build indefinitely without this.
+    const abort = new AbortController();
+    const kill = setTimeout(() => abort.abort(new Error(`transfer exceeded ${deadlineMs / 1000}s deadline`)), deadlineMs);
     try {
-      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
+      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000, signal: abort.signal });
       let data = Buffer.from(response.data);
       if (url.endsWith('.gz') || response.headers['content-encoding'] === 'gzip') {
         data = await gunzipAsync(data);
       }
       await yieldLoop();
-      let xml = data.toString('utf-8');
-      if (xml.includes('&')) {
-        xml = xml.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/gi, '&amp;');
-      }
-      return xml;
+      return data.toString('utf-8');
     } catch (err: any) {
-      log(`[EPG] Failed to fetch ${url}: ${err.message}`);
+      log(`[EPG] Failed to fetch ${url}: ${err?.message || err}`);
       return null;
+    } finally {
+      clearTimeout(kill);
     }
   };
+
+  /**
+   * Repair bare `&` in one emitted block at a time. Escaping happens lazily here
+   * only because the playlist-scoped builder keeps a small fraction of each
+   * source's blocks — a full-document pass over the biggest feed alone cost more
+   * CPU than the entire rest of the build.
+   */
+  const escapeAmp = (block: string): string =>
+    /&(?!amp;)/i.test(block) ? block.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);)/gi, '&amp;') : block;
 
   // Each fetched feed keeps its title so channel definitions can be resolved by
   // owner later: custom EPG docs by their name, upstream XMLTVs as
@@ -386,12 +401,31 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
     }));
   }
 
+  // Compute the channel bindings before the parse pass: the parser then only
+  // keeps blocks the playlist actually references (see `parseTvBlocks`).
+  const bindings = collectPlaylistEpgBindings(playlist);
+  const neededIds = new Set(bindings.map(b => b.id));
+
   await Promise.all(fetchPromises);
   await yieldLoop();
 
-  // Defensive guard: if sources were expected but all failed, do not overwrite a valid existing cache
-  if (!sourceData.length && expectedSourcesCount > 0 && fs.existsSync(cachePath)) {
-    throw new Error(`All ${expectedSourcesCount} EPG sources failed to fetch; preserving existing cache.`);
+  // Partial-failure guard: a build that silently drops one of the configured
+  // sources would leave mapped channels EPG-less ("worked yesterday" problem).
+  // If a usable young cache already exists, keep it instead of downgrading.
+  const failedSourcesCount = expectedSourcesCount - sourceData.length;
+  const cacheAgeMs = fs.existsSync(cachePath) ? Date.now() - fs.statSync(cachePath).mtimeMs : Infinity;
+  if (failedSourcesCount > 0) {
+    const cacheDesc = Number.isFinite(cacheAgeMs) ? `existing cache is ${Math.round(cacheAgeMs / 1000)}s old` : 'no existing cache';
+    if (!sourceData.length) {
+      if (Number.isFinite(cacheAgeMs)) {
+        throw new Error(`All ${expectedSourcesCount} EPG sources failed to fetch; preserving existing cache.`);
+      }
+      // No cache, nothing fetched: build the empty cache as before.
+    } else if (cacheAgeMs < EPG_CACHE_MAX_AGE_MS) {
+      throw new Error(`Only ${sourceData.length}/${expectedSourcesCount} EPG sources fetched in time (${cacheDesc}); preserving existing cache instead of building a reduced one.`);
+    } else {
+      log(`[EPG] ⚠️ Only ${sourceData.length}/${expectedSourcesCount} EPG sources fetched in time (${cacheDesc}, stale) — building with partial data.`);
+    }
   }
 
   // Playlist-scoped assembly instead of a blind merge: resolve what every exported
@@ -399,18 +433,19 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
   // channel + programme definitions from the owning source, and drop every channel
   // (and its programmes) that the playlist does not export. This keeps the output
   // unique per channel id and orders of magnitude smaller for players.
-  const bindings = collectPlaylistEpgBindings(playlist);
-  const parsedSources = measureSync('epg:assemble', () => sourceData.map(s => ({ title: s.title, tv: parseTvBlocks(s.xml) })));
-  const inputChannelCount = parsedSources.reduce((n, p) => n + p.tv.channels.size, 0);
-  const upstreamTitles = new Set(sourceData.filter(s => s.isUpstream).map(s => s.title));
+  const parsedSources = measureSync('epg:assemble', () =>
+    sourceData.map(s => ({ title: s.title, isUpstream: s.isUpstream, tv: parseTvBlocks(s.xml, neededIds) })));
+  const upstreamTitles = new Set(parsedSources.filter(p => p.isUpstream).map(p => p.title));
+  sourceData.length = 0; // free the raw feeds before the assembly phase
+  await yieldLoop();
 
   const inner: string[] = [];
   let emittedChannels = 0;
   let emittedProgrammes = 0;
   let unboundChannels = 0;
   for (const binding of bindings) {
-    let owner: { title: string; tv: ParsedSourceTv } | undefined;
-    const hasId = (p: { tv: ParsedSourceTv }) => p.tv.channels.has(binding.id);
+    let owner: { title: string; isUpstream: boolean; tv: ParsedSourceTv } | undefined;
+    const hasId = (p: { title: string; isUpstream: boolean; tv: ParsedSourceTv }) => p.tv.channels.has(binding.id);
     if (binding.fromOverride) {
       if (binding.ownerSourceName) {
         owner = parsedSources.find(p => p.title === binding.ownerSourceName);
@@ -418,36 +453,36 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
       // Override definition missing in its source (renamed doc etc.) → any
       // source that defines the id; EPG docs take priority over upstream.
       if (!owner || !hasId(owner)) {
-        owner = parsedSources.find(p => !upstreamTitles.has(p.title) && hasId(p))
+        owner = parsedSources.find(p => !p.isUpstream && hasId(p))
           ?? parsedSources.find(hasId);
       }
     } else {
       // Default: exactly the upstream pairing. No fallback to other docs —
       // those only apply through manual mappings (the override layer).
-      owner = parsedSources.find(p => upstreamTitles.has(p.title) && hasId(p));
+      owner = parsedSources.find(p => p.isUpstream && hasId(p));
       if (!owner) unboundChannels++;
     }
+    if (!owner) continue;
 
-    const channelBlock = owner?.tv.channels.get(binding.id);
+    const channelBlock = owner.tv.channels.get(binding.id);
     if (!channelBlock) continue;
-    inner.push(channelBlock, '\n');
+    inner.push(escapeAmp(channelBlock), '\n');
     emittedChannels++;
-    const progs = owner!.tv.programmes.get(binding.id) ?? [];
+    const progs = owner.tv.programmes.get(binding.id) ?? [];
     for (const prog of progs) {
-      inner.push(prog, '\n');
+      inner.push(escapeAmp(prog), '\n');
       emittedProgrammes++;
     }
     await yieldLoop();
   }
-  sourceData.length = 0; // free the raw feeds before the assembly phase
 
   const finalXml = measureSync('epg:proxy-icons', () =>
-    `${'<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n'}${proxyXmlIcons(inner.join(''), imgBase)}\n</tv>`);
+    `<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n${proxyXmlIcons(inner.join(''), imgBase)}\n</tv>`);
 
   await yieldLoop();
   const compressed = await gzipAsync(measureSync('epg:to-buffer', () => Buffer.from(finalXml, 'utf-8')));
   const tempPath = `${cachePath}.tmp.${Date.now()}`;
   await fs.promises.writeFile(tempPath, compressed);
   await fs.promises.rename(tempPath, cachePath);
-  log(`[EPG] Cache generated for playlist ${playlist.name || playlist.id}: ${emittedChannels}/${bindings.length} binding(s) emitted (${emittedProgrammes} programmes, ${unboundChannels} unbound upstream pairings), ${inputChannelCount} input channel defs filtered down to the exported set (${(compressed.length / 1024).toFixed(0)} KB gzipped)`);
+  log(`[EPG] Cache generated for playlist ${playlist.name || playlist.id}: ${emittedChannels} channel(s) / ${emittedProgrammes} programme(s) from ${parsedSources.length} source(s), ${unboundChannels} unbound upstream pairing(s) skipped, ${neededIds.size} needed id(s) — ${(compressed.length / 1024).toFixed(0)} KB gzipped`);
 }
