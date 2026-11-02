@@ -1,5 +1,4 @@
 import cron from "node-cron";
-import cronstrue from "cronstrue";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { measureSyncTimed } from "./event-loop-monitor.ts";
@@ -476,7 +475,7 @@ export function scheduleSourceCron(source: any) {
       }
     });
     activeCrons.set(sourceId, job);
-    log(`[Cron] Scheduled sync for ${source.name}: "${cronstrue.toString(source.syncCron)}"`);
+    log(`[Cron] Scheduled sync for ${source.name}: "${source.syncCron}"`);
   } catch (err) {
     log(`[Cron] Failed to schedule for ${source.name} (Invalid cron expression: "${source.syncCron}")`);
   }
