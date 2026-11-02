@@ -139,12 +139,7 @@ export function parseXtreamExpDate(rawExpDate: any): string | null {
 }
 
 export function isValidHttpUrl(urlString: string): boolean {
-  try {
-    const parsed = new URL(urlString);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return URL.canParse(urlString) && /^https?:$/i.test(new URL(urlString).protocol);
 }
 
 export function formatBytes(bytes: number): string {

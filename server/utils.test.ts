@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { applyRegex, parseXtreamExpDate } from './utils';
+import { applyRegex, parseXtreamExpDate, isValidHttpUrl } from './utils';
 import * as logger from './logger';
 
 vi.mock('./logger', () => ({
@@ -54,6 +54,20 @@ describe('parseXtreamExpDate', () => {
     expect(parseXtreamExpDate(iso)).toBe(new Date(iso).toISOString());
     const dateStr = '2026-12-31 23:59:59';
     expect(parseXtreamExpDate(dateStr)).toBe(new Date(dateStr.replace(' ', 'T')).toISOString());
+  });
+});
+
+describe('isValidHttpUrl', () => {
+  it('validates http and https urls', () => {
+    expect(isValidHttpUrl('http://example.com')).toBe(true);
+    expect(isValidHttpUrl('https://example.com:8080/path?query=1')).toBe(true);
+  });
+
+  it('rejects non-http protocols and malformed strings', () => {
+    expect(isValidHttpUrl('ftp://example.com')).toBe(false);
+    expect(isValidHttpUrl('javascript:void(0)')).toBe(false);
+    expect(isValidHttpUrl('not-a-url')).toBe(false);
+    expect(isValidHttpUrl('')).toBe(false);
   });
 });
 
