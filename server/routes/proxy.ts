@@ -6,7 +6,7 @@ import https from "https";
 import dns from "dns";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
-import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, decodeStreamId } from "../utils.ts";
+import { getClientInfo, proxyImageUrl, applyRegex, getBaseUrl, proxySeriesInfoImages, decodeStreamId, parseSourceStreamId } from "../utils.ts";
 import { proxyStats, registerStreamController, unregisterStreamController, killStream, getActiveVodConnectionsForSource } from "../proxy-stats.ts";
 import { getGlobalQualityFormat } from "../quality-scan.ts";
 import { requestSourceSync } from "../sync-client.ts";
@@ -1897,12 +1897,8 @@ export function createProxyRouter() {
             break;
           }
 
-          let targetSIdx: number | null = null;
-          if (vodId.includes('_')) {
-            const parts = vodId.split('_');
-            targetSIdx = parseInt(parts[0]);
-            vodId = parts.slice(1).join('_');
-          }
+          const { sourceIdx: targetSIdx, id: cleanVodId } = parseSourceStreamId(vodId);
+          vodId = cleanVodId;
 
           const allVodResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
@@ -1936,12 +1932,8 @@ export function createProxyRouter() {
             data = { error: "series_id required" };
             break;
           }
-          let targetSIdx: number | null = null;
-          if (seriesId.includes('_')) {
-            const parts = seriesId.split('_');
-            targetSIdx = parseInt(parts[0]);
-            seriesId = parts.slice(1).join('_');
-          }
+          const { sourceIdx: targetSIdx, id: cleanSeriesId } = parseSourceStreamId(seriesId);
+          seriesId = cleanSeriesId;
 
           const allSourceResults = await Promise.all(playlist.sourceIds.map((sid: string, sourceIdx: number) => limit(async () => {
             if (targetSIdx !== null && targetSIdx !== sourceIdx) return null;
