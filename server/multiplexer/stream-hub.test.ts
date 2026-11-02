@@ -804,6 +804,71 @@ describe('StreamHub', () => {
       expect((fakeDataStream as any).resume).toHaveBeenCalled();
     });
   });
+
+  it('drops a stale pinned-IP snapshot after a full failed rotation and reconnects via DNS', async () => {
+    const failConn = Object.assign(new Error('Socket is closed'), { code: undefined });
+    let callCount = 0;
+    const mockAxios = vi.fn().mockImplementation((config: any) => {
+      callCount++;
+      if (callCount <= 3) return Promise.reject(failConn);
+      const data = new EventEmitter();
+      (data as any).destroy = vi.fn();
+      return Promise.resolve({
+        status: 200,
+        data,
+        request: { setTimeout: vi.fn() },
+      });
+    });
+
+    // Same doMock pattern as the other reconnect tests in this file: a fresh axios
+    // module for every test so earlier mocks cannot bleed into this one.
+    vi.doMock('axios', () => ({
+      default: mockAxios,
+    }));
+    vi.resetModules();
+
+    const stalePinUpstream = new EventEmitter();
+    (stalePinUpstream as any).destroy = vi.fn();
+    const channel = streamHub.registerChannel(
+      'source-stale-pin', '700', 'Rotating Upstream', 'live', 'http://upstream.tv',
+      { data: stalePinUpstream },
+      {},
+      {
+        url: 'http://upstream.tv/live/src_user/src_pass/700.ts',
+        headers: { 'User-Agent': 'test' },
+        candidateIps: ['198.51.100.10', '198.51.100.20'],
+        currentIpIndex: -1,
+      }
+    );
+
+    const subRes: any = new EventEmitter();
+    subRes.setHeader = vi.fn();
+    subRes.write = vi.fn().mockReturnValue(true);
+    streamHub.addSubscriber(channel.channelKey, {
+      id: 'sub-stale-pin', res: subRes, username: 'u', playlistName: 'p', ip: '10.0.0.1', startTime: Date.now(),
+    });
+
+    try {
+      // Two failed rotations walk the full candidate list; snapshot still intact
+      await streamHub.reconnectChannel(channel.channelKey, 'gap 1');
+      expect(channel.upstreamConfig?.candidateIps).toEqual(['198.51.100.10', '198.51.100.20']);
+      await streamHub.reconnectChannel(channel.channelKey, 'gap 2');
+      expect(channel.upstreamConfig?.candidateIps).toEqual(['198.51.100.10', '198.51.100.20']);
+
+      // Third attempt exceeds one full circle → snapshot dropped, no pinned agents
+      await streamHub.reconnectChannel(channel.channelKey, 'gap 3');
+      expect(channel.upstreamConfig?.candidateIps).toBeUndefined();
+      // Success after the drop — reconnect via normal DNS
+      const ok = await streamHub.reconnectChannel(channel.channelKey, 'gap recovered');
+      expect(ok).toBe(true);
+      const call4Config = mockAxios.mock.calls[3][0];
+      expect(call4Config.httpAgent).toBeUndefined();
+      expect(call4Config.httpsAgent).toBeUndefined();
+    } finally {
+      streamHub.reset();
+      vi.resetModules();
+    }
+  });
 });
 
 

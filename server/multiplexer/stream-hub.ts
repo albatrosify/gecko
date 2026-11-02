@@ -399,6 +399,8 @@ class StreamHub {
 
   /** Consecutive failed reconnect attempts per channel, used for backoff. */
   private reconnectRetries = new Map<string, number>();
+  /** Consecutive failed pinned-IP rotations per channel; dropped pool snapshot detection. */
+  private reconnectRotations = new Map<string, number>();
 
   /**
    * Registers a new active upstream channel ingestion pipeline.
@@ -994,9 +996,22 @@ class StreamHub {
       channel.upstreamAgents = undefined;
 
       const candidateIps = channel.upstreamConfig.candidateIps;
+      let targetIp: string | undefined;
       if (candidateIps && candidateIps.length > 0) {
-        let targetIp: string;
-        if (candidateIps.length > 1) {
+        const rotation = (this.reconnectRotations.get(channelKey) ?? 0) + 1;
+        this.reconnectRotations.set(channelKey, rotation);
+        if (rotation > candidateIps.length) {
+          // A full pinned-IP rotation failed without a single success (tracked by
+          // the consecutive rotation counter — the retry backoff timer clears the
+          // separate attempts map between runs). The pin snapshot was captured at
+          // channel registration and can go stale when the provider rotates its
+          // edge IPs — further rotations walk the same dead pool forever. Forget
+          // it and resolve DNS fresh for this and later attempts.
+          delete channel.upstreamConfig.candidateIps;
+          delete channel.upstreamConfig.currentIpIndex;
+          this.reconnectRotations.delete(channelKey);
+          log(`[StreamHub] 🧹 Full pinned-IP rotation failed for ${channelKey} (${candidateIps.length} IP(s)) — dropping stale pin snapshot, reconnecting via normal DNS.`);
+        } else if (candidateIps.length > 1) {
           const currentIpIndex = ((channel.upstreamConfig.currentIpIndex ?? 0) + 1) % candidateIps.length;
           channel.upstreamConfig.currentIpIndex = currentIpIndex;
           targetIp = candidateIps[currentIpIndex];
@@ -1004,7 +1019,9 @@ class StreamHub {
         } else {
           targetIp = candidateIps[0];
         }
-        agents = createIpPinnedAgents(targetIp, extractHostname(channel.upstreamConfig.url).hostname);
+        if (typeof targetIp === 'string') {
+          agents = createIpPinnedAgents(targetIp, extractHostname(channel.upstreamConfig.url).hostname);
+        }
       }
 
       const axios = (await import('axios')).default;
@@ -1042,6 +1059,7 @@ class StreamHub {
       channel.lastMeasuredRate = 0;
       this.bindUpstreamResponse(channel);
       log(`[StreamHub] ✅ In-place reconnect SUCCEEDED for ${channelKey}! Seamlessly resumed stream for ${channel.subscribers.size} subscriber(s).`);
+      this.reconnectRotations.delete(channelKey);
 
       // If a DVR recording is attached to this channel, flag that a timestamp discontinuity occurred
       if (channel.dvrRecordingId) {
@@ -1360,6 +1378,7 @@ class StreamHub {
     }
     channel.subscribers.clear();
     this.reconnectRetries.delete(channelKey);
+    this.reconnectRotations.delete(channelKey);
     clearInterval(channel.pumpTimer);
     channel.buffer.length = 0;
     channel.bufferedBytes = 0;

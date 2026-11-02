@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import http from 'http';
 import { connectDb, getDb } from '../db.ts';
 import { playlists, sources } from '../schema.ts';
+import { eq } from 'drizzle-orm';
 import { streamHub } from '../multiplexer/stream-hub.ts';
 import { proxyStats, streamControllers } from '../proxy-stats.ts';
 import * as dnsResolver from '../dns-resolver.ts';
@@ -468,6 +469,145 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     expect(channel?.upstreamConfig?.currentIpIndex).toBe(1);
 
     abortController.abort();
+    resolveSpy.mockRestore();
+  });
+
+  it('re-resolves DNS and succeeds via a fresh IP when the pinned pool went stale', async () => {
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-stale',
+      userId: 'user-1',
+      name: 'Stale Pool Playlist',
+      username: 'staleuser',
+      password: 'stalepass',
+      sourceIds: ['src-stale'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-stale',
+      userId: 'user-1',
+      name: 'Stale Pool Source',
+      type: 'xtream',
+      url: 'http://stale.nodes.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://stale.nodes.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            resolvedIp: '198.51.100.10',
+            ipCount: 2,
+            resolvedIps: [
+              { ip: '198.51.100.10', latencyMs: 20, healthy: true },
+              { ip: '198.51.100.20', latencyMs: 35, healthy: true },
+            ],
+          },
+        ],
+      } as any,
+    }).run();
+
+    // Simulate the provider rotating its IP pool after the benchmark: every cached
+    // IP hangs in the TLS handshake (Bun: "Socket is closed", no HTTP status).
+    const resolveSpy = vi.spyOn(dnsResolver, 'resolveHostIps').mockResolvedValue(['203.0.113.77']);
+
+    const fakeStream = new EventEmitter();
+    (fakeStream as any).destroy = vi.fn();
+
+    mockAxios
+      .mockRejectedValueOnce(Object.assign(new Error('Socket is closed'), { code: undefined }))
+      .mockResolvedValueOnce({
+        status: 200,
+        data: fakeStream,
+        headers: { 'content-type': 'video/mp2t' },
+        request: { setTimeout: vi.fn() },
+      });
+
+    const abortController = new AbortController();
+    const dataTimer = setInterval(() => {
+      fakeStream.emit('data', Buffer.from('fresh-pool-chunk'));
+    }, 20);
+    try {
+      const res = await fetch(`${baseUrl}/live/staleuser/stalepass/400.ts`, { signal: abortController.signal });
+      expect(res.status).toBe(200);
+
+      // DNS was re-checked with forceRefresh after the connection-class failure
+      expect(resolveSpy).toHaveBeenCalledWith('stale.nodes.tv', true);
+
+      // First call pinned the stale IP, second call the freshly resolved one
+      expect(mockAxios).toHaveBeenCalledTimes(2);
+      expect(inspectAgentIp(mockAxios.mock.calls[0][0].httpAgent, 'stale.nodes.tv')).toBe('198.51.100.10');
+      expect(inspectAgentIp(mockAxios.mock.calls[1][0].httpAgent, 'stale.nodes.tv')).toBe('203.0.113.77');
+
+      // The refreshed pool was persisted into sources.extra.hosts
+      const doc = db.select().from(sources).where(eq(sources.id, 'src-stale')).get();
+      const storedHosts = (doc?.extra as any).hosts as Array<any>;
+      const stored = storedHosts[0];
+      expect(stored.resolvedIp).toBe('203.0.113.77');
+      expect(stored.resolvedIps[0].ip).toBe('203.0.113.77');
+      expect(stored.resolvedIps.map((r: any) => r.ip)).toContain('198.51.100.10');
+    } finally {
+      clearInterval(dataTimer);
+      abortController.abort();
+      resolveSpy.mockRestore();
+    }
+  });
+
+  it('does not re-resolve DNS for HTTP status errors (answers from a living host)', async () => {
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-status',
+      userId: 'user-1',
+      name: 'Status Fail Playlist',
+      username: 'statususer',
+      password: 'statuspass',
+      sourceIds: ['src-status'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-status',
+      userId: 'user-1',
+      name: 'Status Fail Source',
+      type: 'xtream',
+      url: 'http://status.nodes.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://status.nodes.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            resolvedIp: '198.51.100.10',
+            ipCount: 2,
+            resolvedIps: [
+              { ip: '198.51.100.10', latencyMs: 20, healthy: true },
+              { ip: '198.51.100.20', latencyMs: 35, healthy: true },
+            ],
+          },
+        ],
+      } as any,
+    }).run();
+
+    const resolveSpy = vi.spyOn(dnsResolver, 'resolveHostIps').mockResolvedValue(['203.0.113.99']);
+    mockAxios
+      .mockResolvedValueOnce({ status: 503, data: { destroy: vi.fn() } })
+      .mockResolvedValueOnce({ status: 500, data: { destroy: vi.fn() } });
+
+    const res = await fetch(`${baseUrl}/live/statususer/statuspass/500.ts`);
+    expect(res.status).toBe(500);
+
+    // Both stored candidates were tried and no DNS refresh happened: HTTP status
+    // errors mean the host is alive — its DNS entry still points there.
+    expect(mockAxios).toHaveBeenCalledTimes(2);
+    expect(resolveSpy).not.toHaveBeenCalled();
     resolveSpy.mockRestore();
   });
 });

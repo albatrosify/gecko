@@ -443,6 +443,81 @@ const normalizeUrl = (url: string | undefined | null): string => {
 };
 
 /**
+ * Cap for how many resolved IPs we keep per host in `extra.hosts`. Attempts
+ * merge freshly resolved ones before the cached ones so a rotated provider
+ * pool pushes dead entries out of the stored window.
+ */
+const MAX_STORED_RESOLVED_IPS = 10;
+
+/**
+ * True for transport-level failures that can be caused by a stale pinned IP
+ * pool (provider rotated its edge IPs since the last benchmark): the cached
+ * IP may still accept TCP, but the TLS handshake or the stream dies before a
+ * valid HTTP response exists. HTTP status errors are NOT connection-class —
+ * the host answered, so its DNS entry still points at something alive.
+ */
+export function isConnectionClassFailure(err: any): boolean {
+  const code = err?.code ?? err?.cause?.code;
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'EPROTO' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT'
+  ) {
+    return true;
+  }
+  const msg = String(err?.message ?? "");
+  return /socket (is closed|hang up)|connection closed|tls/i.test(msg);
+}
+
+/**
+ * Merge freshly resolved IPs into a source's stored host entry
+ * (`sources.extra.hosts[].resolvedIp/resolvedIps`). Fresh IPs come first;
+ * unique cached entries follow. Called by the proxy when an attempt only
+ * succeeded on an IP that was NOT in the stored pool — the stored list had
+ * outlived the provider's real one and self-heals from now on, without
+ * waiting for the next manual benchmark.
+ */
+export async function mergeFreshHostIps(
+  sourceId: string,
+  hostUrl: string,
+  freshIps: string[],
+  primaryIp: string | null
+): Promise<void> {
+  const db = getDb();
+  const doc = db.select().from(sources).where(eq(sources.id, sourceId)).get();
+  if (!doc) return;
+
+  const extra = (doc.extra as any) || {};
+  const hosts = normalizeHosts(Array.isArray(extra.hosts) ? extra.hosts : [], doc.url, Array.isArray(extra.hosts) ? extra.hosts : []);
+  const target = hosts.find(h => normalizeUrl(h.url) === normalizeUrl(hostUrl));
+  if (!target) return;
+
+  const merged: SourceHostResolvedIp[] = [];
+  const seen = new Set<string>();
+  for (const ip of freshIps) {
+    if (ip && !seen.has(ip)) {
+      seen.add(ip);
+      merged.push({ ip, latencyMs: null, healthy: true });
+    }
+  }
+  for (const entry of target.resolvedIps || []) {
+    if (entry?.ip && !seen.has(entry.ip)) {
+      seen.add(entry.ip);
+      merged.push(entry);
+    }
+  }
+  target.resolvedIp = primaryIp ?? target.resolvedIp ?? null;
+  target.resolvedIps = merged.slice(0, Math.max(1, MAX_STORED_RESOLVED_IPS));
+  target.ipCount = target.resolvedIps.length;
+
+  db.update(sources).set({ extra: { ...extra, hosts } }).where(eq(sources.id, sourceId)).run();
+  log(`[Hosts] Merged ${freshIps.length} freshly resolved IP(s) into stored host ${hostUrl} of source ${sourceId}`);
+}
+
+/**
  * Record a successful or failed proxy use of a host. Buffered in-memory and
  * flushed periodically by initHostStatsFlusher().
  */

@@ -13,7 +13,7 @@ import { requestSourceSync } from "../sync-client.ts";
 import { getCached } from "../cache.ts";
 import { getCachedStreams, getStreamIcon as getCatalogIcon, getStreamRow } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
-import { getActiveHostUrls, recordHostUse } from "../hosts.ts";
+import { getActiveHostUrls, recordHostUse, mergeFreshHostIps, isConnectionClassFailure } from "../hosts.ts";
 import { recordVpnBlock } from "../vpn.ts";
 import { Playlist, StreamMapping, CategoryMapping, SourceHost, Recording } from "../../src/types.ts";
 import { resolveHostIps, createIpPinnedAgents, extractHostname } from "../dns-resolver.ts";
@@ -39,6 +39,13 @@ const limit = pLimit(5);
  * long enough that the retry does not steal the slot from the attempt before it.
  */
 const SLOT_CONFLICT_RETRY_AFTER_S = 5;
+
+/**
+ * Upper bound of freshly resolved IPs appended to an in-flight attempt after a
+ * stale-cache DNS re-check. Bounds the worst case of a fully dead cached pool:
+ * cached candidates plus these are tried, then the host fails over.
+ */
+const MAX_FRESH_IP_RETRIES_PER_HOST = 4;
 
 /**
  * Thumbnail for the dashboard's "Now Playing" card: the catalog icon (channel logo /
@@ -491,6 +498,11 @@ export function createProxyRouter() {
         }
 
         const ipsToTry: (string | undefined)[] = candidateIps.length > 0 ? candidateIps : [undefined];
+        // Stale-pool self-healing state for this host: if the first connection-class
+        // failure looks like a dead cached IP pool, we re-resolve DNS once and append
+        // the freshly seen IPs to `ipsToTry` for the same request.
+        let dnsRecheckDone = false;
+        let dnsRefreshedIps: { freshIps: string[]; appended: string[] } | null = null;
 
         // Behind a CDN every A record is an edge of the *same* origin, so a stalled
         // attempt will stall on the next IP too — each one costing a full handshake
@@ -500,7 +512,10 @@ export function createProxyRouter() {
           || /cloudflare|cloudfront|akamai|fastly|bunny|gcore/i.test(String(matchedHost?.cdnProvider || ''));
 
         let hostSucceeded = false;
-        for (const targetIp of ipsToTry) {
+        // Index loop (not for-of): the catch block below may append freshly resolved
+        // IPs to `ipsToTry` mid-flight and they must be tried in this same request.
+        for (let ipIndex = 0; ipIndex < ipsToTry.length; ipIndex++) {
+          const targetIp = ipsToTry[ipIndex];
           const agents = targetIp ? createIpPinnedAgents(targetIp, extractHostname(hostUrl).hostname) : undefined;
           const destroyAgents = () => {
             try { agents?.http.destroy(); } catch {}
@@ -549,6 +564,18 @@ export function createProxyRouter() {
             log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} (IP: ${targetIp || 'default'}) - ${getClientInfo(req)}`);
             recordHostUse(sourceId, hostUrl, true);
             hostSucceeded = true;
+
+            // Success on a freshly re-resolved IP proves the stored pool was stale
+            // (it outlived the provider's real one). Persist the refreshed list so
+            // the NEXT request starts on current IPs instead of re-burning stale
+            // candidates again.
+            if (dnsRefreshedIps && typeof targetIp === 'string' && dnsRefreshedIps.appended.includes(targetIp)) {
+              try {
+                await mergeFreshHostIps(sourceId, hostUrl, dnsRefreshedIps.freshIps, targetIp);
+              } catch (persistErr: any) {
+                log(`[Proxy] Failed to persist refreshed IP pool for ${hostUrl}: ${persistErr.message}`);
+              }
+            }
 
             // Once upstream headers are received, detach the initial handshake socket timeout
             // so streaming responses are not aborted when downstream clients buffer ahead or pause.
@@ -724,6 +751,38 @@ export function createProxyRouter() {
               log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) timed out; host is CDN-fronted, so the remaining ${ipsToTry.length - 1} edge IP(s) share the same origin — moving to the next host. - ${getClientInfo(req)}`);
               break;
             }
+
+            // Connection-class failure on a host with a benchmark-pinned IP list:
+            // providers rotate their edge IPs while the cached list keeps pointing at
+            // a dead pool (each stale IP accepts TCP, then the handshake/stream dies
+            // before a valid response). Re-resolve DNS once per host and append any
+            // newly seen IPs so this same request still has a chance to succeed.
+            if (
+              !dnsRecheckDone &&
+              matchedHost && Array.isArray(matchedHost.resolvedIps) && matchedHost.resolvedIps.length > 0 &&
+              isConnectionClassFailure(err)
+            ) {
+              dnsRecheckDone = true;
+              try {
+                const refreshHost = extractHostname(hostUrl).hostname;
+                if (refreshHost) {
+                  const freshIps = await resolveHostIps(refreshHost, true);
+                  const known = new Set(ipsToTry.filter((ip): ip is string => typeof ip === 'string'));
+                  const appended = freshIps.filter(ip => !known.has(ip)).slice(0, MAX_FRESH_IP_RETRIES_PER_HOST);
+                  if (appended.length > 0) {
+                    log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) connection failure may be a stale IP pool — re-resolved DNS, trying new IP(s) ${appended.join(', ')} before the remaining cached candidates - ${getClientInfo(req)}`);
+                    // Insert right after the failed one: the cached list as a whole is
+                    // suspect (that is why we re-resolved), so fresh DNS candidates go
+                    // first while the untried cached ones stay as further fallback.
+                    ipsToTry.splice(ipIndex + 1, 0, ...appended);
+                    dnsRefreshedIps = { freshIps, appended };
+                  }
+                }
+              } catch {
+                // Best effort — the regular per-candidate error handling continues.
+              }
+            }
+
             log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) error for ${type}/${streamId}: ${err.message}, trying next candidate IP... - ${getClientInfo(req)}`);
           }
         }
