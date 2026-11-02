@@ -6,7 +6,6 @@ import { getDb, generateId } from '../db.ts';
 import { recordings } from '../schema.ts';
 import { log } from '../logger.ts';
 import { proxyStats } from '../proxy-stats.ts';
-import { connectionArbiter } from './connection-arbiter.ts';
 import { sendTelegramNotification } from '../telegram.ts';
 import { formatBytes } from '../utils.ts';
 import { eq, desc } from 'drizzle-orm';
@@ -139,6 +138,10 @@ class DvrRecorder {
   private recIdToNumericId = new Map<string, number>();
   private repairingIds = new Set<string>();
 
+  getActiveRecordingForSource(sourceId: string): ActiveRecordingSession | undefined {
+    return Array.from(this.sessions.values()).find(s => s.sourceId === sourceId);
+  }
+
   /**
    * Starts recording from an existing live proxy connection (stream tee).
    */
@@ -163,9 +166,9 @@ class DvrRecorder {
 
     const channelKey = conn.channelKey || `${sourceId}:${streamId}`;
 
-    // Acquire lock from arbiter
-    const locked = connectionArbiter.acquireDvrLock(sourceId, streamId, recordingId, streamName);
-    if (!locked) {
+    // Verify source is not locked by a different recording
+    const existingRecording = this.getActiveRecordingForSource(sourceId);
+    if (existingRecording && existingRecording.streamId !== streamId) {
       throw new Error(`The source is already locked by another recording.`);
     }
 
@@ -423,7 +426,8 @@ class DvrRecorder {
     const session = this.sessions.get(recordingId);
     if (!session) return false;
 
-    if (!connectionArbiter.acquireDvrLock(sourceId, String(streamId), recordingId, streamName)) {
+    const existing = this.getActiveRecordingForSource(sourceId);
+    if (existing && existing.recordingId !== recordingId && existing.streamId !== String(streamId)) {
       session.attachError = 'The source is already locked by another recording.';
       log(`[DVR] Refused manual recording ${recordingId}: source ${sourceId} already locked by another recording.`);
       return false;
@@ -461,7 +465,6 @@ class DvrRecorder {
     this.connToRecording.delete(session.connId);
     if (session.sourceId) {
       this.connToRecording.delete(`${session.sourceId}:${session.streamId}`);
-      connectionArbiter.releaseDvrLock(session.sourceId, recordingId);
       try {
         const { streamHub } = await import('../multiplexer/stream-hub.ts');
         streamHub.detachDvr(session.sourceId, session.streamId);
@@ -574,9 +577,6 @@ class DvrRecorder {
       await new Promise<void>((resolve) => {
         session.writeStream.end(() => resolve());
       });
-
-      // Release arbiter lock
-      connectionArbiter.releaseDvrLock(session.sourceId, recordingId);
 
       // Detach from StreamHub if channel was multiplexed
       try {

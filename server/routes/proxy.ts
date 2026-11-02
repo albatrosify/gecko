@@ -436,8 +436,6 @@ export function createProxyRouter() {
             sourceId,
             streamId: guardDecision.activeStreamId || '',
             streamName: guardDecision.activeStreamName,
-            recordingId: '',
-            lockedAt: Date.now(),
           },
           originalId,
           streamName,

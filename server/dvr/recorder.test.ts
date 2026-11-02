@@ -3,7 +3,6 @@ import { PassThrough } from 'stream';
 import { dvrRecorder, formatDuration } from './recorder.ts';
 import { formatBytes } from '../utils.ts';
 import { proxyStats } from '../proxy-stats.ts';
-import { connectionArbiter } from './connection-arbiter.ts';
 import axios from 'axios';
 
 vi.mock('axios', () => ({
@@ -44,7 +43,6 @@ vi.mock('../db.ts', () => ({
 describe('DvrRecorder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    connectionArbiter.reset();
     proxyStats.connections.clear();
   });
 
@@ -76,9 +74,9 @@ describe('DvrRecorder', () => {
     expect(recording.streamName).toBe('Das Erste HD');
     expect(dvrRecorder.isRecordingConnection(connId)).toBe(true);
 
-    // Arbiter should hold lock
-    expect(connectionArbiter.getSourceLock('source-1')).toBeDefined();
-    expect(connectionArbiter.getSourceLock('source-1')?.streamId).toBe('100');
+    // Active recording should be registered
+    expect(dvrRecorder.getActiveRecordingForSource('source-1')).toBeDefined();
+    expect(dvrRecorder.getActiveRecordingForSource('source-1')?.streamId).toBe('100');
   });
 
   it('triggers handover when downstream disconnects', async () => {
@@ -111,12 +109,12 @@ describe('DvrRecorder', () => {
     } as any);
 
     await dvrRecorder.startLiveRecordingFromConnection(connId, 'user-1');
-    expect(connectionArbiter.getSourceLock('source-3')).toBeDefined();
+    expect(dvrRecorder.getActiveRecordingForSource('source-3')).toBeDefined();
 
     const stopped = await dvrRecorder.stopRecording('rec-test-123');
     expect(stopped.status).toBe('completed');
     expect(dvrRecorder.isRecordingConnection(connId)).toBe(false);
-    expect(connectionArbiter.getSourceLock('source-3')).toBeUndefined();
+    expect(dvrRecorder.getActiveRecordingForSource('source-3')).toBeUndefined();
   });
 
   it('starts a server-side channel recording and attaches to the opened channel', async () => {
@@ -142,11 +140,11 @@ describe('DvrRecorder', () => {
     expect(recording.status).toBe('recording');
     expect(recording.sourceId).toBe('source-manual');
     expect(recording.streamName).toBe('Sport HD');
-    expect(connectionArbiter.getSourceLock('source-manual')?.streamId).toBe('100');
+    expect(dvrRecorder.getActiveRecordingForSource('source-manual')?.streamId).toBe('100');
 
     const stopped = await dvrRecorder.stopRecording('rec-test-123');
     expect(stopped.status).toBe('completed');
-    expect(connectionArbiter.getSourceLock('source-manual')).toBeUndefined();
+    expect(dvrRecorder.getActiveRecordingForSource('source-manual')).toBeUndefined();
     expect(dvrRecorder.getRecordingById('rec-test-123')).toBeNull();
   });
 

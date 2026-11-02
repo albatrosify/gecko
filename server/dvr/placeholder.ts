@@ -3,10 +3,15 @@ import path from 'path';
 import express from 'express';
 import { spawn, type ChildProcess } from 'child_process';
 import { log } from '../logger.ts';
-import { DvrSourceLock } from './connection-arbiter.ts';
 import { generateId } from '../db.ts';
 import { proxyStats, registerStreamController, unregisterStreamController } from '../proxy-stats.ts';
 import { recordTraffic } from '../traffic.ts';
+
+export interface PlaceholderLockInfo {
+  sourceId: string;
+  streamId?: string;
+  streamName?: string;
+}
 
 const PLACEHOLDER_PATH = path.join(process.cwd(), 'assets', 'placeholder.mp4');
 
@@ -19,7 +24,7 @@ const PLACEHOLDER_PATH = path.join(process.cwd(), 'assets', 'placeholder.mp4');
 export function servePlaceholderStream(
   req: express.Request,
   res: express.Response,
-  lock: DvrSourceLock,
+  lock: PlaceholderLockInfo,
   requestedStreamId: string,
   streamName?: string,
   playlistName?: string,
