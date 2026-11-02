@@ -101,7 +101,6 @@ import {
 import cronstrue from 'cronstrue';
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -137,9 +136,7 @@ Respond with ONLY a JSON object in this exact format and nothing else:
 {"results":[{"id":"<id>","name":"<cleaned name>"}]}`;
 
 
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+const cn = twMerge;
 
 function formatElapsedSince(startTime: number): string {
   const s = Math.floor((Date.now() - startTime) / 1000);
@@ -345,7 +342,7 @@ function VpnStatusBar() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition disabled:opacity-50"
               title="Disconnect and reconnect VPN via Gluetun to get a new IP address"
             >
-              <RefreshCw size={12} className={clsx(rotating && "animate-spin text-emerald-400", !rotating && "text-zinc-400")} />
+              <RefreshCw size={12} className={cn(rotating && "animate-spin text-emerald-400", !rotating && "text-zinc-400")} />
               <span>{rotating ? "Rotating..." : "Rotate VPN"}</span>
             </button>
           </div>
@@ -1933,7 +1930,7 @@ export function SourceManager() {
                       <span>Expiry Date</span>
                     </div>
                     <div className="flex items-baseline gap-1.5 flex-wrap">
-                      <p className={clsx(
+                      <p className={cn(
                         "text-xs font-semibold",
                         expiryInfo.status === 'expired' ? "text-red-400 font-bold" :
                         expiryInfo.status === 'expiring_soon' ? "text-amber-400 font-bold" :
@@ -1943,7 +1940,7 @@ export function SourceManager() {
                         {expiryInfo.text}
                       </p>
                       {expiryInfo.relativeText && (
-                        <span className={clsx(
+                        <span className={cn(
                           "text-[10px] font-medium italic",
                           expiryInfo.status === 'expired' ? "text-red-400/80" :
                           expiryInfo.status === 'expiring_soon' ? "text-amber-400/80" :
@@ -1993,7 +1990,7 @@ export function SourceManager() {
                     <div className="flex items-center gap-2">
                       <Radio size={11} className={source.lastMonitorStatus === 'external_activity' ? 'text-red-400 animate-pulse' : (source.lastActiveCons || 0) > 0 ? 'text-blue-400' : 'text-emerald-400'} />
                       <span className="text-[10px] text-zinc-400 font-medium">Monitor:</span>
-                      <span className={clsx(
+                      <span className={cn(
                         "text-[10px] font-bold",
                         source.lastMonitorStatus === 'external_activity' ? "text-red-400 font-black" :
                         (source.lastActiveCons || 0) > 0 ? "text-blue-400" :
@@ -2070,7 +2067,7 @@ export function SourceManager() {
                             return (
                               <tr
                                 key={`${h.url}-${idx}`}
-                                className={clsx(
+                                className={cn(
                                   "transition-colors hover:bg-zinc-900/40",
                                   isActive && "bg-emerald-500/[0.04]"
                                 )}
@@ -2104,7 +2101,7 @@ export function SourceManager() {
                                 <td className="py-1.5 px-2 whitespace-nowrap font-sans">
                                   {isCdn ? (
                                     <span
-                                      className={clsx(
+                                      className={cn(
                                         "inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold border",
                                         cdnName.toLowerCase().includes('cloudflare')
                                           ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
@@ -2147,7 +2144,7 @@ export function SourceManager() {
                                       Down
                                     </span>
                                   ) : h.latencyMs != null ? (
-                                    <span className={clsx(
+                                    <span className={cn(
                                       "font-semibold text-xs",
                                       h.latencyMs < 100 ? "text-emerald-400" :
                                       h.latencyMs < 200 ? "text-amber-400" : "text-rose-400"
@@ -2169,7 +2166,7 @@ export function SourceManager() {
                                 </td>
                                 <td className="py-1.5 px-2.5 text-right whitespace-nowrap">
                                   {reliability != null ? (
-                                    <span className={clsx(
+                                    <span className={cn(
                                       "font-semibold text-xs",
                                       reliability >= 90 ? "text-emerald-400" :
                                       reliability >= 70 ? "text-amber-400" : "text-rose-400"
@@ -2351,7 +2348,7 @@ export function SourceManager() {
                           onChange={e => handleUpdateHost(idx, 'url', e.target.value)}
                         />
                         {h.url && (
-                          <span className={clsx(
+                          <span className={cn(
                             "px-1.5 py-0.5 rounded text-[9px] font-bold border shrink-0",
                             (h.networkType === 'cdn' || h.url.includes('cf.') || h.cdnProvider)
                               ? (h.cdnProvider || (h.url.includes('cf.') ? 'Cloudflare' : '')).toLowerCase().includes('cloudflare')
@@ -2661,7 +2658,7 @@ export function SourceManager() {
               <button
                 type="button"
                 onClick={() => setFilter4kOnly(!filter4kOnly)}
-                className={clsx(
+                className={cn(
                   "px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 border flex items-center gap-1.5 cursor-pointer",
                   filter4kOnly
                     ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
@@ -2998,7 +2995,7 @@ export function SourceManager() {
                     <div className="text-[10px] text-zinc-500">proxied streams</div>
                   </div>
 
-                  <div className={clsx(
+                  <div className={cn(
                     "border rounded-xl p-2.5 space-y-0.5",
                     hasAlert 
                       ? "bg-red-500/10 border-red-500/30 text-red-400" 
@@ -3008,7 +3005,7 @@ export function SourceManager() {
                       {hasAlert && <AlertTriangle size={10} className="text-red-400" />}
                       <span className={hasAlert ? "text-red-400" : "text-zinc-500"}>External</span>
                     </div>
-                    <div className={clsx("text-base font-black", hasAlert ? "text-red-400" : "text-emerald-400")}>
+                    <div className={cn("text-base font-black", hasAlert ? "text-red-400" : "text-emerald-400")}>
                       {extStreams}
                     </div>
                     <div className="text-[10px] text-zinc-500">
@@ -3066,7 +3063,7 @@ export function SourceManager() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setConnFilter('all')}
-                  className={clsx(
+                  className={cn(
                     "px-3 py-1 rounded-xl text-xs font-bold transition-all",
                     connFilter === 'all' 
                       ? "bg-zinc-100 text-zinc-950" 
@@ -3077,7 +3074,7 @@ export function SourceManager() {
                 </button>
                 <button
                   onClick={() => setConnFilter('active')}
-                  className={clsx(
+                  className={cn(
                     "px-3 py-1 rounded-xl text-xs font-bold transition-all",
                     connFilter === 'active' 
                       ? "bg-blue-500 text-white" 
@@ -3088,7 +3085,7 @@ export function SourceManager() {
                 </button>
                 <button
                   onClick={() => setConnFilter('external')}
-                  className={clsx(
+                  className={cn(
                     "px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1",
                     connFilter === 'external' 
                       ? "bg-red-500 text-white" 
@@ -3136,7 +3133,7 @@ export function SourceManager() {
                   return filtered.map((log) => (
                     <div 
                       key={log.id}
-                      className={clsx(
+                      className={cn(
                         "p-3 rounded-2xl border transition-all flex items-center justify-between text-xs",
                         log.isExternal
                           ? "bg-red-500/5 border-red-500/20 text-zinc-200"
@@ -3146,7 +3143,7 @@ export function SourceManager() {
                       )}
                     >
                       <div className="flex items-center gap-3">
-                        <div className={clsx(
+                        <div className={cn(
                           "p-2 rounded-xl shrink-0",
                           log.isExternal ? "bg-red-500/10 text-red-400" :
                           log.activeCons > 0 ? "bg-blue-500/10 text-blue-400" :
@@ -3156,7 +3153,7 @@ export function SourceManager() {
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className={clsx(
+                            <span className={cn(
                               "font-bold",
                               log.isExternal ? "text-red-400" :
                               log.activeCons > 0 ? "text-blue-400" :
@@ -3447,7 +3444,7 @@ function LiveBufferSettingsCard() {
               type="button"
               disabled={saving || loading}
               onClick={() => handleSave(p.value)}
-              className={clsx(
+              className={cn(
                 "p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1",
                 bufferSeconds === p.value
                   ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
@@ -3652,7 +3649,7 @@ function VpnSettingsCard() {
             </div>
             <div className="min-w-0">
               <span className="text-[10px] text-zinc-500 uppercase font-semibold block">Tunnel Status</span>
-              <span className={clsx(
+              <span className={cn(
                 "font-mono font-bold capitalize text-xs block truncate",
                 vpnStatus?.status === 'running' ? 'text-emerald-400' : 'text-zinc-400'
               )}>
@@ -5473,14 +5470,14 @@ export function PlaylistEditor() {
                 const expiryInfo = formatExpiryDate(source.expiryDate);
                 const isSelected = playlist.sourceIds.includes(source.id);
                 return (
-                  <label key={source.id} className={clsx(
+                  <label key={source.id} className={cn(
                     "flex items-center justify-between p-2.5 px-3 rounded-xl border cursor-pointer transition-all",
                     isSelected 
                       ? "bg-emerald-500/5 border-emerald-500/40 hover:border-emerald-500/60" 
                       : "bg-zinc-950/80 border-zinc-800/80 hover:border-zinc-700"
                   )}>
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={clsx(
+                      <div className={cn(
                         "w-4 h-4 rounded border flex items-center justify-center transition-all shrink-0", 
                         isSelected ? "bg-emerald-500 border-emerald-500" : "border-zinc-700 bg-zinc-900"
                       )}>
@@ -5700,7 +5697,7 @@ export function PlaylistEditor() {
 
           <button
             onClick={() => setIsCategorySidebarOpen(v => !v)}
-            className={clsx(
+            className={cn(
               "px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 text-xs font-semibold shrink-0 min-h-[34px] cursor-pointer",
               isCategorySidebarOpen 
                 ? "bg-white/[0.1] text-white border-white/[0.12]" 
@@ -7211,7 +7208,7 @@ function TabButton({ active, onClick, label }: { active: boolean; onClick: () =>
   return (
     <button 
       onClick={onClick}
-      className={clsx(
+      className={cn(
         "px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer min-h-[30px]",
         active 
           ? "bg-white/[0.12] text-white shadow-sm font-bold" 
