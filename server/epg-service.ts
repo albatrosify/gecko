@@ -4,11 +4,13 @@ import zlib from "zlib";
 import { promisify } from "util";
 import axios from "axios";
 import type { Request, Response } from "express";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "./db.ts";
 import { log } from "./logger.ts";
 import { proxyXmlIcons } from "./utils.ts";
 import { measureSync } from "./event-loop-monitor.ts";
 import { requestEpgBuild } from "./sync-client.ts";
+import { mappings as schemaMappings, streams as schemaStreams } from "./schema.ts";
 import type { Playlist } from "../src/types.ts";
 
 const gunzipAsync = promisify(zlib.gunzip);
@@ -157,6 +159,134 @@ export async function servePlaylistEpg(req: Request, res: Response, playlist: Pl
 }
 
 /**
+ * Parsed top-level XMLTV blocks of a single source feed.
+ */
+interface ParsedSourceTv {
+  /** channel id -> first `<channel>` block defined by this source */
+  channels: Map<string, string>;
+  /** channel id -> `<programme>` blocks in encounter order */
+  programmes: Map<string, string[]>;
+}
+
+/**
+ * Single-pass parse of one source's top-level XMLTV blocks. Runs exclusively in
+ * the sync worker (background role), so linear scans over very large strings are
+ * acceptable; the serving process never runs this.
+ */
+export function parseTvBlocks(xml: string): ParsedSourceTv {
+  const startTag = xml.indexOf('<tv');
+  let src = xml;
+  if (startTag !== -1) {
+    const start = xml.indexOf('>', startTag) + 1;
+    const end = xml.lastIndexOf('</tv>');
+    if (start > 0 && end > start) src = xml.slice(start, end);
+  }
+
+  const channels = new Map<string, string>();
+  const programmes = new Map<string, string[]>();
+  let pos = 0;
+  const len = src.length;
+  while (pos < len) {
+    const chIdx = src.indexOf('<channel', pos);
+    const prIdx = src.indexOf('<programme', pos);
+    if (chIdx === -1 && prIdx === -1) break;
+    const isChannel = chIdx !== -1 && (prIdx === -1 || chIdx < prIdx);
+    const tagStart = isChannel ? chIdx : prIdx;
+
+    const openEnd = src.indexOf('>', tagStart);
+    const openTag = openEnd === -1 ? src.slice(tagStart) : src.slice(tagStart, openEnd + 1);
+    const selfClosing = /\/>\s*$/.test(openTag);
+    const endTag = isChannel ? '</channel>' : '</programme>';
+    const closeIdx = selfClosing ? openEnd : src.indexOf(endTag, openEnd + 1);
+    const blockEnd = selfClosing ? openEnd + 2 : (closeIdx === -1 ? len : closeIdx + endTag.length);
+    const block = src.slice(tagStart, blockEnd);
+    pos = blockEnd;
+
+    if (isChannel) {
+      const id = block.match(/\bid="([^"]*)"/)?.[1] ?? '';
+      if (id && !channels.has(id)) channels.set(id, block);
+    } else {
+      const channelId = block.match(/\bchannel="([^"]*)"/)?.[1] ?? '';
+      if (channelId) {
+        const list = programmes.get(channelId);
+        if (list) list.push(block);
+        else programmes.set(channelId, [block]);
+      }
+    }
+  }
+  return { channels, programmes };
+}
+
+/**
+ * A playlist channel's EPG binding: which XMLTV channel id it plays against and
+ * where the definition should come from.
+ */
+interface ChannelBinding {
+  id: string;
+  /** `true` = user override from the UI (mappings.epgMapping), false = upstream default */
+  fromOverride: boolean;
+  /** name of the EPG source the override was picked from (stored in the mapping) */
+  ownerSourceName?: string;
+}
+
+/**
+ * Resolves the effective EPG binding for every exported live channel of a
+ * playlist:
+ * - Manual override (`mappings.epgMapping`) wins — that is the "fix wrong
+ *   entries / add missing ones" layer.
+ * - Otherwise the upstream's own pairing (`streams.epgChannelId`) applies —
+ *   "Use upstream EPG" behavior. If the upstream has no pairing, the channel
+ *   stays unbound (no automatic fallback to the other EPG docs, by design).
+ * Channels hidden by a mapping are excluded.
+ */
+export function collectPlaylistEpgBindings(playlist: Playlist): ChannelBinding[] {
+  const db = getDb();
+  const sourceIds = (Array.isArray((playlist as any).sourceIds) ? (playlist as any).sourceIds : []) as string[];
+  if (!sourceIds.length) return [];
+
+  // Manual overrides, keyed `${sourceIdx}_${originalId}` (older rows without
+  // sourceIdx additionally match the unprefixed form).
+  const overridesByKey = new Map<string, any>();
+  const mappingRows = db.select().from(schemaMappings).where(eq(schemaMappings.playlistId, playlist.id)).all();
+  for (const m of mappingRows) {
+    if (m.type !== 'live') continue;
+    let extra: any = {};
+    try { extra = JSON.parse((m.extra as any) || '{}'); } catch { /* tolerate bad rows */ }
+    if (extra?.sourceIdx !== undefined && extra?.sourceIdx !== null) {
+      overridesByKey.set(`${extra.sourceIdx}_${m.originalId}`, extra);
+    }
+    overridesByKey.set(`_${m.originalId}`, extra);
+  }
+
+  const bindings: ChannelBinding[] = [];
+  const seen = new Set<string>();
+  const streamRows = db.select({
+    sourceId: schemaStreams.sourceId,
+    streamId: schemaStreams.streamId,
+    epgChannelId: schemaStreams.epgChannelId,
+  }).from(schemaStreams)
+    .where(and(inArray(schemaStreams.sourceId, sourceIds), eq(schemaStreams.type, 'live')))
+    .all();
+  for (const st of streamRows) {
+    const sourceIdx = sourceIds.indexOf(st.sourceId);
+    const ov = overridesByKey.get(`${sourceIdx}_${st.streamId}`);
+    if (ov?.hidden) continue; // hidden channels are not exported
+    let id = String(ov?.epgMapping ?? '').trim();
+    let fromOverride = id.length > 0;
+    if (!id) {
+      id = String(st.epgChannelId ?? '').trim();
+      if (!id) continue; // no upstream pairing either → intentionally unbound
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const binding: ChannelBinding = { id, fromOverride };
+    if (fromOverride && ov?.epgSource) binding.ownerSourceName = String(ov.epgSource);
+    bindings.push(binding);
+  }
+  return bindings;
+}
+
+/**
  * Refreshes or builds the EPG cache for a given playlist.
  * Deduplicates concurrent requests for the same playlist.
  */
@@ -212,7 +342,10 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
     }
   };
 
-  const xmlParts: string[] = [];
+  // Each fetched feed keeps its title so channel definitions can be resolved by
+  // owner later: custom EPG docs by their name, upstream XMLTVs as
+  // `Upstream: <sourceName>` (the same labels the UI stores in mappings.epgSource).
+  const sourceData: { title: string; xml: string; isUpstream: boolean }[] = [];
   const fetchPromises: Promise<void>[] = [];
 
   const { epgs: schemaEpgs, sources: schemaSources } = await import('./schema.ts');
@@ -226,7 +359,7 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
     for (const epgDoc of epgDocs) {
       if (!epgDoc.url) continue;
       fetchPromises.push(fetchXml(epgDoc.url).then((xml) => {
-        if (xml) xmlParts.push(xml);
+        if (xml) sourceData.push({ title: epgDoc.name, xml, isUpstream: false });
       }));
     }
   }
@@ -249,7 +382,7 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
     const upstreamEpgUrl = `${sourceRow.url}/xmltv.php?username=${encodeURIComponent(effectiveUsername)}&password=${encodeURIComponent(effectivePassword || '')}`;
     log(`[EPG] Fetching upstream EPG: ${sourceRow.url}/xmltv.php`);
     fetchPromises.push(fetchXml(upstreamEpgUrl).then((xml) => {
-      if (xml) xmlParts.push(xml);
+      if (xml) sourceData.push({ title: `Upstream: ${sourceRow.name || sourceRow.id}`, xml, isUpstream: true });
     }));
   }
 
@@ -257,43 +390,64 @@ export async function buildEpgCache(playlist: Playlist, imgBase: string): Promis
   await yieldLoop();
 
   // Defensive guard: if sources were expected but all failed, do not overwrite a valid existing cache
-  if (!xmlParts.length && expectedSourcesCount > 0 && fs.existsSync(cachePath)) {
+  if (!sourceData.length && expectedSourcesCount > 0 && fs.existsSync(cachePath)) {
     throw new Error(`All ${expectedSourcesCount} EPG sources failed to fetch; preserving existing cache.`);
   }
 
-  let finalXml = '';
-  if (!xmlParts.length) {
-    finalXml = '<?xml version="1.0" encoding="UTF-8"?>\n<tv></tv>';
-  } else if (xmlParts.length === 1) {
-    finalXml = measureSync('epg:proxy-icons', () => proxyXmlIcons(xmlParts[0], imgBase));
-  } else {
-    const extractInnerTv = (xml: string): string => {
-      const startTag = xml.indexOf('<tv');
-      if (startTag === -1) return '';
-      const start = xml.indexOf('>', startTag) + 1;
-      const end = xml.lastIndexOf('</tv>');
-      if (start > 0 && end > start) {
-        const inner = xml.slice(start, end);
-        return proxyXmlIcons(inner, imgBase);
-      }
-      return '';
-    };
+  // Playlist-scoped assembly instead of a blind merge: resolve what every exported
+  // channel is bound to (manual override first, else the upstream pairing), take
+  // channel + programme definitions from the owning source, and drop every channel
+  // (and its programmes) that the playlist does not export. This keeps the output
+  // unique per channel id and orders of magnitude smaller for players.
+  const bindings = collectPlaylistEpgBindings(playlist);
+  const parsedSources = measureSync('epg:assemble', () => sourceData.map(s => ({ title: s.title, tv: parseTvBlocks(s.xml) })));
+  const inputChannelCount = parsedSources.reduce((n, p) => n + p.tv.channels.size, 0);
+  const upstreamTitles = new Set(sourceData.filter(s => s.isUpstream).map(s => s.title));
 
-    const mergedChunks: string[] = ['<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n'];
-    for (let i = 0; i < xmlParts.length; i++) {
-      mergedChunks.push(extractInnerTv(xmlParts[i]));
-      if (i < xmlParts.length - 1) mergedChunks.push('\n');
-      xmlParts[i] = "";
-      await yieldLoop();
+  const inner: string[] = [];
+  let emittedChannels = 0;
+  let emittedProgrammes = 0;
+  let unboundChannels = 0;
+  for (const binding of bindings) {
+    let owner: { title: string; tv: ParsedSourceTv } | undefined;
+    const hasId = (p: { tv: ParsedSourceTv }) => p.tv.channels.has(binding.id);
+    if (binding.fromOverride) {
+      if (binding.ownerSourceName) {
+        owner = parsedSources.find(p => p.title === binding.ownerSourceName);
+      }
+      // Override definition missing in its source (renamed doc etc.) → any
+      // source that defines the id; EPG docs take priority over upstream.
+      if (!owner || !hasId(owner)) {
+        owner = parsedSources.find(p => !upstreamTitles.has(p.title) && hasId(p))
+          ?? parsedSources.find(hasId);
+      }
+    } else {
+      // Default: exactly the upstream pairing. No fallback to other docs —
+      // those only apply through manual mappings (the override layer).
+      owner = parsedSources.find(p => upstreamTitles.has(p.title) && hasId(p));
+      if (!owner) unboundChannels++;
     }
-    mergedChunks.push('\n</tv>');
-    finalXml = measureSync('epg:assemble', () => mergedChunks.join(''));
+
+    const channelBlock = owner?.tv.channels.get(binding.id);
+    if (!channelBlock) continue;
+    inner.push(channelBlock, '\n');
+    emittedChannels++;
+    const progs = owner!.tv.programmes.get(binding.id) ?? [];
+    for (const prog of progs) {
+      inner.push(prog, '\n');
+      emittedProgrammes++;
+    }
+    await yieldLoop();
   }
+  sourceData.length = 0; // free the raw feeds before the assembly phase
+
+  const finalXml = measureSync('epg:proxy-icons', () =>
+    `${'<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n'}${proxyXmlIcons(inner.join(''), imgBase)}\n</tv>`);
 
   await yieldLoop();
   const compressed = await gzipAsync(measureSync('epg:to-buffer', () => Buffer.from(finalXml, 'utf-8')));
   const tempPath = `${cachePath}.tmp.${Date.now()}`;
   await fs.promises.writeFile(tempPath, compressed);
   await fs.promises.rename(tempPath, cachePath);
-  log(`[EPG] Cache successfully generated and saved for playlist ${playlist.name || playlist.id} (${(compressed.length / 1024 / 1024).toFixed(2)} MB gzipped)`);
+  log(`[EPG] Cache generated for playlist ${playlist.name || playlist.id}: ${emittedChannels}/${bindings.length} binding(s) emitted (${emittedProgrammes} programmes, ${unboundChannels} unbound upstream pairings), ${inputChannelCount} input channel defs filtered down to the exported set (${(compressed.length / 1024).toFixed(0)} KB gzipped)`);
 }

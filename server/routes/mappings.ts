@@ -4,12 +4,45 @@ import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { eq, inArray, and } from 'drizzle-orm';
 import { mappings as schemaMappings, categoryMappings as schemaCategoryMappings, playlists as schemaPlaylists } from '../schema.ts';
+import { clearEpgCache, refreshPlaylistEpg } from '../epg-service.ts';
+import { getBaseUrl } from '../utils.ts';
+import type { Playlist } from '../../src/types.ts';
 
 class ForbiddenError extends Error {
   constructor(message = "Access denied") {
     super(message);
     this.name = "ForbiddenError";
   }
+}
+
+/**
+ * Mapping edits change the playlist-scoped EPG assembly (override vs upstream
+ * pairing, hidden state, filtered channel set). Debounced rebuild so rapid
+ * edit storms (e.g. UI auto-match with hundreds of updates) collapse into one
+ * build; the ready cache replaces the old one atomically in the sync worker.
+ */
+const EPG_REBUILD_DEBOUNCE_MS = 20_000;
+const epgRebuildTimers = new Map<string, NodeJS.Timeout>();
+function scheduleEpgRebuildForPlaylist(playlistId: string, req: AuthRequest): void {
+  if (!playlistId) return;
+  const existing = epgRebuildTimers.get(playlistId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    epgRebuildTimers.delete(playlistId);
+    void (async () => {
+      try {
+        await clearEpgCache(playlistId);
+        const db = getDb();
+        const pl = db.select().from(schemaPlaylists).where(eq(schemaPlaylists.id, playlistId)).get();
+        if (!pl) return;
+        const playlist = { ...pl, ...(pl.extra as any || {}) } as any as Playlist;
+        await refreshPlaylistEpg(playlist, getBaseUrl(req));
+      } catch (err: any) {
+        log(`[Mappings] Deferred EPG rebuild failed for playlist ${playlistId}: ${err.message}`);
+      }
+    })();
+  }, EPG_REBUILD_DEBOUNCE_MS);
+  timer.unref?.();
 }
 
 function verifyPlaylistOwnership(db: any, playlistId: string, userId: string, role?: string): boolean {
@@ -55,6 +88,7 @@ export function createMappingsRouter() {
       const newId = generateId();
       const strOriginalId = String(originalId);
       db.insert(schemaMappings).values({ id: newId, playlistId, type, originalId: strOriginalId, extra }).run();
+      scheduleEpgRebuildForPlaylist(playlistId, req);
       res.status(201).json({ id: newId, playlistId, type, originalId: strOriginalId, ...extra });
     } catch (e: any) {
       log(`Failed to insert mapping: ${e.message}`);
@@ -91,6 +125,7 @@ export function createMappingsRouter() {
         extra: { ...(doc.extra as any || {}), ...extra }
       }).where(eq(schemaMappings.id, req.params.id)).run();
 
+      scheduleEpgRebuildForPlaylist(playlistId !== undefined ? playlistId : doc.playlistId, req);
       res.json({ success: true });
     } catch (e: any) {
       log(`Failed to update mapping: ${e.message}`);
@@ -223,6 +258,7 @@ export function createMappingsRouter() {
           }
         }
       });
+      for (const pid of playlistIds) scheduleEpgRebuildForPlaylist(pid, req);
       res.json({ success: true, count: updates.length });
     } catch (err: any) {
       if (err instanceof ForbiddenError || err?.message === "Access denied") {
@@ -242,6 +278,7 @@ export function createMappingsRouter() {
         return res.status(403).json({ error: "Access denied" });
       }
       db.delete(schemaMappings).where(eq(schemaMappings.id, req.params.id)).run();
+      scheduleEpgRebuildForPlaylist(doc.playlistId, req);
       res.json({ success: true });
     } catch (err: any) {
       log(`Failed to delete mapping: ${err?.message || err}`);
@@ -492,6 +529,11 @@ export function createMappingsRouter() {
           tx.update(schemaMappings).set({ extra }).where(eq(schemaMappings.id, doc.id)).run();
         }
       });
+      const resetPlaylistIds = new Set<string>();
+      for (const doc of getDb().select().from(schemaMappings).where(inArray(schemaMappings.id, ids)).all()) {
+        resetPlaylistIds.add(doc.playlistId);
+      }
+      for (const pid of resetPlaylistIds) scheduleEpgRebuildForPlaylist(pid, req);
 
       res.json({ success: true, count: ids.length });
     } catch (err: any) {

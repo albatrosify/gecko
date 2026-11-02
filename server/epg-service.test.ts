@@ -12,9 +12,14 @@ import {
   streamEpgFile,
   servePlaylistEpg,
   refreshPlaylistEpg,
+  buildEpgCache,
+  parseTvBlocks,
+  collectPlaylistEpgBindings,
   EPG_CACHE_FRESH_MS,
   EPG_CACHE_MAX_AGE_MS
 } from './epg-service.ts';
+import { connectDb, getDb } from './db.ts';
+import { epgs as schemaEpgs, sources as schemaSources, mappings as schemaMappings, streams as schemaStreams } from './schema.ts';
 import type { Playlist } from '../src/types.ts';
 
 vi.mock('axios');
@@ -159,5 +164,144 @@ describe('EPG Service & Disk Caching', () => {
 
     await clearEpgCache();
     expect(fs.existsSync(p2)).toBe(false);
+  });
+
+  describe('buildEpgCache – playlist-scoped assembly', () => {
+    it('emits only playlist-exported channels; overrides win, upstream pairings stay default', async () => {
+      process.env.SQLITE_PATH = ':memory:';
+      await connectDb();
+      const db = getDb();
+      db.insert(schemaEpgs).values({ id: 'epg-de', userId: 'user-1', name: 'IPTV-EPG Germany', url: 'https://epg-de.test/xmltv', extra: { enabled: true } }).run();
+      db.insert(schemaSources).values({
+        id: 'src-up',
+        userId: 'user-1',
+        name: 'Strong',
+        type: 'xtream',
+        url: 'http://up.test',
+        username: 'u',
+        password: 'p',
+        autoSyncEnabled: false,
+        extra: { useUpstreamEpg: true },
+      } as any).run();
+      const now = Date.now();
+      const streams = [
+        { sourceId: 'src-up', type: 'live', streamId: '1025123', name: 'PROSIEBEN FHD', epgChannelId: null, updatedAt: now },   // override
+        { sourceId: 'src-up', type: 'live', streamId: '480050', name: 'PROSIEBEN 4K', epgChannelId: 'Pro7.de', updatedAt: now }, // upstream default
+        { sourceId: 'src-up', type: 'live', streamId: '480051', name: 'NO PAIRING', epgChannelId: null, updatedAt: now },        // unbound by design
+        { sourceId: 'src-up', type: 'live', streamId: '480052', name: 'HIDDEN', epgChannelId: 'ZDF.de', updatedAt: now },        // hidden → excluded
+      ];
+      for (const s of streams) db.insert(schemaStreams).values(s as any).run();
+      db.insert(schemaMappings).values({
+        id: 'm-override',
+        playlistId: 'pl-epg-res',
+        type: 'live',
+        originalId: '1025123',
+        extra: JSON.stringify({ epgMapping: 'ProSieben.de', epgSource: 'IPTV-EPG Germany', sourceIdx: 0, hidden: false }),
+      }).run();
+      db.insert(schemaMappings).values({
+        id: 'm-hidden',
+        playlistId: 'pl-epg-res',
+        type: 'live',
+        originalId: '480052',
+        extra: JSON.stringify({ epgSource: 'IPTV-EPG Germany', sourceIdx: 0, hidden: true }),
+      }).run();
+
+      const ger = '<?xml version="1.0"?><tv>'
+        + '<channel id="ProSieben.de"><display-name>DE - ProSieben</display-name></channel>'
+        + '<channel id="3sat.de"><display-name>DE - 3sat (not exported)</display-name></channel>'
+        + '<programme start="a" channel="ProSieben.de"><title>DE-Prog</title></programme>'
+        + '<programme start="b" channel="3sat.de"><title>3sat-Prog</title></programme>'
+        + '</tv>';
+      const up = '<?xml version="1.0"?><tv>'
+        + '<channel id="Pro7.de"><display-name>Pro 7</display-name></channel>'
+        + '<channel id="ProSieben.de"><display-name>duplicache — dropped</display-name></channel>'
+        + '<programme start="z" channel="Pro7.de"><title>UP-Prog</title></programme>'
+        + '<programme start="y" channel="ProSieben.de"><title>UP-dupe-drop</title></programme>'
+        + '</tv>';
+      (axios.get as any).mockImplementation(async (url: string) => {
+        if (url.startsWith('https://epg-de.test/')) return { data: Buffer.from(ger, 'utf-8'), headers: {} };
+        if (url.startsWith('http://up.test/xmltv.php?username=u&password=p')) return { data: Buffer.from(up, 'utf-8'), headers: {} };
+        throw new Error(`unexpected fetch ${url}`);
+      });
+
+      const playlist = {
+        id: 'pl-epg-res',
+        name: 'Resolve Test',
+        userId: 'user-1',
+        sourceIds: ['src-up'],
+        epgIds: ['epg-de'],
+      } as any as Playlist;
+
+      await buildEpgCache(playlist, 'http://img.test');
+      const gz = fs.readFileSync(getEpgCachePath('pl-epg-res'));
+      const xml = zlib.gunzipSync(gz).toString('utf-8');
+
+      // Override wins: Germany's channel + programme, NOT the upstream duplicate
+      expect((xml.match(/<channel id="ProSieben\.de"/g) || []).length).toBe(1);
+      expect(xml).toContain('<title>DE-Prog</title>');
+      expect(xml).not.toContain('UP-dupe-drop');
+      expect(xml).toContain('DE - ProSieben');
+      // Upstream default pairing kept with its own programme
+      expect((xml.match(/<channel id="Pro7\.de"/g) || []).length).toBe(1);
+      expect(xml).toContain('<title>UP-Prog</title>');
+      // Filtered out: channels the playlist doesn't export
+      expect(xml).not.toContain('3sat.de');
+      expect(xml).not.toContain('<title>3sat-Prog</title>');
+      expect((xml.match(/<channel\b/g) || []).length).toBe(2);
+    });
+
+    it('parses blocks safely (first channel def wins, programmes collected per id)', () => {
+      const xml = '<tv><channel id="a.de"/><channel id="a.de"><display-name>dup</display-name></channel>'
+        + '<programme channel="a.de"><title>1</title></programme>'
+        + '<programme channel="b.de"><title>2</title></programme></tv>';
+      const tv = parseTvBlocks(xml);
+      expect(tv.channels.size).toBe(1);
+      expect((tv.channels.get('a.de') || '').startsWith('<channel id="a.de"/>')).toBe(true);
+      expect((tv.programmes.get('a.de') || []).length).toBe(1);
+      expect((tv.programmes.get('b.de') || []).length).toBe(1);
+    });
+
+    it('bindings: override > upstream pairing; hidden excluded; unbound skipped', async () => {
+      process.env.SQLITE_PATH = ':memory:';
+      await connectDb();
+      const db = getDb();
+      db.insert(schemaMappings).values({
+        id: 'm-bind-override',
+        playlistId: 'pl-bind',
+        type: 'live',
+        originalId: 'override-me',
+        extra: JSON.stringify({ epgMapping: 'X.de', epgSource: 'IPTV-EPG Germany', sourceIdx: 0, hidden: false }),
+      }).run();
+      db.insert(schemaMappings).values({
+        id: 'm-bind-hidden',
+        playlistId: 'pl-bind',
+        type: 'live',
+        originalId: 'hidden-me',
+        extra: JSON.stringify({ sourceIdx: 0, hidden: true }),
+      }).run();
+      const now = Date.now();
+      const rows = [
+        { sourceId: 's1', type: 'live', streamId: 'override-me', name: 'A', epgChannelId: 'UpA.de', updatedAt: now },
+        { sourceId: 's1', type: 'live', streamId: 'hidden-me', name: 'H', epgChannelId: 'UpH.de', updatedAt: now },
+        { sourceId: 's1', type: 'live', streamId: 'plain', name: 'P', epgChannelId: 'UpP.de', updatedAt: now },
+        { sourceId: 's1', type: 'live', streamId: 'unbound', name: 'U', epgChannelId: null, updatedAt: now },
+        { sourceId: 's1', type: 'vod', streamId: '9', name: 'V', epgChannelId: 'V.de', updatedAt: now },
+      ];
+      for (const r of rows) db.insert(schemaStreams).values(r as any).run();
+
+      const playlist = { id: 'pl-bind', name: 't', userId: 'u1', sourceIds: ['s1'], epgIds: [] } as any as Playlist;
+      const bindings = collectPlaylistEpgBindings(playlist);
+      const byId = new Map(bindings.map(b => [b.id, b]));
+      // override wins over the upstream pairing
+      expect(byId.get('X.de')?.fromOverride).toBe(true);
+      expect(byId.get('X.de')?.ownerSourceName).toBe('IPTV-EPG Germany');
+      expect(byId.has('UpA.de')).toBe(false);
+      // default = upstream pairing
+      expect(byId.get('UpP.de')?.fromOverride).toBe(false);
+      // hidden and paireless excluded; vod not considered
+      expect(byId.has('UpH.de')).toBe(false);
+      expect(byId.has('V.de')).toBe(false);
+      expect(bindings.length).toBe(2);
+    });
   });
 });
