@@ -40,16 +40,45 @@ closed`-Zeilen in der Log.
     Rotation über die Kandidaten-IPs (Zähler `reconnectRotations`, Reset bei
     Erfolg/Channel-Close) wird der bei Registrierung eingefrorenen Pin-Snapshot
     gelöscht → Reconnects laufen über normales DNS.
-  - Tests: `proxy-multi-ip.test.ts` (Re-Resolve + Persist + kein Re-Resolve bei
-    HTTP-Status), `stream-hub.test.ts` (Snapshot-Drop nach Vollrotation).
-    272 Tests grün, lint sauber. **ACHTUNG:** Die Reconnect-Tests nutzen
-    `vi.doMock('axios')` + `vi.resetModules()` je Test (Pattern der Datei) —
-    ein Datei-weites `vi.mock('axios')` verlangsamt/kompliziert die früheren Tests.
+- **Follow-up (abends 2026-11-02):** Nach Deploy der Fixes meldete der User erneut
+  „Socket is closed"-Zeilen — diesmal zu **gültigen, frischen** IPs. Direkte
+  Verifikation: operator3 (LB *und* Nodes) lehnte ALLE Stream-Verbindungen
+  deterministisch nach ~12,0 s mit ECONNRESET ab (Panel-API zeitweise erreichbar,
+  `active_cons=0`, `Active`). Provider-seitige Infrastruktur-Störung/Flood-Shield,
+  nicht Gecko-Fehler. Daraus: **Source-Outage-Circuit-Breaker** eingebaut
+  (`proxy.ts`): `sourceOutages`-Map + 90 s Cooldown, wenn ein Source-Request
+  ausschließlich transport-klasse Fehler produzierte → spätere Play-Versuche
+  bekommen sofort `503 + Retry-After` mit VERHINDERUNG des Kandidatengrindes
+  während der Störung; Reset bei nächstem Erfolg über irgendeinen Host. Test:
+  „answers with 503 + Retry-After during the outage cooldown". 273 Tests grün.
 
 
-### 2. Televizo/„Marius"-Playlist (g1ming): ProSieben-Circle-of-Loading
 
-- Playlist-Layout: „Marius" (`user=live`) → nur g1ming-Quelle;
+### 2. Marius-EPG „no data" trotz korrektem Mapping (2026-11-02 abends)
+
+- Verifiziert: `/xmltv.php` für Marius enthielt **1.848 doppelte Channel-IDs**
+  (z. B. `ComedyCentral.de` ×4) und **~103 MB** — `buildEpgCache()` hat die
+  `<tv>`-Inhalte aller Quellen (iptv-epg DE/ES + Upstream-Strong) blind
+  aneinandergeklebt, ohne Channel-ID-Dedupe.
+- Doppelte `<channel id>`-Definitionen provozieren Client-Parser (TiviMate)
+  Fehlbings → „kein EPG" trotz korrekter `epg_channel_id`.
+- **Fix (final): `buildEpgCache()` baut jetzt playlist-scoped statt blind-merge:**
+  1. Bindings pro Live-Channel: `mappings.epgMapping` (User-Override) sonst
+     `streams.epgChannelId` (Upstream-Pairing); hidden Channels raus; VOD/Series игнор.
+  2. Ownership: Override → Quelle aus `mappings.epgSource` (Fallback: erst
+     Docs, dann Upstream); Default **nur Upstream** — kein Auto-Binding auf
+     externe Docs (das ist bewusst der „Override-only"-Vertrag des Users).
+  3. Channels, die die Playlist nicht exportiert, ∧ deren Programme werden
+     komplett rausgefiltert (Strong allein brachte 8350 Kanäle/63 MB).
+  4. Mapping-Änderungen (create/update/delete/batch/reset) triggern debounced
+     20 s später einen Cache-Rebuild (`mappings.ts` → `clearEpgCache` +
+     `refreshPlaylistEpg` → Sync-Worker).
+- Erwartung: Marius-EPG schrumpft von ~103 MB auf wenige MB; jede Channel-ID
+  existiert genau einmal; TiviMate-Binding 1:1.
+- Tests: `epg-service.test.ts` (Owner-Resolution, Filter, parseTvBlocks,
+  Bindings inkl. override>upstream, hidden, unbound). 276 Tests grün.
+
+### 3. Televizo/„Marius"-Playlist (g1ming): ProSieben-Circle-of-Loading- Playlist-Layout: „Marius" (`user=live`) → nur g1ming-Quelle;
   „Tivione-Marius" (`user=tivi`) → nur barfik/fikar.
 - Verify: ProSieben g1ming-Feed (480050) upstream ist **valid MPEG-TS**:
   PAT/PMT, h264 1080p50, AC-3 5.1, CC 0 Discos, PTS/PCR laufen konstant
@@ -67,7 +96,7 @@ closed`-Zeilen in der Log.
   Software-Decoding). Gecko könnte ggf. AC3→AAC-Transcode anbieten
   (Aufwand: ffmpeg im Stream-Hub — bewusst nicht umgesetzt).
 
-### 3. Stream-ID-Kollision über Quellen (beachten, prüfen)
+### 4. Stream-ID-Kollision über Quellen (beachten, prüfen)
 
 - Stream-IDs sind pro Upstream-Quelle numerisch eigenständig;
   `480050` = ProSieben (g1ming) UND HUNGAMA SERIES (barfik) zugleich.
