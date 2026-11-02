@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { getDb } from "./db.ts";
+import { getDb, getSqlite } from "./db.ts";
 import { log } from "./logger.ts";
 import { measureSyncTimed } from "./event-loop-monitor.ts";
 import { XtreamClient } from "./xtream.ts";
@@ -106,21 +106,16 @@ export function persistChangelog(
     }).run();
 
     // Cleanup: keep only last 500 logs per source
-    const logs = db.select({ id: source_changelogs.id, extra: source_changelogs.extra })
-      .from(source_changelogs)
-      .where(eq(source_changelogs.sourceId, sourceId))
-      .all();
-
-    logs.sort((a, b) => {
-      const tA = new Date((a.extra as any).timestamp || 0).getTime();
-      const tB = new Date((b.extra as any).timestamp || 0).getTime();
-      return tB - tA; // sort desc
-    });
-
-    if (logs.length > 500) {
-      const toDelete = logs.slice(500).map(l => l.id);
-      db.delete(source_changelogs).where(inArray(source_changelogs.id, toDelete)).run();
-    }
+    getSqlite().prepare(`
+      DELETE FROM source_changelogs
+      WHERE sourceId = ?
+        AND id NOT IN (
+          SELECT id FROM source_changelogs
+          WHERE sourceId = ?
+          ORDER BY json_extract(extra, '$.timestamp') DESC
+          LIMIT 500
+        )
+    `).run(sourceId, sourceId);
   } catch (err: any) {
     log(`[Changelog] FAILED to record: ${err.message}`);
   }

@@ -1,4 +1,4 @@
-import { getDb, generateId } from './db.ts';
+import { getDb, getSqlite, generateId } from './db.ts';
 import { sources, source_connection_logs } from './schema.ts';
 import { XtreamClient } from './xtream.ts';
 import { proxyStats } from './proxy-stats.ts';
@@ -191,17 +191,16 @@ export async function checkSourceConnection(
  */
 function pruneConnectionLogs(sourceId: string, keepCount: number = 500): void {
   try {
-    const db = getDb();
-    const allLogs = db.select({ id: source_connection_logs.id })
-      .from(source_connection_logs)
-      .where(eq(source_connection_logs.sourceId, sourceId))
-      .orderBy(desc(source_connection_logs.timestamp))
-      .all();
-
-    if (allLogs.length > keepCount) {
-      const toDelete = allLogs.slice(keepCount).map(l => l.id);
-      db.delete(source_connection_logs).where(inArray(source_connection_logs.id, toDelete)).run();
-    }
+    getSqlite().prepare(`
+      DELETE FROM source_connection_logs
+      WHERE sourceId = ?
+        AND id NOT IN (
+          SELECT id FROM source_connection_logs
+          WHERE sourceId = ?
+          ORDER BY timestamp DESC
+          LIMIT ?
+        )
+    `).run(sourceId, sourceId, keepCount);
   } catch (err: any) {
     log(`[Monitor] Failed to prune logs for ${sourceId}: ${err.message}`);
   }
