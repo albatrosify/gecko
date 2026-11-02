@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PassThrough } from 'stream';
-import { dvrRecorder, formatDuration } from './recorder.ts';
-import { formatBytes } from '../utils.ts';
+import { dvrRecorder } from './recorder.ts';
+import { formatBytes, formatDuration } from '../../src/format.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import axios from 'axios';
 
@@ -52,9 +52,9 @@ describe('DvrRecorder', () => {
     expect(formatBytes(1048576 * 2.5)).toBe('2.5 MB');
     expect(formatBytes(1073741824 * 3.25)).toBe('3.25 GB');
 
-    expect(formatDuration(45)).toBe('0m 45s');
-    expect(formatDuration(125)).toBe('2m 05s');
-    expect(formatDuration(3665)).toBe('1h 01m 05s');
+    expect(formatDuration(45)).toBe('45s');
+    expect(formatDuration(125)).toBe('2m 5s');
+    expect(formatDuration(3665)).toBe('1h 1m');
   });
 
   it('starts live recording from active proxy connection', async () => {

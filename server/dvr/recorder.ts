@@ -7,7 +7,7 @@ import { recordings } from '../schema.ts';
 import { log } from '../logger.ts';
 import { proxyStats } from '../proxy-stats.ts';
 import { sendTelegramNotification } from '../telegram.ts';
-import { formatBytes } from '../utils.ts';
+import { formatBytes, formatDuration } from '../../src/format.ts';
 import { eq, desc } from 'drizzle-orm';
 import { Recording } from '../../src/types.ts';
 
@@ -16,16 +16,6 @@ export const RECORDINGS_DIR = process.env.DVR_STORAGE_PATH || path.join(process.
 // Ensure recordings storage directory exists
 if (!fs.existsSync(RECORDINGS_DIR)) {
   fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-}
-
-export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) {
-    return `${h}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`;
-  }
-  return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
 /**

@@ -7927,13 +7927,6 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
     return () => { mounted = false; };
   }, [playlistId, seriesId]);
 
-  const formatDurationSecs = (secs?: number) => {
-    if (!secs) return null;
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
-
   const episodes: Record<string, any[]> = info?.episodes || {};
   const seasonKeys = Object.keys(episodes).sort((a, b) => parseInt(a) - parseInt(b));
 
@@ -8012,7 +8005,7 @@ function SeriesDetailsModal({ playlistId, seriesId, onClose, title, onPlay, sour
                   <div className="space-y-2">
                     <h3 className="text-lg font-bold text-zinc-300 mb-4">Season {selectedSeason} Episodes</h3>
                     {episodes[selectedSeason].map(ep => {
-                      const dur = formatDurationSecs(ep.info?.duration_secs);
+                      const dur = ep.info?.duration_secs ? formatDuration(ep.info.duration_secs) : null;
                       return (
                         <div key={ep.id} className="flex items-center gap-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors group">
 

@@ -142,9 +142,4 @@ export function isValidHttpUrl(urlString: string): boolean {
   return URL.canParse(urlString) && /^https?:$/i.test(new URL(urlString).protocol);
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
+export { formatBytes, formatDuration } from '../src/format.ts';
