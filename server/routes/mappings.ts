@@ -56,6 +56,147 @@ function isValidMappingId(id: unknown): id is string {
   return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+function handleBatchMappings(
+  table: typeof schemaMappings | typeof schemaCategoryMappings,
+  afterCommit?: (playlistIds: Set<string>, req: AuthRequest) => void
+) {
+  return async (req: AuthRequest, res: any) => {
+    try {
+      const { updates } = req.body;
+      if (!Array.isArray(updates)) {
+        return res.status(400).json({ error: "updates array required" });
+      }
+
+      const db = getDb();
+
+      // Verify ownership of all referenced playlist IDs
+      const playlistIds = new Set<string>();
+      for (const u of updates) {
+        if (u.playlistId) playlistIds.add(u.playlistId);
+      }
+      for (const pid of playlistIds) {
+        if (!verifyPlaylistOwnership(db, pid, req.user!.id, req.user?.role)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+
+      db.transaction((tx) => {
+        const validIds: string[] = [];
+        const missingIdUpdates: any[] = [];
+
+        for (const update of updates) {
+          const isValidId = isValidMappingId(update.id);
+          if (isValidId) validIds.push(update.id);
+          else missingIdUpdates.push(update);
+        }
+
+        const docsById = new Map();
+        for (let i = 0; i < validIds.length; i += 500) {
+          const chunk = validIds.slice(i, i + 500);
+          const docs = tx.select().from(table).where(inArray(table.id, chunk)).all();
+          for (const doc of docs) {
+            if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
+              throw new ForbiddenError();
+            }
+            docsById.set(doc.id, doc);
+          }
+        }
+
+        const docsByComposite = new Map();
+        const byPlaylistAndType = new Map<string, Map<string, string[]>>();
+        for (const u of missingIdUpdates) {
+          let typeMap = byPlaylistAndType.get(u.playlistId);
+          if (!typeMap) {
+            typeMap = new Map();
+            byPlaylistAndType.set(u.playlistId, typeMap);
+          }
+          let origList = typeMap.get(u.type);
+          if (!origList) {
+            origList = [];
+            typeMap.set(u.type, origList);
+          }
+          origList.push(String(u.originalId));
+        }
+
+        for (const [pId, typeMap] of byPlaylistAndType.entries()) {
+          for (const [t, origList] of typeMap.entries()) {
+            for (let i = 0; i < origList.length; i += 500) {
+              const chunk = origList.slice(i, i + 500);
+              const found = tx.select().from(table).where(
+                and(
+                  eq(table.playlistId, pId),
+                  eq(table.type, t),
+                  inArray(table.originalId, chunk)
+                )
+              ).all();
+              for (const doc of found) {
+                if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
+                  throw new ForbiddenError();
+                }
+                docsByComposite.set(JSON.stringify([doc.originalId, doc.playlistId, doc.type]), doc);
+              }
+            }
+          }
+        }
+
+        const inserts: any[] = [];
+        const insertedByComposite = new Map<string, any>();
+
+        for (const update of updates) {
+          const { id, originalId, playlistId, type, ...extra } = update;
+          const isValidId = isValidMappingId(id);
+
+          if (isValidId) {
+            const doc = docsById.get(id);
+            if (doc) {
+               const newExtra = { ...(doc.extra as any || {}), ...extra };
+               tx.update(table).set({
+                 playlistId: playlistId !== undefined ? playlistId : doc.playlistId,
+                 type: type !== undefined ? type : doc.type,
+                 originalId: originalId !== undefined ? String(originalId) : doc.originalId,
+                 extra: newExtra
+               }).where(eq(table.id, id)).run();
+               doc.extra = newExtra;
+            }
+          } else {
+            const compositeKey = JSON.stringify([String(originalId), playlistId, type]);
+            const existing = docsByComposite.get(compositeKey);
+            if (existing) {
+               const newExtra = { ...(existing.extra as any || {}), ...extra };
+               tx.update(table).set({ extra: newExtra }).where(eq(table.id, existing.id)).run();
+               existing.extra = newExtra;
+            } else {
+               const newlyInserted = insertedByComposite.get(compositeKey);
+               if (newlyInserted) {
+                 newlyInserted.extra = { ...newlyInserted.extra, ...extra };
+               } else {
+                 const newInsert = { id: generateId(), playlistId, type, originalId: String(originalId), extra };
+                 inserts.push(newInsert);
+                 insertedByComposite.set(compositeKey, newInsert);
+               }
+            }
+          }
+        }
+
+        if (inserts.length > 0) {
+          for (let i = 0; i < inserts.length; i += 500) {
+            tx.insert(table).values(inserts.slice(i, i + 500)).run();
+          }
+        }
+      });
+
+      afterCommit?.(playlistIds, req);
+      res.json({ success: true, count: updates.length });
+    } catch (err: any) {
+      if (err instanceof ForbiddenError || err?.message === "Access denied") {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      log(`[batch mappings] error: ${err?.message || err}`);
+      res.status(500).json({ error: "Failed to batch update mappings" });
+    }
+  };
+}
+
 export function createMappingsRouter() {
   const router = Router();
 
@@ -133,141 +274,9 @@ export function createMappingsRouter() {
     }
   });
 
-  router.post("/mappings/batch", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { updates } = req.body; // Array of { id?, originalId, playlistId, type, ...data }
-      if (!Array.isArray(updates)) {
-        return res.status(400).json({ error: "updates array required" });
-      }
-
-      const db = getDb();
-
-      // Verify ownership of all referenced playlist IDs
-      const playlistIds = new Set<string>();
-      for (const u of updates) {
-        if (u.playlistId) playlistIds.add(u.playlistId);
-      }
-      for (const pid of playlistIds) {
-        if (!verifyPlaylistOwnership(db, pid, req.user!.id, req.user?.role)) {
-          return res.status(403).json({ error: "Access denied" });
-        }
-      }
-
-      db.transaction((tx) => {
-        const validIds: string[] = [];
-        const missingIdUpdates: any[] = [];
-
-        for (const update of updates) {
-          const isValidId = isValidMappingId(update.id);
-          if (isValidId) validIds.push(update.id);
-          else missingIdUpdates.push(update);
-        }
-
-        const docsById = new Map();
-        for (let i = 0; i < validIds.length; i += 500) {
-          const chunk = validIds.slice(i, i + 500);
-          const docs = tx.select().from(schemaMappings).where(inArray(schemaMappings.id, chunk)).all();
-          for (const doc of docs) {
-            if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
-              throw new ForbiddenError();
-            }
-            docsById.set(doc.id, doc);
-          }
-        }
-
-        const docsByComposite = new Map();
-        // Map from playlistId -> type -> array of originalIds
-        const byPlaylistAndType = new Map<string, Map<string, string[]>>();
-        for (const u of missingIdUpdates) {
-          let typeMap = byPlaylistAndType.get(u.playlistId);
-          if (!typeMap) {
-            typeMap = new Map();
-            byPlaylistAndType.set(u.playlistId, typeMap);
-          }
-          let originalIds = typeMap.get(u.type);
-          if (!originalIds) {
-            originalIds = [];
-            typeMap.set(u.type, originalIds);
-          }
-          originalIds.push(u.originalId);
-        }
-
-        for (const [playlistId, typeMap] of byPlaylistAndType.entries()) {
-          for (const [type, originalIds] of typeMap.entries()) {
-            for (let i = 0; i < originalIds.length; i += 500) {
-              const chunk = originalIds.slice(i, i + 500);
-              const existing = tx.select().from(schemaMappings).where(
-                and(
-                  eq(schemaMappings.playlistId, playlistId),
-                  eq(schemaMappings.type, type),
-                  inArray(schemaMappings.originalId, chunk)
-                )
-              ).all();
-              for (const doc of existing) {
-                // Use a safer separator that won't appear in standard UUIDs or hex IDs
-                // actually composite key with JSON.stringify is safer:
-                docsByComposite.set(JSON.stringify([doc.originalId, doc.playlistId, doc.type]), doc);
-              }
-            }
-          }
-        }
-
-        const inserts: any[] = [];
-        const insertedByComposite = new Map(); // to prevent duplicate inserts in the same batch
-
-        for (const update of updates) {
-          const { id, originalId, playlistId, type, ...extra } = update;
-          const isValidId = isValidMappingId(id);
-
-          if (isValidId) {
-            const doc = docsById.get(id);
-            if (doc) {
-               const newExtra = { ...(doc.extra as any || {}), ...extra };
-               tx.update(schemaMappings).set({
-                 playlistId: playlistId !== undefined ? playlistId : doc.playlistId,
-                 type: type !== undefined ? type : doc.type,
-                 originalId: originalId !== undefined ? String(originalId) : doc.originalId,
-                 extra: newExtra
-               }).where(eq(schemaMappings.id, id)).run();
-               doc.extra = newExtra; // update locally in case of consecutive updates
-            }
-          } else {
-            const compositeKey = JSON.stringify([String(originalId), playlistId, type]);
-            const existing = docsByComposite.get(compositeKey);
-            if (existing) {
-               const newExtra = { ...(existing.extra as any || {}), ...extra };
-               tx.update(schemaMappings).set({ extra: newExtra }).where(eq(schemaMappings.id, existing.id)).run();
-               existing.extra = newExtra; // update locally in case of consecutive updates
-            } else {
-               const newlyInserted = insertedByComposite.get(compositeKey);
-               if (newlyInserted) {
-                 // Update the queued insert if we already queued one in the current batch
-                 newlyInserted.extra = { ...newlyInserted.extra, ...extra };
-               } else {
-                 const newInsert = { id: generateId(), playlistId, type, originalId: String(originalId), extra };
-                 inserts.push(newInsert);
-                 insertedByComposite.set(compositeKey, newInsert);
-               }
-            }
-          }
-        }
-
-        if (inserts.length > 0) {
-          for (let i = 0; i < inserts.length; i += 500) {
-            tx.insert(schemaMappings).values(inserts.slice(i, i + 500)).run();
-          }
-        }
-      });
-      for (const pid of playlistIds) scheduleEpgRebuildForPlaylist(pid, req);
-      res.json({ success: true, count: updates.length });
-    } catch (err: any) {
-      if (err instanceof ForbiddenError || err?.message === "Access denied") {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      log(`[batch mappings] error: ${err?.message || err}`);
-      res.status(500).json({ error: "Failed to batch update mappings" });
-    }
-  });
+  router.post("/mappings/batch", requireAuth, handleBatchMappings(schemaMappings, (playlistIds, req) => {
+    for (const pid of playlistIds) scheduleEpgRebuildForPlaylist(pid, req);
+  }));
 
   router.delete("/mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
@@ -359,138 +368,7 @@ export function createMappingsRouter() {
     }
   });
 
-  router.post("/category-mappings/batch", requireAuth, async (req: AuthRequest, res) => {
-    try {
-      const { updates } = req.body;
-      if (!Array.isArray(updates)) {
-        return res.status(400).json({ error: "updates array required" });
-      }
-
-      const db = getDb();
-
-      // Verify ownership of all referenced playlist IDs
-      const playlistIds = new Set<string>();
-      for (const u of updates) {
-        if (u.playlistId) playlistIds.add(u.playlistId);
-      }
-      for (const pid of playlistIds) {
-        if (!verifyPlaylistOwnership(db, pid, req.user!.id, req.user?.role)) {
-          return res.status(403).json({ error: "Access denied" });
-        }
-      }
-
-      db.transaction((tx) => {
-        const validIds: string[] = [];
-        const missingIdUpdates: any[] = [];
-
-        for (const update of updates) {
-          const isValidId = isValidMappingId(update.id);
-          if (isValidId) validIds.push(update.id);
-          else missingIdUpdates.push(update);
-        }
-
-        const docsById = new Map();
-        for (let i = 0; i < validIds.length; i += 500) {
-          const chunk = validIds.slice(i, i + 500);
-          const docs = tx.select().from(schemaCategoryMappings).where(inArray(schemaCategoryMappings.id, chunk)).all();
-          for (const doc of docs) {
-            if (!verifyPlaylistOwnership(tx, doc.playlistId, req.user!.id, req.user?.role)) {
-              throw new ForbiddenError();
-            }
-            docsById.set(doc.id, doc);
-          }
-        }
-
-        const docsByComposite = new Map();
-        // Map from playlistId -> type -> array of originalIds
-        const byPlaylistAndType = new Map<string, Map<string, string[]>>();
-        for (const u of missingIdUpdates) {
-          let typeMap = byPlaylistAndType.get(u.playlistId);
-          if (!typeMap) {
-            typeMap = new Map();
-            byPlaylistAndType.set(u.playlistId, typeMap);
-          }
-          let originalIds = typeMap.get(u.type);
-          if (!originalIds) {
-            originalIds = [];
-            typeMap.set(u.type, originalIds);
-          }
-          originalIds.push(u.originalId);
-        }
-
-        for (const [playlistId, typeMap] of byPlaylistAndType.entries()) {
-          for (const [type, originalIds] of typeMap.entries()) {
-            for (let i = 0; i < originalIds.length; i += 500) {
-              const chunk = originalIds.slice(i, i + 500);
-              const existing = tx.select().from(schemaCategoryMappings).where(
-                and(
-                  eq(schemaCategoryMappings.playlistId, playlistId),
-                  eq(schemaCategoryMappings.type, type),
-                  inArray(schemaCategoryMappings.originalId, chunk)
-                )
-              ).all();
-              for (const doc of existing) {
-                docsByComposite.set(JSON.stringify([doc.originalId, doc.playlistId, doc.type]), doc);
-              }
-            }
-          }
-        }
-
-        const inserts: any[] = [];
-        const insertedByComposite = new Map();
-
-        for (const update of updates) {
-          const { id, originalId, playlistId, type, ...extra } = update;
-          const isValidId = isValidMappingId(id);
-
-          if (isValidId) {
-            const doc = docsById.get(id);
-            if (doc) {
-               const newExtra = { ...(doc.extra as any || {}), ...extra };
-               tx.update(schemaCategoryMappings).set({
-                 playlistId: playlistId !== undefined ? playlistId : doc.playlistId,
-                 type: type !== undefined ? type : doc.type,
-                 originalId: originalId !== undefined ? String(originalId) : doc.originalId,
-                 extra: newExtra
-               }).where(eq(schemaCategoryMappings.id, id)).run();
-               doc.extra = newExtra;
-            }
-          } else {
-            const compositeKey = JSON.stringify([String(originalId), playlistId, type]);
-            const existing = docsByComposite.get(compositeKey);
-            if (existing) {
-               const newExtra = { ...(existing.extra as any || {}), ...extra };
-               tx.update(schemaCategoryMappings).set({ extra: newExtra }).where(eq(schemaCategoryMappings.id, existing.id)).run();
-               existing.extra = newExtra;
-            } else {
-               const newlyInserted = insertedByComposite.get(compositeKey);
-               if (newlyInserted) {
-                 newlyInserted.extra = { ...newlyInserted.extra, ...extra };
-               } else {
-                 const newInsert = { id: generateId(), playlistId, type, originalId: String(originalId), extra };
-                 inserts.push(newInsert);
-                 insertedByComposite.set(compositeKey, newInsert);
-               }
-            }
-          }
-        }
-
-        if (inserts.length > 0) {
-          for (let i = 0; i < inserts.length; i += 500) {
-            tx.insert(schemaCategoryMappings).values(inserts.slice(i, i + 500)).run();
-          }
-        }
-      });
-
-      res.json({ success: true, count: updates.length });
-    } catch (e: any) {
-      if (e instanceof ForbiddenError || e?.message === "Access denied") {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      log(`Failed to batch update category mappings: ${e.message}`);
-      res.status(500).json({ error: "Failed to batch update category mappings" });
-    }
-  });
+  router.post("/category-mappings/batch", requireAuth, handleBatchMappings(schemaCategoryMappings));
 
   router.delete("/category-mappings/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
