@@ -47,49 +47,14 @@ export function isPrivateIp(ip: string): boolean {
  * Normalizes host/URL input to a clean hostname string, extracting port and path if present.
  */
 export function extractHostname(input: string): { hostname: string; port?: number; path?: string } {
-  let trimmed = input.trim();
-  let port: number | undefined;
-  let path = "/";
-
-  if (trimmed.includes("://")) {
-    try {
-      const parsed = new URL(trimmed);
-      trimmed = parsed.hostname;
-      if (parsed.port) {
-        port = parseInt(parsed.port, 10);
-      }
-      if (parsed.pathname && parsed.pathname.length > 0) {
-        path = parsed.pathname;
-      }
-    } catch {
-      trimmed = trimmed.replace(/^[a-zA-Z]+:\/\//, "");
-      const slashIdx = trimmed.indexOf("/");
-      if (slashIdx !== -1) {
-        path = trimmed.slice(slashIdx);
-        trimmed = trimmed.slice(0, slashIdx);
-      }
-      if (trimmed.includes(":") && !trimmed.includes("]")) {
-        const parts = trimmed.split(":");
-        trimmed = parts[0];
-        port = parseInt(parts[1], 10);
-      }
-    }
-  } else if (trimmed.includes("/")) {
-    const slashIdx = trimmed.indexOf("/");
-    path = trimmed.slice(slashIdx);
-    trimmed = trimmed.slice(0, slashIdx);
-    if (trimmed.includes(":") && !trimmed.includes("]")) {
-      const parts = trimmed.split(":");
-      trimmed = parts[0];
-      port = parseInt(parts[1], 10);
-    }
-  } else if (trimmed.includes(":") && !trimmed.includes("]")) {
-    const parts = trimmed.split(":");
-    trimmed = parts[0];
-    port = parseInt(parts[1], 10);
-  }
-
-  return { hostname: trimmed.toLowerCase(), port, path };
+  const trimmed = input.trim();
+  const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+  const port = url.port ? parseInt(url.port, 10) : undefined;
+  return {
+    hostname: url.hostname.toLowerCase(),
+    port,
+    path: url.pathname || '/',
+  };
 }
 
 /**
