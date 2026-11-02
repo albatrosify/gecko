@@ -4,7 +4,7 @@ import { requireAuth, requireAuthOrQuery, AuthRequest } from "../auth.ts";
 import { getDb, generateId } from "../db.ts";
 import { log } from "../logger.ts";
 import { requestSourceSync, notifyCronsChanged } from "../sync-client.ts";
-import { duplicateCache, getCached } from "../cache.ts";
+import { getCached } from "../cache.ts";
 import { searchStreams, getCachedStreams, type StreamType } from "../stream-store.ts";
 import { XtreamClient } from "../xtream.ts";
 import { buildStreamUrl } from "../quality-scan.ts";
@@ -69,13 +69,6 @@ export function createPlaylistsRouter(epgsRouter?: Router) {
           if (originalSource.autoSyncEnabled && originalSource.syncCron) {
             notifyCronsChanged();
           }
-
-          const oldSid = originalSourceId;
-          const newSid = newSourceId;
-          duplicateCache(`${oldSid}_categories`, `${newSid}_categories`);
-          duplicateCache(`${oldSid}_live_streams`, `${newSid}_live_streams`);
-          duplicateCache(`${oldSid}_vod_streams`, `${newSid}_vod_streams`);
-          duplicateCache(`${oldSid}_series`, `${newSid}_series`);
 
           requestSourceSync(newSourceId, 'live', true).catch(err => {
             log(`[Clone] Background refresh failed for new source ${newSourceId}: ${err?.message || err}`);

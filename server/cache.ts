@@ -86,54 +86,6 @@ export function setCache(key: string, data: any): void {
   }
 }
 
-/**
- * Copies the cached entry at `oldKey` to `newKey`, preserving the original
- * TTL.
- */
-export function duplicateCache(oldKey: string, newKey: string): void {
-  // Mirror first.
-  const mem = memoryCache.get(oldKey);
-  if (mem) {
-    memoryCache.set(newKey, { ...mem });
-  }
-
-  const db = getDb();
-  try {
-    const oldRow = db.select().from(cache).where(eq(cache.key, oldKey)).get();
-    if (oldRow) {
-      db.insert(cache)
-        .values({
-          key: newKey,
-          data: oldRow.data,
-          updatedAt: oldRow.updatedAt,
-          expiresAt: oldRow.expiresAt,
-        })
-        .onConflictDoUpdate({
-          target: cache.key,
-          set: {
-            data: oldRow.data,
-            updatedAt: oldRow.updatedAt,
-            expiresAt: oldRow.expiresAt,
-          },
-        })
-        .run();
-
-      // Keep the mirror in sync if the entry wasn't already there.
-      if (!mem && oldRow.expiresAt && Date.now() < oldRow.expiresAt) {
-        const data =
-          typeof oldRow.data === 'string' ? JSON.parse(oldRow.data) : oldRow.data;
-        memoryCache.set(newKey, {
-          data,
-          lastUpdated: oldRow.updatedAt as string,
-          expiresAt: Date.now() + MIRROR_TTL_MS,
-        });
-      }
-    }
-  } catch (error) {
-    console.error('Cache duplicate error:', error);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
