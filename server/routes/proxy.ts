@@ -40,6 +40,18 @@ const limit = pLimit(5);
  */
 const SLOT_CONFLICT_RETRY_AFTER_S = 5;
 
+// ── Source-outage circuit breaker ───────────────────────────────────────────────
+/**
+ * When EVERY host of a source failed with transport-class errors (nothing gave an
+ * HTTP response), treat the whole provider as down for a short cooldown window:
+ * player attempts are answered locally with 503 + Retry-After instead of re-burned
+ * against a dead upstream (better player UX, and avoids controlled — by us or by
+ * the provider's flood shield — connection storms during an outage).
+ */
+const SOURCE_OUTAGE_COOLDOWN_MS = 90_000;
+const OUTAGE_RETRY_AFTER_S = 30;
+export const sourceOutages = new Map<string, number>();
+
 /**
  * Upper bound of freshly resolved IPs appended to an in-flight attempt after a
  * stale-cache DNS re-check. Bounds the worst case of a fully dead cached pool:
@@ -349,6 +361,8 @@ export function createProxyRouter() {
     // Try each source in order, fall back to the next on failure
     let lastError = '';
     let lastStatus = 502;
+    // Sources where every failing attempt died on transport level (breaker inputs)
+    const outagedSources = new Set<string>();
     // Set when the upstream told us this account's connection slot is taken. Rotating
     // further would only steal that slot from ourselves (see the 409 branch below).
     let slotConflict = false;
@@ -356,7 +370,24 @@ export function createProxyRouter() {
       const sourceDoc = sourceMap.get(sourceId);
       if (!sourceDoc) continue;
       slotConflict = false;
+      // Circuit-breaker inputs for this source: did any attempt die on transport
+      // level (no HTTP response at all), and did any host answer with HTTP status?
+      let sawConnectionClassFailureSrc = false;
+      let sawHttpStatusFailureSrc = false;
 
+      // ── Step 1b: source-level circuit breaker ─────────────────────────────────
+      // If every host of this source just failed with transport-class errors
+      // (provider outage / flood-shield), acknowledge players at once with 503 +
+      // Retry-After instead of grinding through every stalled candidate per play
+      // attempt. The cooldown ends with the next attempt — if it succeeds, the
+      // breaker resets; if it fails the cooldown re-arms.
+      const outageUntil = sourceOutages.get(sourceId) ?? 0;
+      if (Date.now() < outageUntil) {
+        const retryIn = Math.max(1, Math.ceil((outageUntil - Date.now()) / 1000));
+        log(`[Proxy] Source ${sourceDoc.name || sourceId} in outage cooldown — answering ${type}/${streamId} with 503 (retry in ${retryIn}s) without upstream attempts - ${getClientInfo(req)}`);
+        res.setHeader('Retry-After', String(retryIn));
+        return res.status(503).send(`Source is momentarily down (connection refused at the provider). Retrying in ${retryIn}s.`);
+      }
       // ── Step 2: VOD stream de-duplication & auto-replacement ──────────────────
       // When a user seeks or switches episodes, ExoPlayer / TiviMate sends a new HTTP request
       // while the previous socket may still be lingering or closing in TCP close-wait.
@@ -536,6 +567,7 @@ export function createProxyRouter() {
             // Treat 4xx/5xx from upstream as a failure — try next candidate IP
             if (response.status >= 400) {
               lastStatus = response.status;
+              sawHttpStatusFailureSrc = true;
               if (response.status === 511) {
                 lastError = 'Blocked by upstream CDN (HTTP 511: VPN/Datacenter IP blacklisted). Recommend rotating VPN.';
                 recordVpnBlock(sourceId, hostUrl, 511, lastError);
@@ -564,6 +596,8 @@ export function createProxyRouter() {
             log(`[Proxy] ${type}/${streamId} for ${username} via source ${sourceId} host ${hostUrl} (IP: ${targetIp || 'default'}) - ${getClientInfo(req)}`);
             recordHostUse(sourceId, hostUrl, true);
             hostSucceeded = true;
+            // The provider answered — the outage breaker (if armed) is cleared.
+            sourceOutages.delete(sourceId);
 
             // Success on a freshly re-resolved IP proves the stored pool was stale
             // (it outlived the provider's real one). Persist the refreshed list so
@@ -747,6 +781,7 @@ export function createProxyRouter() {
             lastStatus = err.response?.status || (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT' ? 504 : 502);
             lastError = err.message;
             destroyAgents();
+            if (isConnectionClassFailure(err)) sawConnectionClassFailureSrc = true;
             if (cdnFronted && ipsToTry.length > 1 && (err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT')) {
               log(`[Proxy] Host ${hostUrl} (IP: ${targetIp || 'default'}) timed out; host is CDN-fronted, so the remaining ${ipsToTry.length - 1} edge IP(s) share the same origin — moving to the next host. - ${getClientInfo(req)}`);
               break;
@@ -792,11 +827,25 @@ export function createProxyRouter() {
           // session — so do not down-rank it in the failover order.
           recordHostUse(sourceId, hostUrl, false, lastError);
         }
+        // Every failing attempt of this source died on transport level (no host
+        // answered with HTTP status) → outage breaker candidate for this source.
+        if (!hostSucceeded && !slotConflict && sawConnectionClassFailureSrc && !sawHttpStatusFailureSrc) {
+          outagedSources.add(sourceId);
+        }
         if (slotConflict) break;
       }
     }
 
     log(`[Proxy] All sources failed for ${type}/${streamId}: ${lastError} (status ${lastStatus}) - ${getClientInfo(req)}`);
+    if (outagedSources.size > 0) {
+      // Every failing attempt of these sources died on transport level (no HTTP
+      // response at all) — arm the outage breaker so the next play attempt is
+      // answered locally instead of hammering a presumably-wired provider.
+      for (const sid of outagedSources) {
+        sourceOutages.set(sid, Date.now() + SOURCE_OUTAGE_COOLDOWN_MS);
+        log(`[Proxy] ⏱️ Provider outage suspected for source ${sid} — armed ${SOURCE_OUTAGE_COOLDOWN_MS / 1000}s outage cooldown for play attempts.`);
+      }
+    }
     if (lastStatus === 511) {
       res.status(511).send(`All upstream sources failed: Upstream CDN blocked connection (HTTP 511 Network Authentication Required). Server egress IP appears blacklisted. Please rotate VPN.`);
     } else if (slotConflict) {

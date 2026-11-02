@@ -19,7 +19,7 @@ vi.mock('../logger.ts', () => ({
 }));
 
 // Import createProxyRouter after mocks
-import { createProxyRouter } from './proxy.ts';
+import { createProxyRouter, sourceOutages } from './proxy.ts';
 
 describe('Multi-IP Stream Proxying & Failover', () => {
   let server: http.Server;
@@ -39,6 +39,7 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     streamControllers.clear();
     proxyStats.activeStreams = 0;
     mockAxios.mockReset();
+    sourceOutages.clear();
 
     const app = express();
     app.use('/', createProxyRouter());
@@ -609,5 +610,64 @@ describe('Multi-IP Stream Proxying & Failover', () => {
     expect(mockAxios).toHaveBeenCalledTimes(2);
     expect(resolveSpy).not.toHaveBeenCalled();
     resolveSpy.mockRestore();
+  });
+
+  it('answers with 503 + Retry-After during the outage cooldown after transport-level failures', async () => {
+    const db = getDb();
+    db.insert(playlists).values({
+      id: 'pl-outage',
+      userId: 'user-1',
+      name: 'Outage Playlist',
+      username: 'outageuser',
+      password: 'outagepass',
+      sourceIds: ['src-outage'] as any,
+      directStreams: false,
+    }).run();
+
+    db.insert(sources).values({
+      id: 'src-outage',
+      userId: 'user-1',
+      name: 'Outage Source',
+      type: 'xtream',
+      url: 'http://dead.provider.tv:8080',
+      username: 'src_user',
+      password: 'src_pass',
+      autoSyncEnabled: false,
+      extra: {
+        hosts: [
+          {
+            url: 'http://dead.provider.tv:8080',
+            order: 0,
+            uses: 0,
+            failures: 0,
+            resolvedIp: '198.51.100.10',
+            ipCount: 2,
+            resolvedIps: [
+              { ip: '198.51.100.10', latencyMs: 20, healthy: true },
+              { ip: '198.51.100.20', latencyMs: 35, healthy: true },
+            ],
+          },
+        ],
+      } as any,
+    }).run();
+
+    const failConn = Object.assign(new Error('Socket is closed'), { code: undefined });
+    mockAxios
+      .mockRejectedValueOnce(failConn)
+      .mockRejectedValueOnce(failConn);
+
+    const res1 = await fetch(`${baseUrl}/live/outageuser/outagepass/600.ts`);
+    expect(res1.status).toBe(502);
+    expect(await res1.text()).toContain('All upstream sources failed');
+    expect(mockAxios).toHaveBeenCalledTimes(2);
+
+    // Within the cooldown window: answered locally, zero upstream attempts
+    const res2 = await fetch(`${baseUrl}/live/outageuser/outagepass/600.ts`);
+    expect(res2.status).toBe(503);
+    expect(res2.headers.get('retry-after')).toBeTruthy();
+    expect(await res2.text()).toContain('momentarily down');
+    expect(mockAxios).toHaveBeenCalledTimes(2);
+
+    sourceOutages.clear();
   });
 });
