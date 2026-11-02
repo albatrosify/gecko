@@ -1,6 +1,5 @@
 import { Router } from "express";
 import fs from "fs";
-import axios from "axios";
 import { requireAuth } from "../auth.ts";
 import { getDb } from "../db.ts";
 import { LOG_PATH, log } from "../logger.ts";
@@ -38,8 +37,8 @@ export function createSystemRouter() {
         return res.json(data);
       }
 
-      const response = await axios.get('http://ipinfo.io/json', { timeout: 10000 });
-      const { ip, country, city, org } = response.data;
+      const response = await fetch('http://ipinfo.io/json', { signal: AbortSignal.timeout(10000) });
+      const { ip, country, city, org } = await response.json() as any;
       const data = { ip, country, city, org };
       ipCache = { data, expiresAt: now + 30_000 };
       res.json(data);
